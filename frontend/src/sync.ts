@@ -1,4 +1,11 @@
-import db, { clientId, getMeta, setMeta, uuid, type OutboxOp } from './db'
+import db, {
+  clientId,
+  getMeta,
+  nextClientSeq,
+  setMeta,
+  uuid,
+  type OutboxOp,
+} from './db'
 
 /** 一次同步最多带走多少条，与后端 SyncRequest.ops 的 max_length 对齐。 */
 const BATCH = 200
@@ -39,8 +46,7 @@ export async function enqueue(
   const client_ts = new Date().toISOString()
 
   await db.transaction('rw', db.outbox, db.events, db.meta, async () => {
-    const seq = (await getMeta<number>('client_seq', 0)) + 1
-    await setMeta('client_seq', seq)
+    const seq = await nextClientSeq()
 
     const op: OutboxOp = {
       op_id,
@@ -73,8 +79,42 @@ export async function sync(): Promise<SyncResult | null> {
   return inFlight
 }
 
+/**
+ * 取待发送的操作。
+ *
+ * ⚠️ **绝对不要用 `db.outbox.orderBy('client_seq')`。**
+ * 那是索引查询，而 IndexedDB 会把索引键无效（NaN / undefined / null）
+ * 的记录**静默排除**在结果之外 —— 但 `count()` 照数不误。
+ * 结果就是：UI 显示"待同步 4"，请求体却是 `ops: []`，
+ * 这 4 条永久卡死且不报任何错。真机上就是这么丢的。
+ *
+ * 改成全量取出后在 JS 里排序：**不依赖索引，任何记录都跑不掉。**
+ */
+async function takePending(): Promise<OutboxOp[]> {
+  const all = await db.outbox.toArray()
+
+  // 顺手修复历史坏数据：把无效的 client_seq 补成一个合法值，
+  // 否则它们即便这次发出去了，下次仍然是隐形的
+  const broken = all.filter((o) => !Number.isFinite(o.client_seq))
+  if (broken.length) {
+    console.warn(`[sync] 修复 ${broken.length} 条 client_seq 无效的记录`)
+    let base = await nextClientSeq()
+    await db.transaction('rw', db.outbox, db.meta, async () => {
+      for (const o of broken) {
+        o.client_seq = base++
+        await db.outbox.put(o)
+      }
+      await setMeta('client_seq', base)
+    })
+  }
+
+  return all
+    .sort((a, b) => (a.client_seq ?? 0) - (b.client_seq ?? 0))
+    .slice(0, BATCH)
+}
+
 async function doSync(): Promise<SyncResult | null> {
-  const ops = await db.outbox.orderBy('client_seq').limit(BATCH).toArray()
+  const ops = await takePending()
   const since = await getMeta<number>('cursor', 0)
   const cid = await clientId()
 
@@ -106,11 +146,37 @@ async function doSync(): Promise<SyncResult | null> {
   // duplicate 不是错误，它恰恰是重放机制正常工作的证据。
   const settled: string[] = [...data.applied, ...data.duplicate]
 
-  await db.transaction('rw', db.outbox, db.events, db.meta, async () => {
-    if (settled.length) {
-      await db.outbox.bulkDelete(settled)
-      await Promise.all(settled.map((id) => db.events.update(id, { synced: 1 })))
-    }
+  // 被服务端明确拒绝的：**不能留在 outbox 里无限重试**。
+  // 否则 outbox 永远清不空，"待同步"永远不归零，而且每轮都白发一次。
+  // 移进死信队列，交给人处理。
+  const rejected = (data.rejected ?? []) as { op_id: string; reason: string }[]
+
+  await db.transaction(
+    'rw',
+    db.outbox,
+    db.events,
+    db.meta,
+    db.deadletter,
+    async () => {
+      if (rejected.length) {
+        const byId = new Map(ops.map((o) => [o.op_id, o]))
+        for (const r of rejected) {
+          const op = byId.get(r.op_id)
+          await db.deadletter.put({
+            op_id: r.op_id,
+            entity: op?.entity ?? '?',
+            payload: op?.payload ?? {},
+            reason: r.reason,
+            failed_at: new Date().toISOString(),
+          })
+        }
+        await db.outbox.bulkDelete(rejected.map((r) => r.op_id))
+      }
+
+      if (settled.length) {
+        await db.outbox.bulkDelete(settled)
+        await Promise.all(settled.map((id) => db.events.update(id, { synced: 1 })))
+      }
 
     // 应用其它设备的变更
     for (const c of data.changes as {
@@ -131,9 +197,10 @@ async function doSync(): Promise<SyncResult | null> {
       })
     }
 
-    // 游标最后才推进：中途崩了就重来一次，宁可重复也不能跳过
-    await setMeta('cursor', data.cursor)
-  })
+      // 游标最后才推进：中途崩了就重来一次，宁可重复也不能跳过
+      await setMeta('cursor', data.cursor)
+    },
+  )
 
   return {
     applied: data.applied.length,
@@ -144,17 +211,17 @@ async function doSync(): Promise<SyncResult | null> {
   }
 }
 
+/** outbox 有积压时的重试间隔 —— 要快，员工在等它清零 */
+const POLL_PENDING = 4_000
+/** 空闲时的心跳 —— 只为拉别的设备的变更，可以慢 */
+const POLL_IDLE = 20_000
+
 /**
  * 触发时机。
  *
  * ⚠️ iOS 不支持 Background Sync —— 后台绝不会自己重放。
  * 所以必须在**回到前台**时立刻同步，这是 iPad 上最关键的一个钩子。
  */
-/** outbox 有积压时的重试间隔 —— 要快，员工在等它清零 */
-const POLL_PENDING = 4_000
-/** 空闲时的心跳 —— 只为拉别的设备的变更，可以慢 */
-const POLL_IDLE = 20_000
-
 export function installSyncTriggers(
   onResult?: (r: SyncResult | null, failure?: SyncFailure) => void,
 ) {

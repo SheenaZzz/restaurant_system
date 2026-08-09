@@ -31,6 +31,16 @@ const db = new Dexie('restaurant') as Dexie & {
   outbox: EntityTable<OutboxOp, 'op_id'>
   events: EntityTable<LocalEvent, 'op_id'>
   meta: EntityTable<Meta, 'key'>
+  deadletter: EntityTable<DeadLetter, 'op_id'>
+}
+
+/** 服务端明确拒绝的操作。不能留在 outbox 里无限重试。 */
+export interface DeadLetter {
+  op_id: string
+  entity: string
+  payload: Record<string, unknown>
+  reason: string
+  failed_at: string
 }
 
 db.version(1).stores({
@@ -40,7 +50,31 @@ db.version(1).stores({
   meta: 'key',
 })
 
+db.version(2).stores({
+  deadletter: 'op_id, failed_at',
+})
+
 export default db
+
+/**
+ * 单调递增的本地序号，**NaN 安全**。
+ *
+ * 踩过的坑：原来直接写 `(await getMeta('client_seq', 0)) + 1`。
+ * 一旦 meta 里的值不是数字，结果就是 NaN —— 而 NaN 不是合法的
+ * IndexedDB 索引键，于是这条记录：
+ *   ① 能存进 outbox
+ *   ② 被 count() 数到（UI 显示"待同步 N"）
+ *   ③ 却永远不会出现在 orderBy('client_seq') 的结果里
+ * 也就是永久卡死、且不报任何错。更糟的是 NaN+1 还是 NaN，
+ * 之后每一条都会中招。在餐馆里这等于静默丢单。
+ */
+export async function nextClientSeq(): Promise<number> {
+  const raw = await getMeta<unknown>('client_seq', 0)
+  const cur = typeof raw === 'number' && Number.isFinite(raw) ? raw : 0
+  const next = cur + 1
+  await setMeta('client_seq', next)
+  return next
+}
 
 // ---------------------------------------------------------------------------
 // meta 读写

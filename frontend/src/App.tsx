@@ -16,9 +16,12 @@ export default function App() {
   const [online, setOnline] = useState(navigator.onLine)
   const [last, setLast] = useState<string>('—')
   const [tone, setTone] = useState<'ok' | 'warn' | 'bad'>('ok')
+  const [dead, setDead] = useState(0)
 
   async function refresh() {
     setPending(await db.outbox.count())
+    // 死信必须可见。看不见的失败等于没发生 —— 而它其实是丢了一单。
+    setDead(await db.deadletter.count())
     setEvents(await db.events.orderBy('created_at').reverse().limit(30).toArray())
   }
 
@@ -67,6 +70,7 @@ export default function App() {
         <strong>{online ? '在线' : '离线'}</strong>
         <span className="grow" />
         <span className={pending ? 'badge warn' : 'badge'}>待同步 {pending}</span>
+        {dead > 0 && <span className="badge bad">失败 {dead}</span>}
       </header>
 
       <button className="big" onClick={tap}>
