@@ -18,16 +18,29 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .schemas import SyncOpIn
+from .services.checks import close_check, open_check
 
 log = logging.getLogger(__name__)
 
-# 骨架期只认这一种实体；Step 2 起按 DESIGN.md 扩展
-_HANDLERS = {"ping_event"}
+# 每个实体需要的角色。写入路径的授权判断**只看这张表**，
+# 不看客户端自称的任何东西。
+_HANDLERS: dict[str, frozenset[str]] = {
+    "open_check": frozenset({"front", "admin"}),
+    "close_check": frozenset({"front", "admin"}),
+    # 骨架探针，Step 5 删除
+    "ping_event": frozenset({"front", "kitchen", "admin"}),
+}
 
 
-def _apply_effect(db: Session, op: SyncOpIn) -> None:
+def _apply_effect(db: Session, op: SyncOpIn, user) -> None:
     """产生业务副作用。必须与 sync_op 的插入处在同一事务内。"""
-    if op.entity == "ping_event":
+    if op.entity == "open_check":
+        open_check(db, op.op_id, op.payload, op.client_ts, user.id if user else None)
+
+    elif op.entity == "close_check":
+        close_check(db, op.payload, op.client_ts)
+
+    elif op.entity == "ping_event":
         label = op.payload.get("label")
         if not isinstance(label, str) or not label:
             raise ValueError("ping_event.label 必须是非空字符串")
@@ -56,8 +69,21 @@ def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn], user=None):
     rejected: list = []
 
     for op in ops:
-        if op.entity not in _HANDLERS:
+        allowed = _HANDLERS.get(op.entity)
+        if allowed is None:
             rejected.append({"op_id": op.op_id, "reason": f"未知实体: {op.entity}"})
+            continue
+
+        # ⚠️ 授权在这里，不在前端。
+        # 客户端离线期间攒的 op 不带任何角色声明 ——
+        # 角色只来自服务端验过的 access token。
+        if user is not None and user.role not in allowed:
+            rejected.append(
+                {
+                    "op_id": op.op_id,
+                    "reason": f"{user.role} 无权执行 {op.entity}",
+                }
+            )
             continue
 
         try:
@@ -95,7 +121,7 @@ def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn], user=None):
                     duplicate.append(op.op_id)
                     continue
 
-                _apply_effect(db, op)
+                _apply_effect(db, op, user)
 
                 db.execute(
                     text("UPDATE sync_op SET applied_at = now() WHERE op_id = :op_id"),

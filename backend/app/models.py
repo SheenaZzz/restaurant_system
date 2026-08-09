@@ -145,6 +145,15 @@ class DiningCheck(Base):
     __tablename__ = "dining_check"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # 客户端生成的身份（就是创建它那条 op 的 op_id）。
+    #
+    # 为什么需要它：开桌必须离线可用，但主键 id 是数据库生成的，
+    # 客户端离线时拿不到。于是后续操作（加菜、结账）没法引用这张单。
+    # 解法是让客户端自己生成一个 UUID 作为对外标识，
+    # 服务端的 bigint 主键只在服务端内部用。
+    client_uuid: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), unique=True
+    )
     # pickup 单没有桌号
     table_id: Mapped[int | None] = mapped_column(ForeignKey("dining_table.id"))
     period_id: Mapped[int] = mapped_column(
@@ -168,7 +177,16 @@ class DiningCheck(Base):
             name="ck_check_table_matches_source",
         ),
         Index("ix_check_period_status", "period_id", "status"),
-        Index("ix_check_open_table", "table_id", postgresql_where="status = 'open'"),
+        # **一张桌同时只能有一张未结账单**。
+        # 两个服务员离线时都以为 A7 是空的、各开一单 —— 恢复后
+        # 第二条会撞这个约束被拒，进死信队列，UI 上以红色"失败"暴露，
+        # 由人来决定合并还是重开。这类冲突不该被静默吞掉。
+        Index(
+            "uq_check_open_per_table",
+            "table_id",
+            unique=True,
+            postgresql_where="status = 'open' AND table_id IS NOT NULL",
+        ),
     )
 
 

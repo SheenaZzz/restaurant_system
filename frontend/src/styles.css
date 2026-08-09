@@ -239,3 +239,146 @@ li {
 .login button:disabled { opacity: 0.5; }
 .login .err { margin: 0; color: var(--bad); font-size: 14px; }
 .login .hint { margin: 0; color: var(--muted); font-size: 12px; text-align: center; }
+
+/* ---- 楼面 ---- */
+.floor-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 18px 0 6px;
+}
+.period {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.muted { color: var(--muted); font-size: 14px; }
+.zone { margin: 18px 0 8px; font-size: 14px; color: var(--muted); font-weight: 500; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+/* 桌子按钮必须够大 —— 高峰期端着盘子也要能点中 */
+.table {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 84px;
+  padding: 12px;
+  text-align: left;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+.table:active { transform: scale(0.97); }
+.table.free    { opacity: 0.65; }
+.table.busy    { border-color: var(--ok);   background: color-mix(in srgb, var(--ok) 12%, var(--panel)); }
+/* 还没被服务端确认的用虚线框 —— 员工要能一眼看出"这条还没发出去" */
+.table.busy.pending { border-style: dashed; border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); }
+
+.tlabel  { font-size: 19px; font-weight: 700; }
+.tseats  { font-size: 13px; color: var(--muted); }
+.tguests { font-size: 14px; }
+.tmoney  { font-size: 13px; color: var(--muted); font-family: ui-monospace, monospace; }
+
+/* ---- 弹层 ---- */
+.sheet-back {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 50;
+}
+.sheet {
+  width: 100%;
+  max-width: 460px;
+  padding: 22px;
+  border-radius: 18px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+.sheet h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+.period-tag {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+.stepper .sl { flex: 1; font-size: 17px; }
+.stepper .sl small { color: var(--muted); font-size: 12px; }
+/* 加减按钮 56px —— 手指目标，不是鼠标目标 */
+.stepper button {
+  width: 56px;
+  height: 56px;
+  font-size: 26px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  cursor: pointer;
+}
+.stepper button:disabled { opacity: 0.35; }
+.stepper .sv {
+  min-width: 44px;
+  text-align: center;
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.divider { height: 1px; margin: 12px 0; background: var(--line); }
+.linkbtn.wide { width: 100%; margin: 6px 0 0; padding: 10px; }
+
+.total {
+  margin: 14px 0 0;
+  font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-actions { display: flex; gap: 12px; margin-top: 18px; }
+.sheet-actions button {
+  flex: 1;
+  padding: 16px;
+  font-size: 17px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.sheet-actions button.primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.sheet-actions button:disabled { opacity: 0.45; }
+.hint { color: var(--muted); font-size: 13px; }
+.err { color: var(--bad); font-size: 14px; }

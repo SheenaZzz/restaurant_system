@@ -27,11 +27,30 @@ export interface Meta {
   value: unknown
 }
 
+/** 楼面上的一张账单（本地镜像）。UI 只读它 —— 所以断网照样能用。 */
+export interface LocalCheck {
+  check_uuid: string
+  table_label: string
+  status: 'open' | 'closed'
+  opened_at: string
+  adult: number
+  child: number
+  senior: number
+  drinks: number
+  /** 客户端按缓存价估的金额，**仅供显示**；落库金额以服务端为准 */
+  est_cents: number
+  /** 0 = 还没被服务端确认 */
+  synced: 0 | 1
+  /** 1 = 别的设备开的 */
+  remote: 0 | 1
+}
+
 const db = new Dexie('restaurant') as Dexie & {
   outbox: EntityTable<OutboxOp, 'op_id'>
   events: EntityTable<LocalEvent, 'op_id'>
   meta: EntityTable<Meta, 'key'>
   deadletter: EntityTable<DeadLetter, 'op_id'>
+  checks: EntityTable<LocalCheck, 'check_uuid'>
 }
 
 /** 服务端明确拒绝的操作。不能留在 outbox 里无限重试。 */
@@ -52,6 +71,10 @@ db.version(1).stores({
 
 db.version(2).stores({
   deadletter: 'op_id, failed_at',
+})
+
+db.version(3).stores({
+  checks: 'check_uuid, table_label, status',
 })
 
 export default db

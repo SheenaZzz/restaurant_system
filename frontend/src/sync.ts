@@ -1,4 +1,5 @@
 import { authFetch } from './auth'
+import { applyCheckOp } from './checks'
 import db, {
   clientId,
   getMeta,
@@ -10,6 +11,13 @@ import db, {
 
 /** 一次同步最多带走多少条，与后端 SyncRequest.ops 的 max_length 对齐。 */
 const BATCH = 200
+
+type RemoteChange = {
+  op_id: string
+  entity: string
+  client_ts: string
+  payload: Record<string, unknown>
+}
 
 export type SyncResult = {
   applied: number
@@ -60,8 +68,10 @@ let inFlightAt = 0
 export async function enqueue(
   entity: string,
   payload: Record<string, unknown>,
+  /** 允许调用方自带 op_id —— 账单要用它当自己的身份标识 */
+  opId?: string,
 ): Promise<string> {
-  const op_id = uuid()
+  const op_id = opId ?? uuid()
   const client_ts = new Date().toISOString()
 
   await db.transaction('rw', db.outbox, db.events, db.meta, async () => {
@@ -76,13 +86,15 @@ export async function enqueue(
       payload,
     }
     await db.outbox.add(op)
-    await db.events.add({
-      op_id,
-      label: String(payload.label ?? ''),
-      created_at: client_ts,
-      synced: 0,
-      remote: 0,
-    })
+    if (entity === 'ping_event') {
+      await db.events.add({
+        op_id,
+        label: String(payload.label ?? ''),
+        created_at: client_ts,
+        synced: 0,
+        remote: 0,
+      })
+    }
   })
 
   // 尽快发出去：outbox 停留时间越短，设备损坏时丢的越少
@@ -181,7 +193,16 @@ async function doSync(): Promise<SyncResult | null> {
 
   if (!res.ok) {
     // 不清 outbox —— 下次重试。重复发送是安全的，因为 op_id 幂等。
-    const f: SyncFailure = { kind: 'error', message: `服务端 HTTP ${res.status}` }
+    //
+    // ⚠️ 反代能通但上游挂了会返回 502/503/504 —— fetch **成功**，
+    //    所以不会走上面那个 catch。但对员工来说这跟断网没有区别：
+    //    数据安全排队、等会儿自动重发，不需要任何人做任何事。
+    //    显示成红色"出错"会让他们以为坏了，然后重复录单。
+    //    408/429 同理（超时 / 限流），都是过一会儿就好的。
+    const transient = [408, 425, 429, 500, 502, 503, 504].includes(res.status)
+    const f: SyncFailure = transient
+      ? { kind: 'offline', message: `服务端暂时不可用 (${res.status})，已排队` }
+      : { kind: 'error', message: `服务端 HTTP ${res.status}` }
     throw f
   }
 
@@ -195,6 +216,7 @@ async function doSync(): Promise<SyncResult | null> {
   // 否则 outbox 永远清不空，"待同步"永远不归零，而且每轮都白发一次。
   // 移进死信队列，交给人处理。
   const rejected = (data.rejected ?? []) as { op_id: string; reason: string }[]
+  let remoteChanges: RemoteChange[] = []
 
   await db.transaction(
     'rw',
@@ -202,6 +224,7 @@ async function doSync(): Promise<SyncResult | null> {
     db.events,
     db.meta,
     db.deadletter,
+    db.checks,
     async () => {
       if (rejected.length) {
         const byId = new Map(ops.map((o) => [o.op_id, o]))
@@ -221,16 +244,22 @@ async function doSync(): Promise<SyncResult | null> {
       if (settled.length) {
         await db.outbox.bulkDelete(settled)
         await Promise.all(settled.map((id) => db.events.update(id, { synced: 1 })))
+        // 账单的 check_uuid 就是创建它那条 op 的 op_id
+        await Promise.all(settled.map((id) => db.checks.update(id, { synced: 1 })))
       }
 
-    // 应用其它设备的变更
-    for (const c of data.changes as {
-      op_id: string
-      entity: string
-      client_ts: string
-      payload: Record<string, unknown>
-    }[]) {
-      if (c.entity !== 'ping_event') continue
+      // 其它设备的变更
+      remoteChanges = data.changes as RemoteChange[]
+
+      // 游标最后才推进：中途崩了就重来一次，宁可重复也不能跳过
+      await setMeta('cursor', data.cursor)
+    },
+  )
+
+  // 账单类变更在事务外应用 —— applyCheckOp 要读 catalog（也在 meta 表里），
+  // 放进同一个事务会因为表作用域重叠而死锁
+  for (const c of remoteChanges) {
+    if (c.entity === 'ping_event') {
       await db.events.put({
         op_id: c.op_id,
         label: String(c.payload.label ?? ''),
@@ -240,12 +269,13 @@ async function doSync(): Promise<SyncResult | null> {
         synced: 1,
         remote: 1,
       })
+    } else {
+      await applyCheckOp(c.entity, c.op_id, c.payload, c.client_ts, {
+        synced: 1,
+        remote: 1,
+      })
     }
-
-      // 游标最后才推进：中途崩了就重来一次，宁可重复也不能跳过
-      await setMeta('cursor', data.cursor)
-    },
-  )
+  }
 
   return {
     applied: data.applied.length,

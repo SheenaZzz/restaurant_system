@@ -173,6 +173,21 @@ curl -s -o /dev/null -w "%{http_code}
 " localhost:8000/api/admin/summary -H "Authorization: Bearer $FT"
 ```
 
+## 调试钩子
+
+浏览器控制台里有 `window.__rs`（iPad 上用 Safari 网页检查器连过去）：
+
+```js
+await __rs.login('front', 'front-dev-pw')
+await __rs.refreshCatalog()
+await __rs.openTable('A7', {adult:2, child:1, senior:0}, 3)
+await __rs.openChecksByTable()
+await __rs.sync()
+await __rs.db.outbox.count()
+await __rs.db.deadletter.toArray()
+__rs.build                      // 确认设备拿到的是哪个版本
+```
+
 ## 排障
 
 | 现象 | 原因 / 处理 |
@@ -183,3 +198,4 @@ curl -s -o /dev/null -w "%{http_code}
 | iPad 上装了多张同名 Caddy 证书 | 名字都是 `Caddy Local Authority - 2026 ECC Root`，肉眼分不出。**全删掉重装一张**即可，旧 CA 私钥已不存在 |
 | iPad 上 Service Worker 不注册 | 必须 HTTPS；且根证书要在「证书信任设置」里额外打开 |
 | iPad 装到主屏幕后数据没了 | 主屏幕 App 与 Safari **存储隔离** → 先装再用 |
+| 改了代码但页面还是旧的 | 看头部构建号。`localhost` 也算安全上下文，**明文 8080 上一样会注册 SW** → 控制台执行 `(await navigator.serviceWorker.getRegistrations()).forEach(r=>r.unregister())` 再刷新 |

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getIdentity, logout, type Identity } from './auth'
 import db from './db'
+import FloorPlan from './FloorPlan'
 import LoginPage from './LoginPage'
 import {
   enqueue,
@@ -119,9 +120,16 @@ export default function App() {
         </button>
       </header>
 
-      <button className="big" onClick={tap}>
-        记录一次
-      </button>
+      {identity.role === 'kitchen' ? (
+        <>
+          <p className="hint">后厨界面在 Step 5（订单队列 + 补菜记录）。</p>
+          <button className="big" onClick={tap}>
+            记录一次（骨架探针）
+          </button>
+        </>
+      ) : (
+        <FloorPlan />
+      )}
 
       <div className="row">
         <button
@@ -143,26 +151,20 @@ export default function App() {
         <code className={`status ${tone}`}>{last}</code>
       </div>
 
-      {identity.role === 'admin' && (
-        <p className="note">
-          你是 <b>admin</b>，可以访问 <code>/api/admin/summary</code>。
-          前台和后厨账号访问同一端点会收到 <b>403</b> —— 这个判断在**服务端**，
-          改前端没用。
-        </p>
+      {identity.role === 'kitchen' && (
+        <ul>
+          {events.map((e) => (
+            <li key={e.op_id}>
+              <span className={e.synced ? 'tag ok' : 'tag warn'}>
+                {e.synced ? '已同步' : '待同步'}
+              </span>
+              {e.remote ? <span className="tag remote">其它设备</span> : null}
+              <span className="label">{e.label}</span>
+              <code className="id">{e.op_id.slice(0, 8)}</code>
+            </li>
+          ))}
+        </ul>
       )}
-
-      <ul>
-        {events.map((e) => (
-          <li key={e.op_id}>
-            <span className={e.synced ? 'tag ok' : 'tag warn'}>
-              {e.synced ? '已同步' : '待同步'}
-            </span>
-            {e.remote ? <span className="tag remote">其它设备</span> : null}
-            <span className="label">{e.label}</span>
-            <code className="id">{e.op_id.slice(0, 8)}</code>
-          </li>
-        ))}
-      </ul>
     </div>
   )
 }
