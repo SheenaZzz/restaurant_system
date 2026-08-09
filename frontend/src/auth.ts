@@ -1,6 +1,16 @@
 import { clientId, getMeta, setMeta } from './db'
 
-export type Role = 'front' | 'kitchen' | 'admin'
+export type Role = 'front_employee' | 'front_manager' | 'kitchen' | 'admin'
+
+/** 能改单/作废的角色 —— 这只是 UI 门控，真正的判断在服务端 */
+export function canManage(role: Role): boolean {
+  return role === 'front_manager' || role === 'admin'
+}
+
+/** 能看楼面的角色 */
+export function isFront(role: Role): boolean {
+  return role !== 'kitchen'
+}
 
 export interface Identity {
   username: string
@@ -168,4 +178,31 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
 
 export async function isLoggedIn(): Promise<boolean> {
   return (await getTokens()) !== null
+}
+
+
+/**
+ * 从服务端刷新身份。
+ *
+ * 角色可能在服务端被改（比如员工升成主管）。缓存的 identity 是登录时
+ * 那一刻的快照，不刷新的话前端会一直按旧角色渲染。
+ *
+ * ⚠️ 只影响**界面显示**。真正的授权判断始终在服务端 ——
+ * 缓存过期最多让按钮显示错，点下去照样会被拒。
+ */
+export async function refreshIdentity(): Promise<Identity | null> {
+  try {
+    const res = await authFetch('/api/auth/me')
+    if (!res.ok) return getIdentity()
+    const me = await res.json()
+    const id: Identity = {
+      username: me.username,
+      display_name: me.display_name,
+      role: me.role,
+    }
+    await setMeta(K_IDENTITY, id)
+    return id
+  } catch {
+    return getIdentity() // 离线，用缓存
+  }
 }

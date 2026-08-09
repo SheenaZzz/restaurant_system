@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import { login, logout } from './auth'
 import { refreshCatalog } from './catalog'
-import { closeTable, openChecksByTable, openTable } from './checks'
+import { allChecks, closeTable, modifyTable, openChecksByTable, openTable, totalsOf, voidTable } from './checks'
 import db from './db'
 import './styles.css'
 import { sync } from './sync'
@@ -30,6 +30,10 @@ window.__rs = {
   logout,
   openTable,
   closeTable,
+  modifyTable,
+  voidTable,
+  allChecks,
+  totalsOf,
   openChecksByTable,
   refreshCatalog,
   build: __BUILD__,

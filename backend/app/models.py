@@ -421,7 +421,14 @@ class AppUser(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("role IN ('front','kitchen','admin')", name="ck_user_role"),
+        # front 拆成两级：
+        #   front_employee —— 开桌、关单（日常操作）
+        #   front_manager  —— 额外可以改单、作废
+        # 改单和作废是**能让钱消失**的操作，必须和日常操作分开授权。
+        CheckConstraint(
+            "role IN ('front_employee','front_manager','kitchen','admin')",
+            name="ck_user_role",
+        ),
     )
 
 

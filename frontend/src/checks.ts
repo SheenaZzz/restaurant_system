@@ -63,7 +63,108 @@ export async function applyCheckOp(
     const cu = String(payload.check_uuid ?? '')
     const row = await db.checks.get(cu)
     if (row) await db.checks.put({ ...row, status: 'closed' })
+  } else if (entity === 'modify_check') {
+    const cu = String(payload.check_uuid ?? '')
+    const row = await db.checks.get(cu)
+    if (!row) return
+    const g = (payload.guests ?? {}) as Partial<Guests>
+    const guests: Guests = {
+      adult: g.adult ?? 0,
+      child: g.child ?? 0,
+      senior: g.senior ?? 0,
+    }
+    const d = (payload.drinks ?? {}) as Partial<Drinks>
+    const drinks: Drinks = { adult: d.adult ?? 0, child: d.child ?? 0 }
+    const cat = await loadCatalog()
+    await db.checks.put({
+      ...row,
+      ...guests,
+      drink_adult: drinks.adult,
+      drink_child: drinks.child,
+      est_cents: estimateCents(
+        cat?.prices ?? [],
+        cat?.current_period_kind ?? 'dinner',
+        guests,
+        drinks,
+      ),
+      ...opts,
+    })
+  } else if (entity === 'void_check') {
+    const cu = String(payload.check_uuid ?? '')
+    const row = await db.checks.get(cu)
+    if (row) {
+      await db.checks.put({
+        ...row,
+        status: 'voided',
+        void_reason: String(payload.reason ?? ''),
+      })
+    }
   }
+}
+
+/** 改单：**整体替换**人数与饮料（不是增量），重放安全。 */
+export async function modifyTable(
+  checkUuid: string,
+  guests: Guests,
+  drinks: Drinks,
+): Promise<void> {
+  const payload = { check_uuid: checkUuid, guests, drinks }
+  const opId = uuid()
+  await enqueue('modify_check', payload, opId)
+  await applyCheckOp('modify_check', opId, payload, new Date().toISOString(), {
+    synced: 0,
+    remote: 0,
+  })
+}
+
+/** 作废整张单。**原因必填** —— 这是唯一能让一整张单的钱消失的操作。 */
+export async function voidTable(checkUuid: string, reason: string): Promise<void> {
+  const payload = { check_uuid: checkUuid, reason }
+  const opId = uuid()
+  await enqueue('void_check', payload, opId)
+  await applyCheckOp('void_check', opId, payload, new Date().toISOString(), {
+    synced: 0,
+    remote: 0,
+  })
+}
+
+/** 全部账单（含已结、已作废），按开台时间倒序。 */
+export async function allChecks(): Promise<LocalCheck[]> {
+  const rows = await db.checks.toArray()
+  return rows.sort((a, b) => b.opened_at.localeCompare(a.opened_at))
+}
+
+export interface Totals {
+  revenueCents: number
+  buffetGuests: number
+  drinkCount: number
+  openCount: number
+  closedCount: number
+  voidedCount: number
+  voidedCents: number
+}
+
+/**
+ * 汇总。**作废的单不计入营业额**，但单独统计 —— 它正是老板要看的那个数。
+ */
+export function totalsOf(rows: LocalCheck[]): Totals {
+  const t: Totals = {
+    revenueCents: 0, buffetGuests: 0, drinkCount: 0,
+    openCount: 0, closedCount: 0, voidedCount: 0, voidedCents: 0,
+  }
+  for (const c of rows) {
+    if (c.status === 'voided') {
+      t.voidedCount++
+      t.voidedCents += c.est_cents
+      continue
+    }
+    if (c.status === 'open') t.openCount++
+    else t.closedCount++
+    t.revenueCents += c.est_cents
+    t.buffetGuests += c.adult + c.child + c.senior
+    t.drinkCount += c.drink_adult + c.drink_child
+  }
+  return t
 }
 
 /** 开桌。写本地 + 排队，**不等网络**。 */

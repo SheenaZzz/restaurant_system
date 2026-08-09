@@ -18,17 +18,23 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .schemas import SyncOpIn
-from .services.checks import close_check, open_check
+from .services.checks import close_check, modify_check, open_check, void_check
 
 log = logging.getLogger(__name__)
 
 # 每个实体需要的角色。写入路径的授权判断**只看这张表**，
 # 不看客户端自称的任何东西。
+_FRONT = frozenset({"front_employee", "front_manager", "admin"})
+# 改单/作废是**能让钱消失**的操作 —— 只有主管和老板可以
+_FRONT_MANAGER = frozenset({"front_manager", "admin"})
+
 _HANDLERS: dict[str, frozenset[str]] = {
-    "open_check": frozenset({"front", "admin"}),
-    "close_check": frozenset({"front", "admin"}),
+    "open_check": _FRONT,
+    "close_check": _FRONT,
+    "modify_check": _FRONT_MANAGER,
+    "void_check": _FRONT_MANAGER,
     # 骨架探针，Step 5 删除
-    "ping_event": frozenset({"front", "kitchen", "admin"}),
+    "ping_event": _FRONT | {"kitchen"},
 }
 
 
@@ -39,6 +45,12 @@ def _apply_effect(db: Session, op: SyncOpIn, user) -> None:
 
     elif op.entity == "close_check":
         close_check(db, op.payload, op.client_ts)
+
+    elif op.entity == "modify_check":
+        modify_check(db, op.payload, op.client_ts)
+
+    elif op.entity == "void_check":
+        void_check(db, op.payload, op.client_ts, user.id if user else None)
 
     elif op.entity == "ping_event":
         label = op.payload.get("label")

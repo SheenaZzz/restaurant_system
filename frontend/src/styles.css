@@ -382,3 +382,112 @@ li {
 .sheet-actions button:disabled { opacity: 0.45; }
 .hint { color: var(--muted); font-size: 13px; }
 .err { color: var(--bad); font-size: 14px; }
+
+/* ---- 视图切换 ---- */
+.tabs { display: flex; gap: 8px; margin: 18px 0 4px; }
+.tabs button {
+  padding: 10px 22px;
+  font-size: 16px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.tabs button.on {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.badge.clickable { border: none; cursor: pointer; font: inherit; }
+
+/* ---- 清单页 ---- */
+.list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 24px;
+  margin: 18px 0 10px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--panel);
+}
+.clock { display: flex; flex-direction: column; }
+.clock .time {
+  font-size: 34px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.clock .date { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+.stats { display: flex; flex-wrap: wrap; gap: 22px; }
+.stat { display: flex; flex-direction: column; }
+.stat .sv { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .sl { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.stat.big .sv { font-size: 30px; color: var(--ok); }
+.stat.bad .sv { color: var(--bad); }
+
+.orders { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 15px; }
+.orders th {
+  text-align: left;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 13px;
+  border-bottom: 1px solid var(--line);
+}
+.orders td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.orders .num { text-align: right; font-variant-numeric: tabular-nums; }
+.orders .tb { font-weight: 700; font-size: 17px; }
+.orders tr.voided { opacity: 0.5; text-decoration: line-through; }
+.orders tr.voided .tag { text-decoration: none; }
+.dim { color: var(--muted); }
+.small { font-size: 12px; }
+
+.chip {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.orders .ops { white-space: nowrap; }
+.orders .ops button {
+  margin-left: 6px;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.sheet-actions button.primary.danger { color: #fff; background: var(--bad); border-color: var(--bad); }
+
+.delta { margin-left: 12px; font-size: 18px; font-weight: 500; }
+.delta.up { color: var(--warn); }
+.delta.down { color: var(--ok); }
+
+.reason { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; font-size: 14px; color: var(--muted); }
+.reason input {
+  padding: 14px;
+  font-size: 17px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+/* ---- 死信 ---- */
+.sheet.wide { max-width: 680px; max-height: 80vh; overflow-y: auto; }
+ul.dl { list-style: none; margin: 12px 0 0; padding: 0; }
+ul.dl li { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.dl-top { display: flex; align-items: center; gap: 10px; }
+.dl-reason { margin: 6px 0; color: var(--bad); font-size: 14px; word-break: break-word; }
+.dl-payload { display: block; color: var(--muted); font-size: 12px; word-break: break-all; }

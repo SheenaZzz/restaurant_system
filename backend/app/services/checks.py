@@ -11,7 +11,15 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import DiningCheck, DiningTable, HeadCharge
+from sqlalchemy import func
+
+from ..models import (
+    CheckException,
+    DiningCheck,
+    DiningTable,
+    HeadCharge,
+    ServicePeriod,
+)
 from .period import resolve_period
 from .pricing import resolve_head_prices
 
@@ -173,3 +181,116 @@ def close_check(db: Session, payload: dict, client_ts: datetime) -> None:
 
     chk.status = "closed"
     chk.closed_at = client_ts
+
+
+def _load_open_check(db: Session, payload: dict) -> DiningCheck:
+    raw = payload.get("check_uuid")
+    try:
+        cu = uuidlib.UUID(str(raw))
+    except (ValueError, AttributeError, TypeError):
+        raise BusinessError(f"check_uuid 非法: {raw!r}") from None
+
+    chk = db.scalar(select(DiningCheck).where(DiningCheck.client_uuid == cu))
+    if chk is None:
+        raise BusinessError("账单不存在（可能开桌那条还没同步上来）")
+    return chk
+
+
+def modify_check(db: Session, payload: dict, client_ts: datetime) -> None:
+    """改单：整体替换人数与饮料。
+
+    payload = {"check_uuid": ..., "guests": {...}, "drinks": {...}}
+
+    **用整体替换而不是增量调整。** 增量（"成人 +1"）在离线重放时会出错：
+    两台设备各自 +1，重放后变成 +2，但操作者的意图是"最终是 3 人"。
+    整体替换是幂等的 —— 重放多少次结果都一样。
+
+    价格用**这张单当初所属时段**的价格重算，不是当前时段 ——
+    晚上改一张午市的单，不能按晚市价收。
+    """
+    chk = _load_open_check(db, payload)
+    if chk.status != "open":
+        raise BusinessError(f"只能修改未结账单（当前 {chk.status}）")
+
+    guests: dict[str, int] = {}
+    guests_raw = payload.get("guests") or {}
+    for g in GUEST_TYPES:
+        n = guests_raw.get(g, 0)
+        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            raise BusinessError(f"人数非法: {g}={n!r}")
+        if n:
+            guests[g] = n
+
+    drinks = _parse_drinks(payload.get("drinks", 0))
+    if sum(guests.values()) == 0 and sum(drinks.values()) == 0:
+        raise BusinessError("至少要有一位客人或一份饮料")
+
+    period = db.get(ServicePeriod, chk.period_id)
+    if period is None:
+        raise BusinessError("账单所属营业时段丢失")
+    prices = resolve_head_prices(db, period.kind, period.business_date)
+
+    # 先删后加。sync_op 里留着完整的改单历史，所以审计不受影响。
+    db.query(HeadCharge).filter(HeadCharge.check_id == chk.id).delete(
+        synchronize_session=False
+    )
+
+    for g, n in guests.items():
+        price = prices.get(("admission", g))
+        if price is None:
+            raise BusinessError(f"没有 {period.kind}/{g} 的价格配置")
+        db.add(
+            HeadCharge(
+                check_id=chk.id, kind="admission", guest_type=g,
+                qty=n, unit_price_cents=price,
+            )
+        )
+    for tier, n in drinks.items():
+        price = prices.get(("drink", tier))
+        if price is None:
+            raise BusinessError(f"没有 {period.kind}/{tier} 的饮料价格配置")
+        db.add(
+            HeadCharge(
+                check_id=chk.id, kind="drink", guest_type=tier,
+                qty=n, unit_price_cents=price,
+            )
+        )
+
+
+def void_check(db: Session, payload: dict, client_ts: datetime,
+               user_id: int | None) -> None:
+    """作废整张单，并**强制留下原因**。
+
+    作废是唯一能让一整张单的钱凭空消失的操作，所以它必须：
+      ① 有原因（不许空）
+      ② 可归因到人
+      ③ 在异常表里留痕，进老板的报表
+    """
+    chk = _load_open_check(db, payload)
+    if chk.status == "voided":
+        return  # 幂等
+    if chk.status == "closed":
+        raise BusinessError("已结账的单不能作废，请走退单流程")
+
+    reason = payload.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise BusinessError("作废必须填写原因")
+
+    amount = db.scalar(
+        select(func.coalesce(func.sum(HeadCharge.qty * HeadCharge.unit_price_cents), 0))
+        .where(HeadCharge.check_id == chk.id)
+    ) or 0
+
+    chk.status = "voided"
+    chk.closed_at = client_ts
+
+    db.add(
+        CheckException(
+            check_id=chk.id,
+            kind="void",
+            amount_cents=int(amount),
+            reason=reason.strip(),
+            recorded_by=user_id,
+            recorded_at=client_ts,
+        )
+    )

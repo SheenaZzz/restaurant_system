@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { getIdentity, logout, type Identity } from './auth'
+import { getIdentity, isFront, logout, refreshIdentity, type Identity } from './auth'
 import db from './db'
+import DeadLetters from './DeadLetters'
 import FloorPlan from './FloorPlan'
+import ListView from './ListView'
 import LoginPage from './LoginPage'
 import {
   enqueue,
@@ -12,7 +14,8 @@ import {
 } from './sync'
 
 const ROLE_LABEL: Record<Identity['role'], string> = {
-  front: '前台',
+  front_employee: '前台员工',
+  front_manager: '前台主管',
   kitchen: '后厨',
   admin: '老板',
 }
@@ -29,12 +32,19 @@ export default function App() {
   const [last, setLast] = useState<string>('—')
   const [tone, setTone] = useState<'ok' | 'warn' | 'bad'>('ok')
   const [dead, setDead] = useState(0)
+  const [view, setView] = useState<'floor' | 'list'>('floor')
+  const [showDead, setShowDead] = useState(false)
 
   // 身份从 IndexedDB 读，**不需要网络** ——
   // 离线冷启动时也能立刻渲染出正确的角色界面
   useEffect(() => {
     getIdentity()
-      .then(setIdentity)
+      .then((id) => {
+        setIdentity(id)
+        // 联网时向服务端确认一次角色 —— 缓存的是登录那一刻的快照，
+        // 角色在服务端被改过的话（比如员工升主管）前端会一直渲染错
+        if (id) void refreshIdentity().then((f) => f && setIdentity(f))
+      })
       .finally(() => setBooting(false))
   }, [])
 
@@ -105,7 +115,11 @@ export default function App() {
         </span>
         <span className="grow" />
         <span className={pending ? 'badge warn' : 'badge'}>待同步 {pending}</span>
-        {dead > 0 && <span className="badge bad">失败 {dead}</span>}
+        {dead > 0 && (
+          <button className="badge bad clickable" onClick={() => setShowDead(true)}>
+            失败 {dead}
+          </button>
+        )}
         <span className="badge build">build {__BUILD__}</span>
         <button
           className="linkbtn"
@@ -120,15 +134,34 @@ export default function App() {
         </button>
       </header>
 
-      {identity.role === 'kitchen' ? (
+      {isFront(identity.role) && (
+        <div className="tabs">
+          <button
+            className={view === 'floor' ? 'on' : ''}
+            onClick={() => setView('floor')}
+          >
+            楼面
+          </button>
+          <button
+            className={view === 'list' ? 'on' : ''}
+            onClick={() => setView('list')}
+          >
+            账单清单
+          </button>
+        </div>
+      )}
+
+      {!isFront(identity.role) ? (
         <>
           <p className="hint">后厨界面在 Step 5（订单队列 + 补菜记录）。</p>
           <button className="big" onClick={tap}>
             记录一次（骨架探针）
           </button>
         </>
-      ) : (
+      ) : view === 'floor' ? (
         <FloorPlan />
+      ) : (
+        <ListView role={identity.role} />
       )}
 
       <div className="row">
@@ -151,7 +184,9 @@ export default function App() {
         <code className={`status ${tone}`}>{last}</code>
       </div>
 
-      {identity.role === 'kitchen' && (
+      {showDead && <DeadLetters onClose={() => { setShowDead(false); void refresh() }} />}
+
+      {!isFront(identity.role) && (
         <ul>
           {events.map((e) => (
             <li key={e.op_id}>

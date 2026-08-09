@@ -73,7 +73,8 @@ PRICES = [
 
 # ⚠️ 开发用弱口令。Step 3 上线前必须改，且改成每人独立的密码。
 USERS = [
-    ("front", "前台", "front", "front-dev-pw", "1111"),
+    ("front", "前台主管", "front_manager", "front-dev-pw", "1111"),
+    ("front2", "前台员工", "front_employee", "front2-dev-pw", "3333"),
     ("kitchen", "后厨", "kitchen", "kitchen-dev-pw", "2222"),
     ("admin", "老板", "admin", "admin-dev-pw", None),
 ]

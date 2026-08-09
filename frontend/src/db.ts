@@ -31,7 +31,7 @@ export interface Meta {
 export interface LocalCheck {
   check_uuid: string
   table_label: string
-  status: 'open' | 'closed'
+  status: 'open' | 'closed' | 'voided'
   opened_at: string
   adult: number
   child: number
@@ -44,6 +44,8 @@ export interface LocalCheck {
   synced: 0 | 1
   /** 1 = 别的设备开的 */
   remote: 0 | 1
+  /** 作废原因（仅 voided） */
+  void_reason?: string
 }
 
 const db = new Dexie('restaurant') as Dexie & {
