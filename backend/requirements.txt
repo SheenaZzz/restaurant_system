@@ -1,0 +1,7 @@
+# 骨架期用下限约束让 pip 解析当前版本。
+# Step 2 会改成锁定版本（pip-tools / uv.lock），保证生产可复现。
+fastapi>=0.115
+uvicorn[standard]>=0.32
+sqlalchemy>=2.0.36
+psycopg[binary]>=3.2
+pydantic>=2.9

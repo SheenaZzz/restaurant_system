@@ -1,0 +1,69 @@
+# ===========================================================================
+# 开发 / 局域网 iPad 测试
+# ---------------------------------------------------------------------------
+# 用 Caddy 内置 CA 签发证书。iPad 需要**手动信任一次** Caddy 的根证书：
+#   1. docker compose --profile lan cp caddy:/data/caddy/pki/authorities/local/root.crt ./root.crt
+#   2. 把 root.crt 传到 iPad（AirDrop / 邮件 / 局域网下载）
+#   3. 设置 → 通用 → VPN与设备管理 → 安装描述文件
+#   4. ⚠️ 还要去 设置 → 通用 → 关于本机 → 证书信任设置 → 打开开关
+#      （少了第 4 步证书不会被信任，Service Worker 仍然注册不了）
+#
+# 这是零成本的临时方案。买了域名之后换成下面的生产块，iPad 就不用装任何证书。
+# ===========================================================================
+
+{
+	# 全站使用 Caddy 本地 CA
+	local_certs
+	# 本地 CA 不需要邮箱，也不要往外发 ACME 请求
+	auto_https disable_redirects
+}
+
+# 把 192.168.x.x 换成你这台机器的局域网 IP
+:443, 192.168.1.10 {
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		root * /srv
+		# SPA：任何未知路径都回退到 index.html
+		try_files {path} /index.html
+		file_server
+	}
+
+	encode gzip
+	log {
+		output stdout
+		format console
+	}
+}
+
+# ===========================================================================
+# 生产（店内服务器）—— 买好域名后启用，删掉上面的开发块
+# ---------------------------------------------------------------------------
+# 关键点：DNS-01 challenge **不需要公网入站端口**，只需要能改 DNS 记录。
+# 所以可以给一个解析到内网 IP（192.168.1.10）的域名签发真证书，
+# iPad 直接信任，无需安装任何根证书。
+#
+# ⚠️ 需要带 Cloudflare DNS 插件的 Caddy 镜像，官方镜像不含。
+#    用 caddy:builder 自行构建：
+#      xcaddy build --with github.com/caddy-dns/cloudflare
+# ===========================================================================
+
+# pos.你的域名.com {
+# 	tls {
+# 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+# 	}
+#
+# 	handle /api/* {
+# 		reverse_proxy api:8000
+# 	}
+#
+# 	handle {
+# 		root * /srv
+# 		try_files {path} /index.html
+# 		file_server
+# 	}
+#
+# 	encode gzip
+# }

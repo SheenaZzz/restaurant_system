@@ -1,0 +1,61 @@
+name: restaurant-system
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # 全链路统一 UTC，避免夏令时和时区歧义
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      # 命名卷：容器删了数据还在。这是"拔电源不丢数据"的第一层
+      - pgdata:/var/lib/postgresql/data
+      # 只在卷为空时执行一次（首次初始化）
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # 只绑到回环地址，不暴露给局域网
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+    depends_on:
+      db:
+        # 等 healthcheck 通过再启动，而不是等容器"起来"
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  # iPad 真机测试时才启用： docker compose --profile lan up -d
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["lan"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend/dist:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

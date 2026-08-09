@@ -33,6 +33,55 @@
 
 ---
 
+## 2026-08-08 — Step 1 Walking Skeleton
+
+**决策：先建骨架，不先写业务**
+- 选了「一条不含业务逻辑的端到端最小闭环」，否掉了「先做开桌页再补离线」
+- 原因：iPad Safari 要求 Service Worker 必须 HTTPS，而店内服务器是内网 IP。
+  这条打不通，离线能力就是零，整个架构要推翻 —— 必须在写业务代码**之前**验证
+- 代价：多花两天，产出的 `ping_event` 表 Step 2 就会被删掉
+
+**决策：幂等靠数据库主键，不靠应用层查重**
+- 选了 `INSERT ... ON CONFLICT (op_id) DO NOTHING RETURNING op_id`
+- 否掉了「先 SELECT 查在不在，再 INSERT」—— 那是 TOCTOU 竞态，
+  两个并发请求会双双查到"不存在"然后都插入
+- 代价：业务副作用的判断依赖 RETURNING 是否有行，可读性略差
+
+**决策：sync_op 写入与业务副作用必须同事务**
+- 否掉了「先记 sync_op，再单独提交业务写入」
+- 原因：崩在中间会留下"记了但没生效"的洞，而重放又会被幂等判断跳过 →
+  数据永久少一条，且**无法察觉**
+- 这是整个离线架构里最危险的一个点
+
+**决策：单条失败用 SAVEPOINT 隔离**
+- 一条坏 op 不能拖垮整批。前台离线两小时攒了 200 条，
+  不能因为第 3 条格式错误就全部退回
+
+**测量（Step 1 验收）**
+- 在线点 3 次 → 立即落库，计数 3→6
+- 停 API 容器 → 点 10 次 → outbox=10，本地镜像=16，UI「待同步 10」
+- 起 API → 重放 → **16/16/16，distinct_op=16，零重复**
+- 强制重发 3 条已应用的 op → `applied:0 duplicate:3`，计数仍是 16
+- 电脑休眠 35 分钟后容器自动恢复，数据完整（命名卷有效）
+
+**故障：TS 把 `crypto` 收窄成 `never`**
+- 现象：`tsc` 报 `Property 'getRandomValues' does not exist on type 'never'`
+- 错误假设：以为是 `@types/node` 和 lib.dom 冲突
+- 定位：`'randomUUID' in crypto` 这个 `in` 收窄，让 TS 认为 else 分支不可达
+- 根因：lib.dom 把 `crypto` 声明为必然存在且必然有 `randomUUID`
+- 处理：显式 `globalThis.crypto as Crypto | undefined` 放宽类型
+- **顺带发现的真问题**：`crypto.randomUUID` 只在安全上下文可用 ——
+  iPad 走明文 HTTP 时它是 undefined。又一个"必须上 HTTPS"的理由
+
+**故障：状态栏残留"同步失败"**
+- 现象：outbox 已清零（说明同步成功），状态栏却still显示失败
+- 根因：「立即同步」按钮没走 `report` 回调，显示的是上一次自动触发的结果
+- 处理：手动和自动共用同一个上报路径
+- 教训：**离线系统里"骗人的状态显示"比崩溃更危险** ——
+  员工会以为没同步而重复操作
+
+---
+
 ## 模板
 
 ```
