@@ -63,9 +63,12 @@ PRICES = [
     ("dinner", "admission", "adult", 1899),
     ("dinner", "admission", "child", 999),
     ("dinner", "admission", "senior", 1599),
-    # 饮料按人无限续杯 —— 所以它是第二项人头费，不是单品
-    ("lunch", "drink", None, 250),
-    ("dinner", "drink", None, 250),
+    # 饮料按人无限续杯 —— 所以它是第二项人头费，不是单品。
+    # 儿童饮料另有价格；长者饮料按成人价，所以没有 senior 这一档。
+    ("lunch", "drink", "adult", 250),
+    ("lunch", "drink", "child", 150),
+    ("dinner", "drink", "adult", 250),
+    ("dinner", "drink", "child", 150),
 ]
 
 # ⚠️ 开发用弱口令。Step 3 上线前必须改，且改成每人独立的密码。
@@ -110,21 +113,26 @@ def seed() -> None:
             n += 1
         added["menu_item"] = n
 
-        # --- 人头价 ---
-        have_price = db.scalar(select(BuffetPrice.id).limit(1)) is not None
+        # --- 人头价：逐行幂等（不能整表判断，否则新增档位加不进去）---
+        existing_prices = {
+            (p.period_kind, p.charge_kind, p.guest_type, p.effective_from)
+            for p in db.scalars(select(BuffetPrice)).all()
+        }
         n = 0
-        if not have_price:
-            for kind, charge, guest, cents in PRICES:
-                db.add(
-                    BuffetPrice(
-                        period_kind=kind,
-                        charge_kind=charge,
-                        guest_type=guest,
-                        price_cents=cents,
-                        effective_from=date(2026, 1, 1),
-                    )
+        eff = date(2026, 1, 1)
+        for kind, charge, guest, cents in PRICES:
+            if (kind, charge, guest, eff) in existing_prices:
+                continue
+            db.add(
+                BuffetPrice(
+                    period_kind=kind,
+                    charge_kind=charge,
+                    guest_type=guest,
+                    price_cents=cents,
+                    effective_from=eff,
                 )
-                n += 1
+            )
+            n += 1
         added["buffet_price"] = n
 
         # --- 账号 ---

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { estimateCents, money, type PriceRow } from './catalog'
+import { estimateCents, money, type Drinks, type PriceRow } from './catalog'
 import type { Guests } from './checks'
 
 /**
@@ -21,16 +21,25 @@ export default function OpenSheet({
   prices: PriceRow[]
   period: 'lunch' | 'dinner'
   onCancel: () => void
-  onConfirm: (label: string, guests: Guests, drinks: number) => void | Promise<void>
+  onConfirm: (label: string, guests: Guests, drinks: Drinks) => void | Promise<void>
 }) {
   // 默认 2 位成人 —— 最常见的情况，很多时候直接点确认就完事
   const [guests, setGuests] = useState<Guests>({ adult: 2, child: 0, senior: 0 })
-  const [drinks, setDrinks] = useState(0)
+  const [drinks, setDrinks] = useState<Drinks>({ adult: 0, child: 0 })
   const [busy, setBusy] = useState(false)
 
   const total = guests.adult + guests.child + guests.senior
+  const totalDrinks = drinks.adult + drinks.child
   const est = estimateCents(prices, period, guests, drinks)
   // 饮料数**可以**超过吃 buffet 的人数 —— 陪同的人不吃自助只要饮料
+
+  // 一键：成人饮料 = 成人 + 长者（长者饮料按成人价），儿童饮料 = 儿童
+  const suggested: Drinks = { adult: guests.adult + guests.senior, child: guests.child }
+  const suggestionApplied =
+    drinks.adult === suggested.adult && drinks.child === suggested.child
+
+  const bumpDrink = (k: keyof Drinks, d: number) =>
+    setDrinks((v) => ({ ...v, [k]: Math.max(0, Math.min(99, v[k] + d)) }))
 
   const bump = (k: keyof Guests, d: number) =>
     setGuests((g) => ({ ...g, [k]: Math.max(0, Math.min(99, g[k] + d)) }))
@@ -62,18 +71,32 @@ export default function OpenSheet({
 
         <div className="stepper">
           <span className="sl">
-            饮料<small>（按人无限续）</small>
+            成人饮料<small>（长者同价 · 按人无限续）</small>
           </span>
-          <button onClick={() => setDrinks((d) => Math.max(0, d - 1))} disabled={drinks === 0}>
+          <button onClick={() => bumpDrink('adult', -1)} disabled={drinks.adult === 0}>
             −
           </button>
-          <span className="sv">{drinks}</span>
-          <button onClick={() => setDrinks((d) => Math.min(99, d + 1))}>+</button>
+          <span className="sv">{drinks.adult}</span>
+          <button onClick={() => bumpDrink('adult', 1)}>+</button>
         </div>
-        {/* 全员要饮料是高频操作，给个一键 */}
-        {total > 0 && drinks !== total && (
-          <button className="linkbtn wide" onClick={() => setDrinks(total)}>
-            全部 {total} 位都要饮料
+
+        <div className="stepper">
+          <span className="sl">
+            儿童饮料<small>（另有价格）</small>
+          </span>
+          <button onClick={() => bumpDrink('child', -1)} disabled={drinks.child === 0}>
+            −
+          </button>
+          <span className="sv">{drinks.child}</span>
+          <button onClick={() => bumpDrink('child', 1)}>+</button>
+        </div>
+
+        {/* 全员要饮料是高频操作。按人数自动分档：
+            成人+长者 → 成人饮料，儿童 → 儿童饮料 */}
+        {total > 0 && !suggestionApplied && (
+          <button className="linkbtn wide" onClick={() => setDrinks(suggested)}>
+            全部都要饮料（成人 {suggested.adult}
+            {suggested.child > 0 && ` · 儿童 ${suggested.child}`}）
           </button>
         )}
 
@@ -83,7 +106,7 @@ export default function OpenSheet({
           <button onClick={onCancel}>取消</button>
           <button
             className="primary"
-            disabled={busy || (total === 0 && drinks === 0)}
+            disabled={busy || (total === 0 && totalDrinks === 0)}
             onClick={async () => {
               setBusy(true)
               try {

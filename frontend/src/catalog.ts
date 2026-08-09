@@ -11,8 +11,14 @@ export interface TableInfo {
 export interface PriceRow {
   period_kind: 'lunch' | 'dinner'
   charge_kind: 'admission' | 'drink'
-  guest_type: 'adult' | 'child' | 'senior' | null
+  guest_type: 'adult' | 'child' | 'senior'
   price_cents: number
+}
+
+/** 饮料只有成人/儿童两档；长者饮料按成人价（店里的实际做法） */
+export interface Drinks {
+  adult: number
+  child: number
 }
 
 export interface Catalog {
@@ -58,9 +64,9 @@ export function estimateCents(
   prices: PriceRow[],
   period: 'lunch' | 'dinner',
   guests: { adult: number; child: number; senior: number },
-  drinks: number,
+  drinks: Drinks,
 ): number {
-  const find = (kind: 'admission' | 'drink', gt: string | null) =>
+  const find = (kind: 'admission' | 'drink', gt: string) =>
     prices.find(
       (p) => p.period_kind === period && p.charge_kind === kind && p.guest_type === gt,
     )?.price_cents ?? 0
@@ -69,7 +75,9 @@ export function estimateCents(
     guests.adult * find('admission', 'adult') +
     guests.child * find('admission', 'child') +
     guests.senior * find('admission', 'senior') +
-    drinks * find('drink', null)
+    // 饮料只有成人/儿童两档 —— 长者饮料按成人价
+    drinks.adult * find('drink', 'adult') +
+    drinks.child * find('drink', 'child')
   )
 }
 

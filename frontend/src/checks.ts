@@ -1,4 +1,4 @@
-import { estimateCents, loadCatalog, type PriceRow } from './catalog'
+import { estimateCents, loadCatalog, type Drinks, type PriceRow } from './catalog'
 import db, { uuid, type LocalCheck } from './db'
 import { enqueue } from './sync'
 
@@ -29,7 +29,15 @@ export async function applyCheckOp(
       child: g.child ?? 0,
       senior: g.senior ?? 0,
     }
-    const drinks = Number(payload.drinks ?? 0)
+    // 兼容旧格式：升级前排队的 op 里 drinks 是个整数
+    const rawD = payload.drinks
+    const drinks: Drinks =
+      typeof rawD === 'number'
+        ? { adult: rawD, child: 0 }
+        : {
+            adult: (rawD as Partial<Drinks>)?.adult ?? 0,
+            child: (rawD as Partial<Drinks>)?.child ?? 0,
+          }
     const cat = await loadCatalog()
     const prices: PriceRow[] = cat?.prices ?? []
 
@@ -41,7 +49,8 @@ export async function applyCheckOp(
       status: 'open',
       opened_at: clientTs,
       ...guests,
-      drinks,
+      drink_adult: drinks.adult,
+      drink_child: drinks.child,
       est_cents: estimateCents(
         prices,
         cat?.current_period_kind ?? 'dinner',
@@ -61,7 +70,7 @@ export async function applyCheckOp(
 export async function openTable(
   tableLabel: string,
   guests: Guests,
-  drinks: number,
+  drinks: Drinks,
 ): Promise<string> {
   const payload = { table_label: tableLabel, guests, drinks }
   // enqueue 内部生成 op_id，这里要拿到它作为 check_uuid，

@@ -19,7 +19,7 @@ from ..models import BuffetPrice
 
 def resolve_head_prices(
     db: Session, period_kind: str, on: date
-) -> dict[tuple[str, str | None], int]:
+) -> dict[tuple[str, str], int]:
     """返回 {(charge_kind, guest_type): price_cents}。
 
     取 effective_from <= on 里最新的一条 —— 改价是**新增一行**而不是
@@ -34,7 +34,7 @@ def resolve_head_prices(
         .order_by(BuffetPrice.effective_from)
     ).all()
 
-    out: dict[tuple[str, str | None], int] = {}
+    out: dict[tuple[str, str], int] = {}
     for r in rows:  # 按 effective_from 升序，后面的覆盖前面的
         out[(r.charge_kind, r.guest_type)] = r.price_cents
     return out

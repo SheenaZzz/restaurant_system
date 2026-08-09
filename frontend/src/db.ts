@@ -36,7 +36,8 @@ export interface LocalCheck {
   adult: number
   child: number
   senior: number
-  drinks: number
+  drink_adult: number
+  drink_child: number
   /** 客户端按缓存价估的金额，**仅供显示**；落库金额以服务端为准 */
   est_cents: number
   /** 0 = 还没被服务端确认 */

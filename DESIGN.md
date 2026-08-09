@@ -140,12 +140,12 @@ CREATE TABLE head_charge (
   id               BIGSERIAL PRIMARY KEY,
   check_id         BIGINT NOT NULL REFERENCES "check"(id),
   kind             TEXT   NOT NULL CHECK (kind IN ('admission','drink')),
-  guest_type       TEXT   CHECK (guest_type IN ('adult','child','senior')),
+  guest_type       TEXT   NOT NULL CHECK (guest_type IN ('adult','child','senior')),
   qty              INT    NOT NULL CHECK (qty > 0),
   unit_price_cents INT    NOT NULL,
-  -- 入场费必须分成人/儿童/长者；饮料不分
-  CONSTRAINT admission_needs_guest_type
-    CHECK (kind <> 'admission' OR guest_type IS NOT NULL)
+  -- 饮料只有成人/儿童两档；长者饮料按成人价
+  CONSTRAINT ck_head_drink_tier
+    CHECK (kind <> 'drink' OR guest_type IN ('adult','child'))
 );
 
 -- 单品计费
@@ -177,11 +177,17 @@ CREATE TABLE order_line (
 
 ```
 check #1042  table A7  dine_in
-├─ head_charge  admission  adult  ×2  @ $16.99    ← 入场费
-├─ head_charge  admission  child  ×1  @ $8.99     ← 入场费
-├─ head_charge  drink      —      ×3  @ $2.50     ← 饮料，按人无限续
+├─ head_charge  admission  adult  ×2  @ $18.99    ← 入场费
+├─ head_charge  admission  child  ×1  @ $9.99     ← 入场费
+├─ head_charge  drink      adult  ×2  @ $2.50     ← 成人饮料（长者同价）
+├─ head_charge  drink      child  ×1  @ $1.50     ← 儿童饮料，另有价格
 └─ order_line   Crab Rangoon     ×1  @ $6.99      ← 单点，进后厨
 ```
+
+**饮料分成人/儿童两档**，长者饮料按成人价 —— 所以 `drink` 的
+`guest_type` 只有 `adult` / `child` 两个取值（数据库层用
+`ck_head_drink_tier` 约束住）。前台有一键按钮按人数自动分档：
+成人+长者 → 成人饮料，儿童 → 儿童饮料。
 
 一桌 3 人全要饮料 → `drink ×3`；只有 2 个人要 → `drink ×2`。
 **与实际喝了几杯无关。**

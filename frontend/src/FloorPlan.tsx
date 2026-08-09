@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { loadCatalog, money, refreshCatalog, type Catalog } from './catalog'
 import { closeTable, openChecksByTable, openTable, type Guests } from './checks'
+import type { Drinks } from './catalog'
 import type { LocalCheck } from './db'
 import OpenSheet from './OpenSheet'
 
@@ -28,7 +29,7 @@ export default function FloorPlan() {
     return <p className="hint">首次使用需要联网加载一次桌位和菜单…</p>
   }
 
-  async function confirmOpen(label: string, guests: Guests, drinks: number) {
+  async function confirmOpen(label: string, guests: Guests, drinks: Drinks) {
     await openTable(label, guests, drinks)
     setSheetFor(null)
     await reload()
@@ -65,7 +66,8 @@ export default function FloorPlan() {
                       <>
                         <span className="tguests">
                           {chk.adult + chk.child + chk.senior} 人
-                          {chk.drinks > 0 && ` · ${chk.drinks} 饮`}
+                          {chk.drink_adult + chk.drink_child > 0 &&
+                            ` · ${chk.drink_adult + chk.drink_child} 饮`}
                         </span>
                         <span className="tmoney">{money(chk.est_cents)}</span>
                       </>
@@ -95,7 +97,8 @@ export default function FloorPlan() {
             <h2>{detailFor.table_label}</h2>
             <p className="muted">
               成人 {detailFor.adult} · 儿童 {detailFor.child} · 长者 {detailFor.senior}
-              {detailFor.drinks > 0 && ` · 饮料 ${detailFor.drinks}`}
+              {detailFor.drink_adult > 0 && ` · 成人饮料 ${detailFor.drink_adult}`}
+              {detailFor.drink_child > 0 && ` · 儿童饮料 ${detailFor.drink_child}`}
             </p>
             <p className="total">{money(detailFor.est_cents)}</p>
             <p className="hint">

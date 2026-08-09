@@ -98,9 +98,11 @@ class BuffetPrice(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     period_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    # 'admission' 按 guest_type 分档；'drink' 不分
     charge_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    guest_type: Mapped[str | None] = mapped_column(Text)
+    # 两种计费都按 guest_type 分档。
+    # 注意 drink 只有 adult / child 两档 —— 长者饮料按成人价，
+    # 这是店里的实际做法，不是简化。
+    guest_type: Mapped[str] = mapped_column(Text, nullable=False)
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
 
@@ -108,12 +110,12 @@ class BuffetPrice(Base):
         CheckConstraint("period_kind IN ('lunch','dinner')", name="ck_bp_period"),
         CheckConstraint("charge_kind IN ('admission','drink')", name="ck_bp_kind"),
         CheckConstraint(
-            "guest_type IS NULL OR guest_type IN ('adult','child','senior')",
-            name="ck_bp_guest_type",
+            "guest_type IN ('adult','child','senior')", name="ck_bp_guest_type"
         ),
+        # 饮料只有成人/儿童两档；长者饮料按成人价
         CheckConstraint(
-            "charge_kind <> 'admission' OR guest_type IS NOT NULL",
-            name="ck_bp_admission_needs_guest_type",
+            "charge_kind <> 'drink' OR guest_type IN ('adult','child')",
+            name="ck_bp_drink_tier",
         ),
         CheckConstraint("price_cents >= 0", name="ck_bp_price_nonneg"),
     )
@@ -204,20 +206,20 @@ class HeadCharge(Base):
         ForeignKey("dining_check.id", ondelete="CASCADE"), nullable=False
     )
     kind: Mapped[str] = mapped_column(Text, nullable=False)
-    guest_type: Mapped[str | None] = mapped_column(Text)
+    # 两种计费都必须分档 —— 饮料也要，因为儿童饮料另有价格
+    guest_type: Mapped[str] = mapped_column(Text, nullable=False)
     qty: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
 
     __table_args__ = (
         CheckConstraint("kind IN ('admission','drink')", name="ck_head_kind"),
         CheckConstraint(
-            "guest_type IS NULL OR guest_type IN ('adult','child','senior')",
-            name="ck_head_guest_type",
+            "guest_type IN ('adult','child','senior')", name="ck_head_guest_type"
         ),
-        # 入场费必须分成人/儿童/长者；饮料不分
+        # 饮料只有成人/儿童两档；长者饮料按成人价
         CheckConstraint(
-            "kind <> 'admission' OR guest_type IS NOT NULL",
-            name="ck_head_admission_needs_guest_type",
+            "kind <> 'drink' OR guest_type IN ('adult','child')",
+            name="ck_head_drink_tier",
         ),
         CheckConstraint("qty > 0", name="ck_head_qty_pos"),
         CheckConstraint("unit_price_cents >= 0", name="ck_head_price_nonneg"),
