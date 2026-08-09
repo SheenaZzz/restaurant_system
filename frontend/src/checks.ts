@@ -92,14 +92,39 @@ export async function applyCheckOp(
   } else if (entity === 'void_check') {
     const cu = String(payload.check_uuid ?? '')
     const row = await db.checks.get(cu)
-    if (row) {
+    if (row && row.status !== 'voided') {
       await db.checks.put({
         ...row,
+        // 记下作废前的状态 —— 撤销时要恢复成它，
+        // 否则一张"已结→作废"的单撤销后会变回"未结"，桌子凭空又占上了
+        pre_void_status: row.status,
         status: 'voided',
         void_reason: String(payload.reason ?? ''),
       })
     }
+  } else if (entity === 'restore_check') {
+    const cu = String(payload.check_uuid ?? '')
+    const row = await db.checks.get(cu)
+    if (row && row.status === 'voided') {
+      await db.checks.put({
+        ...row,
+        status: row.pre_void_status ?? 'open',
+        pre_void_status: undefined,
+        void_reason: undefined,
+      })
+    }
   }
+}
+
+/** 撤销作废，恢复回作废前的状态。原因选填。 */
+export async function restoreTable(checkUuid: string, reason?: string): Promise<void> {
+  const payload = { check_uuid: checkUuid, reason: reason ?? '' }
+  const opId = uuid()
+  await enqueue('restore_check', payload, opId)
+  await applyCheckOp('restore_check', opId, payload, new Date().toISOString(), {
+    synced: 0,
+    remote: 0,
+  })
 }
 
 /** 改单：**整体替换**人数与饮料（不是增量），重放安全。 */

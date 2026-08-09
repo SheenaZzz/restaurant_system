@@ -46,6 +46,8 @@ export interface LocalCheck {
   remote: 0 | 1
   /** 作废原因（仅 voided） */
   void_reason?: string
+  /** 作废前的状态，撤销时恢复成它 */
+  pre_void_status?: 'open' | 'closed'
 }
 
 const db = new Dexie('restaurant') as Dexie & {

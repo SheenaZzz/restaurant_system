@@ -4,6 +4,7 @@ import { loadCatalog, money, type Drinks, type PriceRow } from './catalog'
 import {
   allChecks,
   modifyTable,
+  restoreTable,
   totalsOf,
   voidTable,
   type Guests,
@@ -122,7 +123,19 @@ export default function ListView({ role }: { role: Role }) {
               </td>
               {manage && (
                 <td className="ops">
-                  {c.status === 'open' && (
+                  {/* 已结账的单**也能改和作废** —— 结完账才发现录错是常事。
+                      已作废的只提供"恢复"，要改先撤销作废。 */}
+                  {c.status === 'voided' ? (
+                    <button
+                      className="restore"
+                      onClick={async () => {
+                        await restoreTable(c.check_uuid)
+                        await reload()
+                      }}
+                    >
+                      恢复
+                    </button>
+                  ) : (
                     <>
                       <button onClick={() => setEditing(c)}>改单</button>
                       <button
@@ -163,8 +176,9 @@ export default function ListView({ role }: { role: Role }) {
             <h2>作废 {voiding.table_label}</h2>
             <p className="total">{money(voiding.est_cents)}</p>
             <p className="hint">
-              作废是唯一能让一整张单的钱消失的操作，**必须填写原因**，
-              且会记录操作人并进老板的报表。
+              作废会把这单从营业额里剔除。**必须填写原因**，会记录操作人并进
+              老板的报表。作废后可以随时「恢复」——
+              {voiding.status === 'closed' && ' 恢复后仍是已结账状态，结账时间不变。'}
             </p>
             <label className="reason">
               原因

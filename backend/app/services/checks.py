@@ -183,7 +183,7 @@ def close_check(db: Session, payload: dict, client_ts: datetime) -> None:
     chk.closed_at = client_ts
 
 
-def _load_open_check(db: Session, payload: dict) -> DiningCheck:
+def _load_check(db: Session, payload: dict) -> DiningCheck:
     raw = payload.get("check_uuid")
     try:
         cu = uuidlib.UUID(str(raw))
@@ -208,9 +208,12 @@ def modify_check(db: Session, payload: dict, client_ts: datetime) -> None:
     价格用**这张单当初所属时段**的价格重算，不是当前时段 ——
     晚上改一张午市的单，不能按晚市价收。
     """
-    chk = _load_open_check(db, payload)
-    if chk.status != "open":
-        raise BusinessError(f"只能修改未结账单（当前 {chk.status}）")
+    chk = _load_check(db, payload)
+    # 已结账的单**也允许改** —— 结完账才发现录错人数是常事。
+    # 唯一挡住的是已作废：要先撤销作废再改，否则语义含糊
+    #（改一张作废单意味着什么？）。
+    if chk.status == "voided":
+        raise BusinessError("已作废的单请先撤销作废再修改")
 
     guests: dict[str, int] = {}
     guests_raw = payload.get("guests") or {}
@@ -266,11 +269,9 @@ def void_check(db: Session, payload: dict, client_ts: datetime,
       ② 可归因到人
       ③ 在异常表里留痕，进老板的报表
     """
-    chk = _load_open_check(db, payload)
+    chk = _load_check(db, payload)
     if chk.status == "voided":
         return  # 幂等
-    if chk.status == "closed":
-        raise BusinessError("已结账的单不能作废，请走退单流程")
 
     reason = payload.get("reason")
     if not isinstance(reason, str) or not reason.strip():
@@ -281,8 +282,11 @@ def void_check(db: Session, payload: dict, client_ts: datetime,
         .where(HeadCharge.check_id == chk.id)
     ) or 0
 
+    # 记下作废前是什么状态，撤销时恢复成它。
+    # **不动 closed_at** —— 那是结账时间，跟作废是两回事。
+    chk.pre_void_status = chk.status
     chk.status = "voided"
-    chk.closed_at = client_ts
+    chk.voided_at = client_ts
 
     db.add(
         CheckException(
@@ -294,3 +298,66 @@ def void_check(db: Session, payload: dict, client_ts: datetime,
             recorded_at=client_ts,
         )
     )
+
+
+def restore_check(db: Session, payload: dict, client_ts: datetime,
+                  user_id: int | None) -> None:
+    """撤销作废，把单恢复回作废前的状态。
+
+    作废是可逆的 —— 误作废是很常见的操作失误，没有撤销就只能重新录一遍，
+    而重录会丢掉原始的开台时间和操作人。
+
+    **不删除原来的作废记录**，只在上面盖一个"已撤销"的戳。
+    "先作废一张 $120 的单、十分钟后又恢复" 本身就是老板该看见的信号；
+    删掉记录等于把这个信号也删了。
+
+    原因**选填** —— 危险的方向（作废）要求说明理由，
+    纠错的方向（恢复）不该增加摩擦。
+    """
+    chk = _load_check(db, payload)
+    if chk.status != "voided":
+        return  # 幂等：已经是正常状态
+
+    reason = payload.get("reason")
+    reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
+
+    target = chk.pre_void_status or "open"
+
+    # ⚠️ 真实边界：作废之后这张桌空出来了，很可能已经被重新开了新单。
+    #    这时恢复会造成"同一张桌两张未结单"，撞唯一约束 ——
+    #    数据库会挡住，但报出来是 UniqueViolation，主管看不懂。
+    #    这里提前检查并给出能看懂的话。
+    if target == "open" and chk.table_id is not None:
+        conflict = db.scalar(
+            select(DiningCheck.id).where(
+                DiningCheck.table_id == chk.table_id,
+                DiningCheck.status == "open",
+                DiningCheck.id != chk.id,
+            )
+        )
+        if conflict is not None:
+            table = db.get(DiningTable, chk.table_id)
+            raise BusinessError(
+                f"{table.label if table else '该桌'} 已经有另一张未结账单，"
+                "无法恢复这一张。请先结掉或作废那一张。"
+            )
+
+    chk.status = target
+    chk.pre_void_status = None
+    chk.voided_at = None
+
+    # 给最近一条未撤销的作废记录盖戳
+    exc = db.scalars(
+        select(CheckException)
+        .where(
+            CheckException.check_id == chk.id,
+            CheckException.kind == "void",
+            CheckException.reverted_at.is_(None),
+        )
+        .order_by(CheckException.recorded_at.desc())
+        .limit(1)
+    ).first()
+    if exc is not None:
+        exc.reverted_at = client_ts
+        exc.reverted_by = user_id
+        exc.revert_reason = reason

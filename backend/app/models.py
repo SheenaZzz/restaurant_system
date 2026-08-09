@@ -167,6 +167,12 @@ class DiningCheck(Base):
     closed_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     opened_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
 
+    # 作废是**可撤销**的，所以它不能复用 closed_at ——
+    # 否则恢复一张「已结 → 作废」的单时，原本的结账时间就永久丢了。
+    voided_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    # 作废前是什么状态，撤销时恢复成它
+    pre_void_status: Mapped[str | None] = mapped_column(Text)
+
     __table_args__ = (
         CheckConstraint("source IN ('dine_in','pickup')", name="ck_check_source"),
         CheckConstraint(
@@ -350,6 +356,13 @@ class CheckException(Base):
     # 超过阈值需 admin 事后追认
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     approved_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+
+    # 撤销痕迹。**绝不删除原记录** —— "先作废一张 $120 的单、
+    # 十分钟后又恢复" 本身就是老板该看见的信号。
+    # 删掉就等于把这个信号也删了。
+    reverted_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    reverted_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    revert_reason: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         CheckConstraint(

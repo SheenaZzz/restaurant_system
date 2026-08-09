@@ -18,7 +18,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .schemas import SyncOpIn
-from .services.checks import close_check, modify_check, open_check, void_check
+from .services.checks import (
+    close_check,
+    modify_check,
+    open_check,
+    restore_check,
+    void_check,
+)
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +39,7 @@ _HANDLERS: dict[str, frozenset[str]] = {
     "close_check": _FRONT,
     "modify_check": _FRONT_MANAGER,
     "void_check": _FRONT_MANAGER,
+    "restore_check": _FRONT_MANAGER,
     # 骨架探针，Step 5 删除
     "ping_event": _FRONT | {"kitchen"},
 }
@@ -51,6 +58,9 @@ def _apply_effect(db: Session, op: SyncOpIn, user) -> None:
 
     elif op.entity == "void_check":
         void_check(db, op.payload, op.client_ts, user.id if user else None)
+
+    elif op.entity == "restore_check":
+        restore_check(db, op.payload, op.client_ts, user.id if user else None)
 
     elif op.entity == "ping_event":
         label = op.payload.get("label")

@@ -491,3 +491,8 @@ ul.dl li { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .dl-top { display: flex; align-items: center; gap: 10px; }
 .dl-reason { margin: 6px 0; color: var(--bad); font-size: 14px; word-break: break-word; }
 .dl-payload { display: block; color: var(--muted); font-size: 12px; word-break: break-all; }
+
+.orders .ops button.restore {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
