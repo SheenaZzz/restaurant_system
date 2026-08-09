@@ -61,9 +61,11 @@ docker compose exec api alembic history         # 迁移历史
 docker compose down -v && docker compose up -d --build
 ```
 
-> ⚠️ `-v` 会删掉**所有**数据卷 —— 包括 `caddy_data`，也就是**本地 CA 根证书会重新生成**，
-> 之前装到 iPad 上的证书立刻失效，必须重新导出安装。
-> Step 7 上线之后**绝对不要**对生产执行。
+> ⚠️ `-v` 会删掉所有**命名卷**（数据库数据）。Step 7 上线之后**绝对不要**对生产执行。
+>
+> 本地 CA 已改为绑定挂载在 `ops/caddy-data/`，**不受 `-v` 影响** ——
+> 所以 iPad 上装过的根证书一直有效，不用反复重装。
+> 这个目录里有 CA **私钥**，已在 `.gitignore` 排除，绝不能提交。
 
 ## 验收测试（Step 1）
 
@@ -147,6 +149,7 @@ curl -s localhost:8000/api/debug/count
 |---|---|
 | `docker: command not found` | Docker Desktop 是用户级安装；**开个新终端**让 PATH 生效 |
 | API 起不来，日志报连不上 db | 正常重试中；`depends_on: service_healthy` 会等 healthcheck |
-| 改了 `db/init/*.sql` 不生效 | 初始化脚本只在空卷时执行 → `docker compose down -v` |
+| 改了模型但 schema 没变 | 生成迁移后必须 `docker compose build api`，迁移是 COPY 进镜像的 |
+| iPad 上装了多张同名 Caddy 证书 | 名字都是 `Caddy Local Authority - 2026 ECC Root`，肉眼分不出。**全删掉重装一张**即可，旧 CA 私钥已不存在 |
 | iPad 上 Service Worker 不注册 | 必须 HTTPS；且根证书要在「证书信任设置」里额外打开 |
 | iPad 装到主屏幕后数据没了 | 主屏幕 App 与 Safari **存储隔离** → 先装再用 |

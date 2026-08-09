@@ -49,12 +49,15 @@ services:
     volumes:
       - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./frontend/dist:/srv:ro
-      - caddy_data:/data
+      # ⚠️ 用绑定挂载而不是命名卷：本地 CA 的私钥存在这里，
+      #    放命名卷里会被 `docker compose down -v` 一起删掉 ——
+      #    CA 一换，所有 iPad 上装的根证书立刻失效，必须重装。
+      #    （里面有私钥，已在 .gitignore 排除）
+      - ./ops/caddy-data:/data
       - caddy_config:/config
     depends_on:
       - api
 
 volumes:
   pgdata:
-  caddy_data:
   caddy_config:
