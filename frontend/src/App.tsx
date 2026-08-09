@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { getIdentity, logout, type Identity } from './auth'
 import db from './db'
+import LoginPage from './LoginPage'
 import {
   enqueue,
   installSyncTriggers,
@@ -8,7 +10,16 @@ import {
   type SyncResult,
 } from './sync'
 
+const ROLE_LABEL: Record<Identity['role'], string> = {
+  front: '前台',
+  kitchen: '后厨',
+  admin: '老板',
+}
+
 export default function App() {
+  const [booting, setBooting] = useState(true)
+  const [identity, setIdentity] = useState<Identity | null>(null)
+
   const [pending, setPending] = useState(0)
   const [events, setEvents] = useState<
     { op_id: string; label: string; created_at: string; synced: 0 | 1; remote: 0 | 1 }[]
@@ -17,6 +28,14 @@ export default function App() {
   const [last, setLast] = useState<string>('—')
   const [tone, setTone] = useState<'ok' | 'warn' | 'bad'>('ok')
   const [dead, setDead] = useState(0)
+
+  // 身份从 IndexedDB 读，**不需要网络** ——
+  // 离线冷启动时也能立刻渲染出正确的角色界面
+  useEffect(() => {
+    getIdentity()
+      .then(setIdentity)
+      .finally(() => setBooting(false))
+  }, [])
 
   async function refresh() {
     setPending(await db.outbox.count())
@@ -35,6 +54,11 @@ export default function App() {
       // 关键：离线**不是错误**。说成"失败"会让员工重复操作。
       setLast('离线，数据已排队，联网后自动补发')
       setTone('warn')
+    } else if (f?.kind === 'auth') {
+      // 会话没了，但**数据仍在排队**，这点必须说清楚
+      setLast('会话已失效，请重新登录（数据仍在排队）')
+      setTone('bad')
+      void getIdentity().then(setIdentity)
     } else {
       setLast(`同步出错：${f?.message ?? '未知'}`)
       setTone('bad')
@@ -43,6 +67,8 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!identity) return
+
     const on = () => setOnline(true)
     const off = () => setOnline(false)
     window.addEventListener('online', on)
@@ -56,22 +82,41 @@ export default function App() {
       window.removeEventListener('offline', off)
       uninstall()
     }
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity?.username])
 
   async function tap() {
     await enqueue('ping_event', { label: `tap @ ${new Date().toLocaleTimeString()}` })
     await refresh()
   }
 
+  if (booting) return <div className="wrap">载入中…</div>
+  if (!identity) return <LoginPage onDone={setIdentity} />
+
   return (
     <div className="wrap">
       <header>
         <span className={online ? 'dot ok' : 'dot bad'} />
         <strong>{online ? '在线' : '离线'}</strong>
+        <span className="who">
+          {identity.display_name}
+          <span className={`role ${identity.role}`}>{ROLE_LABEL[identity.role]}</span>
+        </span>
         <span className="grow" />
         <span className={pending ? 'badge warn' : 'badge'}>待同步 {pending}</span>
         {dead > 0 && <span className="badge bad">失败 {dead}</span>}
         <span className="badge build">build {__BUILD__}</span>
+        <button
+          className="linkbtn"
+          onClick={async () => {
+            // 登出只清凭证，**不动 outbox** —— 未同步的记录属于店里，
+            // 换个人登进来照样要发出去
+            await logout()
+            setIdentity(null)
+          }}
+        >
+          登出
+        </button>
       </header>
 
       <button className="big" onClick={tap}>
@@ -97,6 +142,14 @@ export default function App() {
         </button>
         <code className={`status ${tone}`}>{last}</code>
       </div>
+
+      {identity.role === 'admin' && (
+        <p className="note">
+          你是 <b>admin</b>，可以访问 <code>/api/admin/summary</code>。
+          前台和后厨账号访问同一端点会收到 <b>403</b> —— 这个判断在**服务端**，
+          改前端没用。
+        </p>
+      )}
 
       <ul>
         {events.map((e) => (

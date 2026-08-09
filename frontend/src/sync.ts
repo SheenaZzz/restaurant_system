@@ -1,3 +1,4 @@
+import { authFetch } from './auth'
 import db, {
   clientId,
   getMeta,
@@ -22,12 +23,13 @@ export type SyncResult = {
  * 同步失败的两种性质完全不同，绝不能混为一谈：
  *
  * - `offline`：网络不通。**这是正常状态**，数据安全地排在 outbox 里。
+ * - `auth`：会话失效，需要重新登录。数据仍然安全排队。
  * - `error`：连上了但服务端出错。这才需要人介入。
  *
  * 之前统一显示"同步失败"是个真问题 —— 服务员看到"失败"会重复操作，
  * 而在餐馆里，一个骗人的状态提示比崩溃更危险。
  */
-export type SyncFailure = { kind: 'offline' | 'error'; message: string }
+export type SyncFailure = { kind: 'offline' | 'auth' | 'error'; message: string }
 
 /** 单次请求的硬超时。Fetch API **没有默认超时** —— 见下方 STUCK_MS 的说明。 */
 const FETCH_TIMEOUT = 10_000
@@ -150,7 +152,7 @@ async function doSync(): Promise<SyncResult | null> {
   const ctrl = new AbortController()
   const timer = window.setTimeout(() => ctrl.abort(), FETCH_TIMEOUT)
   try {
-    res = await fetch('/api/sync', {
+    res = await authFetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
@@ -167,6 +169,14 @@ async function doSync(): Promise<SyncResult | null> {
     throw f
   } finally {
     window.clearTimeout(timer)
+  }
+
+  if (res.status === 401) {
+    // authFetch 已经试过续期了，还是 401 说明会话真的没了。
+    // **绝不清空 outbox** —— 未同步的记录属于店里，
+    // 重新登录后照样要发出去。
+    const f: SyncFailure = { kind: 'auth', message: '会话已失效，请重新登录' }
+    throw f
   }
 
   if (!res.ok) {

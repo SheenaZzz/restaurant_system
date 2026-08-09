@@ -143,6 +143,36 @@ curl -s localhost:8000/api/debug/count
 > 买了域名之后换成 Caddyfile 里的生产块（Let's Encrypt DNS-01），
 > iPad 就不需要装任何证书了。
 
+## 账号（开发用）
+
+| 账号 | 角色 | 密码 | PIN |
+|---|---|---|---|
+| `front` | front | `front-dev-pw` | 1111 |
+| `kitchen` | kitchen | `kitchen-dev-pw` | 2222 |
+| `admin` | admin | `admin-dev-pw` | — |
+
+⚠️ 上线前必须改成每人独立的强密码，并把 `.env` 里的 `JWT_SECRET` 换成随机值：
+
+```bash
+python -c "import secrets;print(secrets.token_urlsafe(48))"
+```
+
+会话时长按角色区分：员工 30 天（高峰期不可能让人反复打密码），
+admin 12 小时（走公网暴露的入口，寿命必须短）。
+
+## 验收测试（Step 3 认证）
+
+```bash
+# 未认证访问 sync → 401
+curl -s -o /dev/null -w "%{http_code}
+" -X POST localhost:8000/api/sync -H 'Content-Type: application/json' -d '{"client_id":"x","since_cursor":0,"ops":[]}'
+
+# front 登录后调 admin 端点 → 403
+FT=$(curl -s -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' -d '{"username":"front","password":"front-dev-pw","client_id":"t"}' | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+curl -s -o /dev/null -w "%{http_code}
+" localhost:8000/api/admin/summary -H "Authorization: Bearer $FT"
+```
+
 ## 排障
 
 | 现象 | 原因 / 处理 |

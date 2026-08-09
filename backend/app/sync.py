@@ -44,8 +44,13 @@ def _apply_effect(db: Session, op: SyncOpIn) -> None:
         raise ValueError(f"未知实体: {op.entity}")
 
 
-def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn]):
-    """逐条幂等地应用操作。返回 (applied, duplicate, rejected)。"""
+def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn], user=None):
+    """逐条幂等地应用操作。返回 (applied, duplicate, rejected)。
+
+    `user` 来自服务端验过的 access token，**不是客户端自称的身份**。
+    每条 op 都记下 user_id —— 逃单、免单、作废这些操作必须能追到人，
+    否则内控无从谈起。
+    """
     applied: list = []
     duplicate: list = []
     rejected: list = []
@@ -65,9 +70,10 @@ def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn]):
                     text(
                         """
                         INSERT INTO sync_op
-                            (op_id, client_id, entity, op_type, payload, client_seq, client_ts)
+                            (op_id, client_id, user_id, entity, op_type, payload,
+                             client_seq, client_ts)
                         VALUES
-                            (:op_id, :client_id, :entity, :op_type,
+                            (:op_id, :client_id, :user_id, :entity, :op_type,
                              CAST(:payload AS jsonb), :client_seq, :client_ts)
                         ON CONFLICT (op_id) DO NOTHING
                         RETURNING op_id
@@ -76,6 +82,7 @@ def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn]):
                     {
                         "op_id": str(op.op_id),
                         "client_id": client_id,
+                        "user_id": user.id if user else None,
                         "entity": op.entity,
                         "op_type": op.op_type,
                         "payload": json.dumps(op.payload),
