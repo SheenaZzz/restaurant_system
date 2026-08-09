@@ -30,8 +30,7 @@ export default function OpenSheet({
 
   const total = guests.adult + guests.child + guests.senior
   const est = estimateCents(prices, period, guests, drinks)
-  // 饮料按人无限续 —— 要饮料的人数不可能超过总人数
-  const drinksInvalid = drinks > total
+  // 饮料数**可以**超过吃 buffet 的人数 —— 陪同的人不吃自助只要饮料
 
   const bump = (k: keyof Guests, d: number) =>
     setGuests((g) => ({ ...g, [k]: Math.max(0, Math.min(99, g[k] + d)) }))
@@ -79,15 +78,12 @@ export default function OpenSheet({
         )}
 
         <p className="total">{money(est)}</p>
-        {drinksInvalid && (
-          <p className="err">要饮料的人数不能超过总人数（{total}）</p>
-        )}
 
         <div className="sheet-actions">
           <button onClick={onCancel}>取消</button>
           <button
             className="primary"
-            disabled={busy || total === 0 || drinksInvalid}
+            disabled={busy || (total === 0 && drinks === 0)}
             onClick={async () => {
               setBusy(true)
               try {
@@ -97,7 +93,7 @@ export default function OpenSheet({
               }
             }}
           >
-            {busy ? '…' : `开桌 ${total} 人`}
+            {busy ? '…' : total === 0 ? '开桌（仅饮料）' : `开桌 ${total} 人`}
           </button>
         </div>
       </div>

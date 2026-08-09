@@ -54,12 +54,17 @@ def open_check(db: Session, op_id: uuidlib.UUID, payload: dict, client_ts: datet
         raise BusinessError(f"饮料数非法: {drinks!r}")
 
     total_guests = sum(guests.values())
-    if total_guests == 0:
-        raise BusinessError("至少要有一位客人")
-    if drinks > total_guests:
-        # 饮料是**按人**无限续杯，所以要饮料的人数不可能超过总人数。
-        # 这条约束能挡住"手滑多点了几下加号"。
-        raise BusinessError(f"要饮料的人数({drinks})不能超过总人数({total_guests})")
+
+    # ⚠️ 饮料数**可以超过**吃 buffet 的人数 ——
+    #    陪同的人不吃自助、只要一杯饮料，是很常见的情况。
+    #    （原本这里挡了 drinks > guests，是把业务规则想窄了。）
+    #
+    #    由此产生的一个建模后果：admission 的人数 = **吃 buffet 的人数**，
+    #    不等于坐在桌上的人数。后面做消耗率预测时要的正是前者
+    #    （只有吃的人才消耗菜），所以这个口径是对的 —— 但如果将来
+    #    要统计真实上座率，需要另外记一个字段。
+    if total_guests == 0 and drinks == 0:
+        raise BusinessError("至少要有一位客人或一份饮料")
 
     # ⚠️ 用 op 的 client_ts 而不是服务端当前时间：
     # 离线两小时后补发的单，必须落在**当时**那个营业时段里
