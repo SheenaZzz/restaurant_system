@@ -560,3 +560,21 @@ ul.pick input { width: 22px; height: 22px; }
   line-height: 1.7;
 }
 .preview .total.small { font-size: 20px; margin: 4px 0 0; }
+
+/* 详情页里的次级动作：一行铺开，手指目标够大 */
+.actiongrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  margin: 18px 0 4px;
+}
+.actiongrid button {
+  padding: 14px 10px;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.tmoney .svc { color: var(--warn); }

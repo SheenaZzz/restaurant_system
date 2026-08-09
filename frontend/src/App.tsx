@@ -159,7 +159,7 @@ export default function App() {
           </button>
         </>
       ) : view === 'floor' ? (
-        <FloorPlan />
+        <FloorPlan role={identity.role} />
       ) : (
         <ListView role={identity.role} />
       )}
