@@ -20,9 +20,12 @@ from sqlalchemy.orm import Session
 from .schemas import SyncOpIn
 from .services.checks import (
     close_check,
+    merge_checks,
     modify_check,
     open_check,
     restore_check,
+    set_payment,
+    transfer_check,
     void_check,
 )
 
@@ -37,6 +40,11 @@ _FRONT_MANAGER = frozenset({"front_manager", "admin"})
 _HANDLERS: dict[str, frozenset[str]] = {
     "open_check": _FRONT,
     "close_check": _FRONT,
+    # 换桌、并桌、改支付方式都不涉及金额增减，给普通员工 ——
+    # 每次都要找主管的摩擦太大，反而会导致干脆不记
+    "transfer_check": _FRONT,
+    "merge_checks": _FRONT,
+    "set_payment": _FRONT,
     "modify_check": _FRONT_MANAGER,
     "void_check": _FRONT_MANAGER,
     "restore_check": _FRONT_MANAGER,
@@ -61,6 +69,15 @@ def _apply_effect(db: Session, op: SyncOpIn, user) -> None:
 
     elif op.entity == "restore_check":
         restore_check(db, op.payload, op.client_ts, user.id if user else None)
+
+    elif op.entity == "transfer_check":
+        transfer_check(db, op.payload, op.client_ts)
+
+    elif op.entity == "merge_checks":
+        merge_checks(db, op.payload, op.client_ts)
+
+    elif op.entity == "set_payment":
+        set_payment(db, op.payload, op.client_ts)
 
     elif op.entity == "ping_event":
         label = op.payload.get("label")
@@ -167,12 +184,14 @@ def fetch_changes(db: Session, since_cursor: int, client_id: str, limit: int = 5
     rows = db.execute(
         text(
             """
-            SELECT seq, op_id, client_id, entity, client_ts, payload
-              FROM sync_op
-             WHERE seq > :since
-               AND applied_at IS NOT NULL
-               AND client_id <> :client_id
-             ORDER BY seq
+            SELECT s.seq, s.op_id, s.client_id, s.entity, s.client_ts, s.payload,
+                   u.display_name AS user_display
+              FROM sync_op s
+              LEFT JOIN app_user u ON u.id = s.user_id
+             WHERE s.seq > :since
+               AND s.applied_at IS NOT NULL
+               AND s.client_id <> :client_id
+             ORDER BY s.seq
              LIMIT :limit
             """
         ),

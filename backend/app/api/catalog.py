@@ -86,6 +86,8 @@ class OpenCheckOut(BaseModel):
     opened_at: datetime
     guests: int
     drinks: int
+    subtotal_cents: int
+    service_charge_cents: int
     total_cents: int
     opened_by: str | None
 
@@ -105,14 +107,18 @@ def floor(user: CurrentUser, db: Session = Depends(get_db)):
                    c.opened_at,
                    COALESCE(SUM(h.qty) FILTER (WHERE h.kind='admission'), 0) AS guests,
                    COALESCE(SUM(h.qty) FILTER (WHERE h.kind='drink'), 0)     AS drinks,
-                   COALESCE(SUM(h.qty * h.unit_price_cents), 0)   AS total_cents,
+                   COALESCE(SUM(h.qty * h.unit_price_cents), 0)   AS subtotal_cents,
+                   c.service_charge_cents,
+                   COALESCE(SUM(h.qty * h.unit_price_cents), 0)
+                     + c.service_charge_cents                      AS total_cents,
                    u.display_name                                 AS opened_by
               FROM dining_check c
               JOIN dining_table t ON t.id = c.table_id
               LEFT JOIN head_charge h ON h.check_id = c.id
               LEFT JOIN app_user u ON u.id = c.opened_by
              WHERE c.status = 'open' AND c.client_uuid IS NOT NULL
-             GROUP BY c.client_uuid, t.label, c.opened_at, u.display_name
+             GROUP BY c.client_uuid, t.label, c.opened_at, c.service_charge_cents,
+                      u.display_name
              ORDER BY c.opened_at
             """
         )

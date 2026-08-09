@@ -41,6 +41,9 @@ class ChangeOut(BaseModel):
     # payload 里没有时间，必须由这里带出去 —— 否则接收端只能用
     # "收到的时刻"，离线积压两小时的记录会全被打上"刚刚"的时间戳。
     client_ts: datetime
+    # 操作人显示名 —— 清单页要显示"谁操作的"。
+    # 客户端本地只知道自己那些 op 是谁做的，别人的必须由服务端带出来。
+    user_display: str | None = None
     payload: dict[str, Any]
 
 

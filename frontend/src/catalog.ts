@@ -84,3 +84,27 @@ export function estimateCents(
 export function money(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
+
+
+/** 大桌门槛与费率 —— 必须和后端 checks.py 里的常量保持一致。 */
+export const LARGE_PARTY_MIN = 5
+export const SERVICE_CHARGE_RATE = 0.1
+
+/**
+ * 「几人」的口径：只喝饮料的人也占座位，所以取
+ * max(buffet 人数, 饮料份数)。与后端 _party_size 一致。
+ */
+export function partySize(
+  guests: { adult: number; child: number; senior: number },
+  drinks: Drinks,
+): number {
+  return Math.max(
+    guests.adult + guests.child + guests.senior,
+    drinks.adult + drinks.child,
+  )
+}
+
+/** 服务费估算，仅供显示；落库金额以服务端为准。 */
+export function serviceCents(subtotal: number, size: number): number {
+  return size >= LARGE_PARTY_MIN ? Math.round(subtotal * SERVICE_CHARGE_RATE) : 0
+}

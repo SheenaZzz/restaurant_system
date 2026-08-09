@@ -1,4 +1,12 @@
-import { estimateCents, loadCatalog, type Drinks, type PriceRow } from './catalog'
+import {
+  estimateCents,
+  loadCatalog,
+  partySize,
+  serviceCents,
+  type Drinks,
+  type PriceRow,
+} from './catalog'
+import { getIdentity } from './auth'
 import db, { uuid, type LocalCheck } from './db'
 import { enqueue } from './sync'
 
@@ -20,7 +28,7 @@ export async function applyCheckOp(
   opId: string,
   payload: Record<string, unknown>,
   clientTs: string,
-  opts: { synced: 0 | 1; remote: 0 | 1 },
+  opts: { synced: 0 | 1; remote: 0 | 1; who?: string },
 ): Promise<void> {
   if (entity === 'open_check') {
     const g = (payload.guests ?? {}) as Partial<Guests>
@@ -40,6 +48,8 @@ export async function applyCheckOp(
           }
     const cat = await loadCatalog()
     const prices: PriceRow[] = cat?.prices ?? []
+    const sub = estimateCents(prices, cat?.current_period_kind ?? 'dinner', guests, drinks)
+    const svc = serviceCents(sub, partySize(guests, drinks))
 
     await db.checks.put({
       // 账单的身份就是创建它那条 op 的 op_id ——
@@ -51,18 +61,23 @@ export async function applyCheckOp(
       ...guests,
       drink_adult: drinks.adult,
       drink_child: drinks.child,
-      est_cents: estimateCents(
-        prices,
-        cat?.current_period_kind ?? 'dinner',
-        guests,
-        drinks,
-      ),
+      est_cents: sub + svc,
+      service_cents: svc,
+      by: opts.who,
+      last_by: opts.who,
       ...opts,
     })
   } else if (entity === 'close_check') {
     const cu = String(payload.check_uuid ?? '')
     const row = await db.checks.get(cu)
-    if (row) await db.checks.put({ ...row, status: 'closed' })
+    if (row) {
+      await db.checks.put({
+        ...row,
+        status: 'closed',
+        ...('payment' in payload ? payFields(payload.payment) : {}),
+        last_by: opts.who ?? row.last_by,
+      })
+    }
   } else if (entity === 'modify_check') {
     const cu = String(payload.check_uuid ?? '')
     const row = await db.checks.get(cu)
@@ -76,23 +91,24 @@ export async function applyCheckOp(
     const d = (payload.drinks ?? {}) as Partial<Drinks>
     const drinks: Drinks = { adult: d.adult ?? 0, child: d.child ?? 0 }
     const cat = await loadCatalog()
+    const sub2 = estimateCents(
+      cat?.prices ?? [], cat?.current_period_kind ?? 'dinner', guests, drinks,
+    )
+    const svc2 = serviceCents(sub2, partySize(guests, drinks))
     await db.checks.put({
       ...row,
       ...guests,
       drink_adult: drinks.adult,
       drink_child: drinks.child,
-      est_cents: estimateCents(
-        cat?.prices ?? [],
-        cat?.current_period_kind ?? 'dinner',
-        guests,
-        drinks,
-      ),
+      est_cents: sub2 + svc2,
+      service_cents: svc2,
+      last_by: opts.who ?? row.last_by,
       ...opts,
     })
   } else if (entity === 'void_check') {
     const cu = String(payload.check_uuid ?? '')
     const row = await db.checks.get(cu)
-    if (row && row.status !== 'voided') {
+    if (row && row.status !== 'voided' && row.status !== 'merged') {
       await db.checks.put({
         ...row,
         // 记下作废前的状态 —— 撤销时要恢复成它，
@@ -102,6 +118,60 @@ export async function applyCheckOp(
         void_reason: String(payload.reason ?? ''),
       })
     }
+  } else if (entity === 'transfer_check') {
+    const row = await db.checks.get(String(payload.check_uuid ?? ''))
+    if (row) {
+      await db.checks.put({
+        ...row,
+        table_label: String(payload.to_table_label ?? row.table_label),
+        last_by: opts.who ?? row.last_by,
+        ...opts,
+      })
+    }
+  } else if (entity === 'merge_checks') {
+    const target = await db.checks.get(String(payload.check_uuid ?? ''))
+    if (target) {
+      let g = { adult: target.adult, child: target.child, senior: target.senior }
+      let d = { adult: target.drink_adult, child: target.drink_child }
+      for (const su of (payload.source_uuids ?? []) as string[]) {
+        const src = await db.checks.get(su)
+        if (!src || src.status === 'merged') continue
+        g = {
+          adult: g.adult + src.adult,
+          child: g.child + src.child,
+          senior: g.senior + src.senior,
+        }
+        d = { adult: d.adult + src.drink_adult, child: d.child + src.drink_child }
+        await db.checks.put({
+          ...src,
+          status: 'merged',
+          merged_into: target.check_uuid,
+          adult: 0, child: 0, senior: 0,
+          drink_adult: 0, drink_child: 0,
+          est_cents: 0, service_cents: 0,
+          last_by: opts.who ?? src.last_by,
+        })
+      }
+      const cat = await loadCatalog()
+      const sub = estimateCents(
+        cat?.prices ?? [], cat?.current_period_kind ?? 'dinner', g, d,
+      )
+      // 并完人数变了，服务费可能从 0 变成有 —— 这是并桌最容易忽略的后果
+      const svc = serviceCents(sub, partySize(g, d))
+      await db.checks.put({
+        ...target,
+        ...g,
+        drink_adult: d.adult,
+        drink_child: d.child,
+        est_cents: sub + svc,
+        service_cents: svc,
+        last_by: opts.who ?? target.last_by,
+        ...opts,
+      })
+    }
+  } else if (entity === 'set_payment') {
+    const row = await db.checks.get(String(payload.check_uuid ?? ''))
+    if (row) await db.checks.put({ ...row, ...payFields(payload.payment), ...opts })
   } else if (entity === 'restore_check') {
     const cu = String(payload.check_uuid ?? '')
     const row = await db.checks.get(cu)
@@ -124,6 +194,7 @@ export async function restoreTable(checkUuid: string, reason?: string): Promise<
   await applyCheckOp('restore_check', opId, payload, new Date().toISOString(), {
     synced: 0,
     remote: 0,
+    who: (await getIdentity())?.display_name,
   })
 }
 
@@ -139,6 +210,7 @@ export async function modifyTable(
   await applyCheckOp('modify_check', opId, payload, new Date().toISOString(), {
     synced: 0,
     remote: 0,
+    who: (await getIdentity())?.display_name,
   })
 }
 
@@ -150,6 +222,7 @@ export async function voidTable(checkUuid: string, reason: string): Promise<void
   await applyCheckOp('void_check', opId, payload, new Date().toISOString(), {
     synced: 0,
     remote: 0,
+    who: (await getIdentity())?.display_name,
   })
 }
 
@@ -167,6 +240,10 @@ export interface Totals {
   closedCount: number
   voidedCount: number
   voidedCents: number
+  serviceCents: number
+  cashCents: number
+  cardCents: number
+  otherCents: number
 }
 
 /**
@@ -176,8 +253,11 @@ export function totalsOf(rows: LocalCheck[]): Totals {
   const t: Totals = {
     revenueCents: 0, buffetGuests: 0, drinkCount: 0,
     openCount: 0, closedCount: 0, voidedCount: 0, voidedCents: 0,
+    serviceCents: 0, cashCents: 0, cardCents: 0, otherCents: 0,
   }
   for (const c of rows) {
+    // merged 的单明细已搬到目标单，自己不再计入任何统计
+    if (c.status === 'merged') continue
     if (c.status === 'voided') {
       t.voidedCount++
       t.voidedCents += c.est_cents
@@ -186,8 +266,12 @@ export function totalsOf(rows: LocalCheck[]): Totals {
     if (c.status === 'open') t.openCount++
     else t.closedCount++
     t.revenueCents += c.est_cents
+    t.serviceCents += c.service_cents ?? 0
     t.buffetGuests += c.adult + c.child + c.senior
     t.drinkCount += c.drink_adult + c.drink_child
+    t.cashCents += c.pay_cash ?? 0
+    t.cardCents += c.pay_card ?? 0
+    t.otherCents += c.pay_other ?? 0
   }
   return t
 }
@@ -206,6 +290,7 @@ export async function openTable(
   await applyCheckOp('open_check', opId, payload, new Date().toISOString(), {
     synced: 0,
     remote: 0,
+    who: (await getIdentity())?.display_name,
   })
   return opId
 }
@@ -217,6 +302,7 @@ export async function closeTable(checkUuid: string): Promise<void> {
   await applyCheckOp('close_check', opId, payload, new Date().toISOString(), {
     synced: 0,
     remote: 0,
+    who: (await getIdentity())?.display_name,
   })
 }
 
@@ -226,4 +312,75 @@ export async function openChecksByTable(): Promise<Map<string, LocalCheck>> {
   const m = new Map<string, LocalCheck>()
   for (const r of rows) m.set(r.table_label, r)
   return m
+}
+
+
+export type PayMethod = 'cash' | 'card' | 'mixed' | 'other'
+
+export interface Payment {
+  method: PayMethod
+  cash_cents: number
+  card_cents: number
+  other_cents: number
+  note?: string
+}
+
+function payFields(raw: unknown) {
+  const p = (raw ?? {}) as Partial<Payment>
+  return {
+    pay_method: p.method,
+    pay_cash: p.cash_cents ?? 0,
+    pay_card: p.card_cents ?? 0,
+    pay_other: p.other_cents ?? 0,
+    pay_note: p.note,
+  }
+}
+
+/** 换桌。日常操作，普通员工即可。 */
+export async function transferTable(checkUuid: string, toLabel: string): Promise<void> {
+  const payload = { check_uuid: checkUuid, to_table_label: toLabel }
+  const opId = uuid()
+  await enqueue('transfer_check', payload, opId)
+  await applyCheckOp('transfer_check', opId, payload, new Date().toISOString(), {
+    synced: 0, remote: 0, who: (await getIdentity())?.display_name,
+  })
+}
+
+/** 并桌：把若干张单并进目标单。**并完可能触发大桌服务费。** */
+export async function mergeTables(
+  targetUuid: string,
+  sourceUuids: string[],
+): Promise<void> {
+  const payload = { check_uuid: targetUuid, source_uuids: sourceUuids }
+  const opId = uuid()
+  await enqueue('merge_checks', payload, opId)
+  await applyCheckOp('merge_checks', opId, payload, new Date().toISOString(), {
+    synced: 0, remote: 0, who: (await getIdentity())?.display_name,
+  })
+}
+
+/** 关单并记录支付方式。 */
+export async function closeWithPayment(
+  checkUuid: string,
+  payment: Payment,
+): Promise<void> {
+  const payload = { check_uuid: checkUuid, payment }
+  const opId = uuid()
+  await enqueue('close_check', payload, opId)
+  await applyCheckOp('close_check', opId, payload, new Date().toISOString(), {
+    synced: 0, remote: 0, who: (await getIdentity())?.display_name,
+  })
+}
+
+/** 事后改支付方式。 */
+export async function updatePayment(
+  checkUuid: string,
+  payment: Payment,
+): Promise<void> {
+  const payload = { check_uuid: checkUuid, payment }
+  const opId = uuid()
+  await enqueue('set_payment', payload, opId)
+  await applyCheckOp('set_payment', opId, payload, new Date().toISOString(), {
+    synced: 0, remote: 0, who: (await getIdentity())?.display_name,
+  })
 }

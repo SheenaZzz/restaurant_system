@@ -16,6 +16,8 @@ type RemoteChange = {
   op_id: string
   entity: string
   client_ts: string
+  /** 服务端带出来的操作人显示名 —— 本地只知道自己那些 op 是谁做的 */
+  user_display?: string | null
   payload: Record<string, unknown>
 }
 
@@ -273,6 +275,7 @@ async function doSync(): Promise<SyncResult | null> {
       await applyCheckOp(c.entity, c.op_id, c.payload, c.client_ts, {
         synced: 1,
         remote: 1,
+        who: c.user_display ?? undefined,
       })
     }
   }

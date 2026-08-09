@@ -31,7 +31,7 @@ export interface Meta {
 export interface LocalCheck {
   check_uuid: string
   table_label: string
-  status: 'open' | 'closed' | 'voided'
+  status: 'open' | 'closed' | 'voided' | 'merged'
   opened_at: string
   adult: number
   child: number
@@ -48,6 +48,20 @@ export interface LocalCheck {
   void_reason?: string
   /** 作废前的状态，撤销时恢复成它 */
   pre_void_status?: 'open' | 'closed'
+  /** 被并入了哪张单 */
+  merged_into?: string
+  /** 大桌服务费（本地估算） */
+  service_cents: number
+  /** 支付方式 */
+  pay_method?: 'cash' | 'card' | 'mixed' | 'other'
+  pay_cash?: number
+  pay_card?: number
+  pay_other?: number
+  pay_note?: string
+  /** 开台的人 */
+  by?: string
+  /** 最近一次操作的人 */
+  last_by?: string
 }
 
 const db = new Dexie('restaurant') as Dexie & {

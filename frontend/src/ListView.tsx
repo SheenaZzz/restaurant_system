@@ -3,16 +3,35 @@ import { canManage, type Role } from './auth'
 import { loadCatalog, money, type Drinks, type PriceRow } from './catalog'
 import {
   allChecks,
+  closeWithPayment,
+  mergeTables,
   modifyTable,
   restoreTable,
   totalsOf,
+  transferTable,
+  updatePayment,
   voidTable,
   type Guests,
+  type Payment,
 } from './checks'
 import type { LocalCheck } from './db'
 import EditSheet from './EditSheet'
+import PaymentSheet from './PaymentSheet'
+import TransferSheet from './TransferSheet'
 
-const STATUS_LABEL = { open: '未结', closed: '已结', voided: '已作废' } as const
+const STATUS_LABEL: Record<LocalCheck['status'], string> = {
+  open: '未结',
+  closed: '已结',
+  voided: '已作废',
+  merged: '已并入',
+}
+
+const PAY_LABEL: Record<string, string> = {
+  cash: '现金',
+  card: '刷卡',
+  mixed: '现金+刷卡',
+  other: '其它',
+}
 
 export default function ListView({ role }: { role: Role }) {
   const [rows, setRows] = useState<LocalCheck[]>([])
@@ -22,6 +41,9 @@ export default function ListView({ role }: { role: Role }) {
   const [editing, setEditing] = useState<LocalCheck | null>(null)
   const [voiding, setVoiding] = useState<LocalCheck | null>(null)
   const [reason, setReason] = useState('')
+  const [paying, setPaying] = useState<LocalCheck | null>(null)
+  const [payTitle, setPayTitle] = useState('结账')
+  const [moving, setMoving] = useState<LocalCheck | null>(null)
 
   const reload = useCallback(async () => setRows(await allChecks()), [])
 
@@ -64,6 +86,13 @@ export default function ListView({ role }: { role: Role }) {
           <Stat label="Buffet 人数" value={String(t.buffetGuests)} />
           <Stat label="饮料份数" value={String(t.drinkCount)} />
           <Stat label="未结 / 已结" value={`${t.openCount} / ${t.closedCount}`} />
+          {t.serviceCents > 0 && (
+            <Stat label="大桌服务费" value={money(t.serviceCents)} />
+          )}
+          <Stat
+            label="现金 / 刷卡 / 其它"
+            value={`${money(t.cashCents)} · ${money(t.cardCents)} · ${money(t.otherCents)}`}
+          />
           {t.voidedCount > 0 && (
             <Stat
               label="已作废"
@@ -89,13 +118,15 @@ export default function ListView({ role }: { role: Role }) {
             <th>人数</th>
             <th>饮料</th>
             <th className="num">金额</th>
+            <th>支付</th>
             <th>状态</th>
-            {manage && <th />}
+            <th>操作人</th>
+            <th />
           </tr>
         </thead>
         <tbody>
           {rows.map((c) => (
-            <tr key={c.check_uuid} className={c.status === 'voided' ? 'voided' : ''}>
+            <tr key={c.check_uuid} className={`row-${c.status}`}>
               <td className="tb">{c.table_label}</td>
               <td className="dim">
                 {new Date(c.opened_at).toLocaleTimeString('zh-CN', {
@@ -113,19 +144,42 @@ export default function ListView({ role }: { role: Role }) {
                 {c.drink_adult > 0 && <span className="chip">成 {c.drink_adult}</span>}
                 {c.drink_child > 0 && <span className="chip">童 {c.drink_child}</span>}
               </td>
-              <td className="num">{money(c.est_cents)}</td>
+              <td className="num">
+                {money(c.est_cents)}
+                {c.service_cents > 0 && (
+                  <div className="dim small">含服务费 {money(c.service_cents)}</div>
+                )}
+              </td>
+              <td>
+                {c.pay_method ? (
+                  <>
+                    <span className="chip">{PAY_LABEL[c.pay_method]}</span>
+                    {c.pay_method === 'mixed' && (
+                      <div className="dim small">
+                        现 {money(c.pay_cash ?? 0)} / 卡 {money(c.pay_card ?? 0)}
+                      </div>
+                    )}
+                    {c.pay_note && <div className="dim small">{c.pay_note}</div>}
+                  </>
+                ) : (
+                  <span className="dim small">—</span>
+                )}
+              </td>
               <td>
                 <span className={`tag ${c.status === 'open' ? 'warn' : c.status === 'voided' ? 'bad' : 'ok'}`}>
                   {STATUS_LABEL[c.status]}
                 </span>
                 {!c.synced && <span className="tag warn">待同步</span>}
                 {c.void_reason && <div className="dim small">{c.void_reason}</div>}
+                {c.merged_into && <div className="dim small">已并入其它单</div>}
               </td>
-              {manage && (
-                <td className="ops">
-                  {/* 已结账的单**也能改和作废** —— 结完账才发现录错是常事。
-                      已作废的只提供"恢复"，要改先撤销作废。 */}
-                  {c.status === 'voided' ? (
+              <td className="dim small">
+                {c.by ?? '—'}
+                {c.last_by && c.last_by !== c.by && <div>最近：{c.last_by}</div>}
+              </td>
+              <td className="ops">
+                {c.status === 'merged' ? null : c.status === 'voided' ? (
+                  manage && (
                     <button
                       className="restore"
                       onClick={async () => {
@@ -135,22 +189,51 @@ export default function ListView({ role }: { role: Role }) {
                     >
                       恢复
                     </button>
-                  ) : (
-                    <>
-                      <button onClick={() => setEditing(c)}>改单</button>
+                  )
+                ) : (
+                  <>
+                    {c.status === 'open' && (
+                      <>
+                        <button
+                          className="primaryish"
+                          onClick={() => {
+                            setPayTitle('结账')
+                            setPaying(c)
+                          }}
+                        >
+                          结账
+                        </button>
+                        <button onClick={() => setMoving(c)}>换/并桌</button>
+                      </>
+                    )}
+                    {c.status === 'closed' && (
                       <button
-                        className="danger"
                         onClick={() => {
-                          setVoiding(c)
-                          setReason('')
+                          setPayTitle('改支付方式')
+                          setPaying(c)
                         }}
                       >
-                        作废
+                        改支付
                       </button>
-                    </>
-                  )}
-                </td>
-              )}
+                    )}
+                    {/* 已结账的单也能改和作废 —— 结完账才发现录错是常事 */}
+                    {manage && (
+                      <>
+                        <button onClick={() => setEditing(c)}>改单</button>
+                        <button
+                          className="danger"
+                          onClick={() => {
+                            setVoiding(c)
+                            setReason('')
+                          }}
+                        >
+                          作废
+                        </button>
+                      </>
+                    )}
+                  </>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -165,6 +248,40 @@ export default function ListView({ role }: { role: Role }) {
           onConfirm={async (guests: Guests, drinks: Drinks) => {
             await modifyTable(editing.check_uuid, guests, drinks)
             setEditing(null)
+            await reload()
+          }}
+        />
+      )}
+
+      {paying && (
+        <PaymentSheet
+          check={paying}
+          title={payTitle}
+          onCancel={() => setPaying(null)}
+          onConfirm={async (p: Payment) => {
+            if (paying.status === 'open') await closeWithPayment(paying.check_uuid, p)
+            else await updatePayment(paying.check_uuid, p)
+            setPaying(null)
+            await reload()
+          }}
+        />
+      )}
+
+      {moving && (
+        <TransferSheet
+          check={moving}
+          others={rows.filter(
+            (r) => r.status === 'open' && r.check_uuid !== moving.check_uuid,
+          )}
+          onCancel={() => setMoving(null)}
+          onTransfer={async (label) => {
+            await transferTable(moving.check_uuid, label)
+            setMoving(null)
+            await reload()
+          }}
+          onMerge={async (uuids) => {
+            await mergeTables(moving.check_uuid, uuids)
+            setMoving(null)
             await reload()
           }}
         />

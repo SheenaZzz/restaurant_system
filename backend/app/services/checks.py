@@ -7,6 +7,7 @@
 
 import uuid as uuidlib
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +25,62 @@ from .period import resolve_period
 from .pricing import resolve_head_prices
 
 GUEST_TYPES = ("adult", "child", "senior")
+
+# --- 大桌服务费 ---
+# 5 人及以上收 10%。
+# ⚠️ 先写成常量。等费率真要调整时应该挪进配置表（像 buffet_price 那样带
+#    effective_from），否则改一次费率会影响历史账单的重算结果。
+#    落库的 service_charge_rate 快照保证了**已有账单**不受影响。
+LARGE_PARTY_MIN = 5
+SERVICE_CHARGE_RATE = Decimal("0.10")
+
+
+def _party_size(db: Session, check_id: int) -> int:
+    """估计这桌有几个人。
+
+    我们只记录了「吃 buffet 的人数」和「要饮料的份数」，没有单独记
+    「坐了几个人」。只喝饮料不吃自助的人**也占座位、也算在大桌人数里**，
+    所以取两者的最大值：
+      - 6 人吃、2 人喝 → 至少 6 人
+      - 3 人吃、5 人喝 → 至少 5 人
+
+    这是从现有数据能得到的最好估计。如果店里对「几人」有更严格的口径，
+    需要在开桌时单独记一个座位数字段。
+    """
+    rows = db.execute(
+        select(HeadCharge.kind, func.sum(HeadCharge.qty))
+        .where(HeadCharge.check_id == check_id)
+        .group_by(HeadCharge.kind)
+    ).all()
+    by_kind = {k: int(v or 0) for k, v in rows}
+    return max(by_kind.get("admission", 0), by_kind.get("drink", 0))
+
+
+def _recalc_service_charge(db: Session, chk: DiningCheck) -> None:
+    """按当前人数重算服务费。**每次人数变动后都要调用。**
+
+    并桌是最容易触发它的场景：两桌各 3 人本来都不收，
+    并成 6 人就要收了 —— 这正是这个函数存在的理由。
+    """
+    db.flush()  # 让刚 add 的 head_charge 参与统计
+
+    size = _party_size(db, chk.id)
+    if size < LARGE_PARTY_MIN:
+        chk.service_charge_cents = 0
+        chk.service_charge_rate = None
+        return
+
+    subtotal = db.scalar(
+        select(func.coalesce(func.sum(HeadCharge.qty * HeadCharge.unit_price_cents), 0))
+        .where(HeadCharge.check_id == chk.id)
+    ) or 0
+    # 四舍五入到分。用 Decimal 而不是浮点 —— 钱不能用 float。
+    chk.service_charge_cents = int(
+        (Decimal(int(subtotal)) * SERVICE_CHARGE_RATE).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    )
+    chk.service_charge_rate = SERVICE_CHARGE_RATE
 # 饮料只有成人/儿童两档 —— 长者饮料按成人价，这是店里的实际做法
 DRINK_TIERS = ("adult", "child")
 
@@ -160,6 +217,8 @@ def open_check(db: Session, op_id: uuidlib.UUID, payload: dict, client_ts: datet
             )
         )
 
+    _recalc_service_charge(db, chk)
+
 
 def close_check(db: Session, payload: dict, client_ts: datetime) -> None:
     """关单。**只关单，不处理收款** —— 收款走店里现有方式。"""
@@ -181,6 +240,9 @@ def close_check(db: Session, payload: dict, client_ts: datetime) -> None:
 
     chk.status = "closed"
     chk.closed_at = client_ts
+
+    if "payment" in payload:
+        _apply_payment(chk, payload.get("payment"))
 
 
 def _load_check(db: Session, payload: dict) -> DiningCheck:
@@ -258,6 +320,8 @@ def modify_check(db: Session, payload: dict, client_ts: datetime) -> None:
                 qty=n, unit_price_cents=price,
             )
         )
+
+    _recalc_service_charge(db, chk)
 
 
 def void_check(db: Session, payload: dict, client_ts: datetime,
@@ -361,3 +425,158 @@ def restore_check(db: Session, payload: dict, client_ts: datetime,
         exc.reverted_at = client_ts
         exc.reverted_by = user_id
         exc.revert_reason = reason
+
+
+# ---------------------------------------------------------------------------
+# 支付方式（**只是记录**，系统不处理收款）
+# ---------------------------------------------------------------------------
+
+PAYMENT_METHODS = ("cash", "card", "mixed", "other")
+
+
+def _apply_payment(chk: DiningCheck, raw) -> None:
+    """写入支付方式。
+
+    为什么要记：系统不碰钱，所以日结时**唯一的交叉验证**就是
+    "系统算出来各种方式各收多少" 对上 "卡机和钱箱里实际有多少"。
+    不记方式，差额就无从归因 —— 只知道差了 30 块，不知道差在现金还是卡上。
+    """
+    if raw is None:
+        chk.payment_method = None
+        chk.paid_cash_cents = chk.paid_card_cents = chk.paid_other_cents = None
+        chk.payment_note = None
+        return
+
+    if not isinstance(raw, dict):
+        raise BusinessError(f"payment 格式非法: {raw!r}")
+
+    method = raw.get("method")
+    if method not in PAYMENT_METHODS:
+        raise BusinessError(f"支付方式非法: {method!r}（现金/刷卡/混合/其它）")
+
+    def amt(key: str) -> int:
+        v = raw.get(key, 0)
+        if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+            raise BusinessError(f"金额非法: {key}={v!r}")
+        return v
+
+    cash, card, other = amt("cash_cents"), amt("card_cents"), amt("other_cents")
+
+    if method == "mixed" and sum(x > 0 for x in (cash, card, other)) < 2:
+        raise BusinessError("选了「混合」但只填了一种方式的金额")
+
+    note = raw.get("note")
+    note = note.strip() if isinstance(note, str) and note.strip() else None
+    if method == "other" and not note:
+        raise BusinessError("选「其它」时必须说明（例如 gift card）")
+
+    chk.payment_method = method
+    chk.paid_cash_cents = cash
+    chk.paid_card_cents = card
+    chk.paid_other_cents = other
+    chk.payment_note = note
+
+
+def set_payment(db: Session, payload: dict, client_ts: datetime) -> None:
+    """事后修改支付方式。
+
+    权限给到普通员工而不是只给主管 —— 记错方式不会让钱变少，
+    而每次改都要找主管的摩擦太大，反而会导致干脆不记。
+    谁改的记在 sync_op 里，审计不受影响。
+    """
+    chk = _load_check(db, payload)
+    if chk.status == "voided":
+        raise BusinessError("已作废的单不能改支付方式")
+    _apply_payment(chk, payload.get("payment"))
+
+
+# ---------------------------------------------------------------------------
+# 换桌 / 并桌
+# ---------------------------------------------------------------------------
+
+
+def transfer_check(db: Session, payload: dict, client_ts: datetime) -> None:
+    """换桌：客人吃到一半挪到别的桌。
+
+    权限给普通员工 —— 这是日常操作，不涉及金额。
+    """
+    chk = _load_check(db, payload)
+    if chk.status in ("voided", "merged"):
+        raise BusinessError(f"{chk.status} 状态的单不能换桌")
+
+    label = payload.get("to_table_label")
+    if not isinstance(label, str) or not label:
+        raise BusinessError("缺少目标桌号")
+
+    target = db.scalar(select(DiningTable).where(DiningTable.label == label))
+    if target is None:
+        raise BusinessError(f"桌号不存在: {label}")
+    if target.id == chk.table_id:
+        return  # 幂等：已经在这张桌上
+
+    # 只有未结单才占桌 —— 已结账的单换桌不会冲突
+    if chk.status == "open":
+        busy = db.scalar(
+            select(DiningCheck.id).where(
+                DiningCheck.table_id == target.id,
+                DiningCheck.status == "open",
+                DiningCheck.id != chk.id,
+            )
+        )
+        if busy is not None:
+            raise BusinessError(f"{label} 已有未结账单，不能换过去（可以考虑并桌）")
+
+    chk.table_id = target.id
+
+
+def merge_checks(db: Session, payload: dict, client_ts: datetime) -> None:
+    """并桌：几桌拼成一个大桌，合成一张单。
+
+    payload = {"check_uuid": 目标单, "source_uuids": [被并入的单...]}
+
+    **把明细搬到目标单，源单标记为 merged。**
+    这样营业额只算一次 —— 如果保留源单各自的明细再去"合计显示"，
+    统计口径会变得很容易出错（哪些算、哪些不算）。
+    搬完之后源单是空的，状态 merged，不计入任何统计。
+
+    ⚠️ 目前**不支持拆回**。真要拆只能作废后重开 ——
+    合并在店里是低频操作，先不为它增加复杂度。
+    """
+    target = _load_check(db, payload)
+    if target.status not in ("open", "closed"):
+        raise BusinessError(f"{target.status} 状态的单不能作为并桌目标")
+
+    raw = payload.get("source_uuids")
+    if not isinstance(raw, list) or not raw:
+        raise BusinessError("缺少要并入的账单")
+
+    for item in raw:
+        try:
+            su = uuidlib.UUID(str(item))
+        except (ValueError, TypeError):
+            raise BusinessError(f"source_uuid 非法: {item!r}") from None
+        if su == target.client_uuid:
+            raise BusinessError("不能把一张单并入它自己")
+
+        src = db.scalar(select(DiningCheck).where(DiningCheck.client_uuid == su))
+        if src is None:
+            raise BusinessError("要并入的账单不存在（可能还没同步上来）")
+        if src.status == "merged":
+            continue  # 幂等
+        if src.status not in ("open", "closed"):
+            raise BusinessError(f"{src.status} 状态的单不能并桌")
+
+        # 明细搬家。同 kind+guest_type 的行会并存，统计时求和，
+        # 不合并成一行 —— 保留"这几个人原本坐哪桌"的痕迹意义不大，
+        # 但拆成多行至少能看出这是并过桌的。
+        db.query(HeadCharge).filter(HeadCharge.check_id == src.id).update(
+            {"check_id": target.id}, synchronize_session=False
+        )
+        src.status = "merged"
+        src.merged_into = target.client_uuid
+        src.service_charge_cents = 0
+        src.service_charge_rate = None
+
+    # 并完之后人数变了 —— 两桌各 3 人本来都不收服务费，
+    # 并成 6 人就要收了。这是并桌最容易被忽略的后果。
+    _recalc_service_charge(db, target)

@@ -173,10 +173,36 @@ class DiningCheck(Base):
     # 作废前是什么状态，撤销时恢复成它
     pre_void_status: Mapped[str | None] = mapped_column(Text)
 
+    # 并桌：这张单被并进了哪一张。明细已搬走，它自己不再计入营业额。
+    merged_into: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+
+    # --- 大桌服务费 ---
+    # 派生值，但**必须落库**：费率会变，历史账单要按当时的费率算。
+    # 每次人数变动（开桌/改单/并桌）后重算。
+    service_charge_cents: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    # 当时适用的费率快照，0.100 = 10%
+    service_charge_rate: Mapped[float | None] = mapped_column(Numeric(4, 3))
+
+    # --- 支付方式：**只是记录**，系统不处理收款 ---
+    # 之所以要记：日结时拿它和卡机/钱箱对账，差额才有意义。
+    payment_method: Mapped[str | None] = mapped_column(Text)
+    paid_cash_cents: Mapped[int | None] = mapped_column(Integer)
+    paid_card_cents: Mapped[int | None] = mapped_column(Integer)
+    paid_other_cents: Mapped[int | None] = mapped_column(Integer)
+    # other 的说明，比如 "gift card"
+    payment_note: Mapped[str | None] = mapped_column(Text)
+
     __table_args__ = (
         CheckConstraint("source IN ('dine_in','pickup')", name="ck_check_source"),
         CheckConstraint(
-            "status IN ('open','closed','voided')", name="ck_check_status"
+            "status IN ('open','closed','voided','merged')", name="ck_check_status"
+        ),
+        CheckConstraint(
+            "payment_method IS NULL"
+            " OR payment_method IN ('cash','card','mixed','other')",
+            name="ck_check_payment_method",
         ),
         # 堂食必须有桌号，自取必须没有
         CheckConstraint(
