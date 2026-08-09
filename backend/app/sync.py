@@ -112,7 +112,7 @@ def fetch_changes(db: Session, since_cursor: int, client_id: str, limit: int = 5
     rows = db.execute(
         text(
             """
-            SELECT seq, op_id, client_id, entity, payload
+            SELECT seq, op_id, client_id, entity, client_ts, payload
               FROM sync_op
              WHERE seq > :since
                AND applied_at IS NOT NULL

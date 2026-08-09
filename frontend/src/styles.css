@@ -136,3 +136,8 @@ li {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   color: var(--accent);
 }
+
+/* 状态栏配色：离线（warn）绝不能和出错（bad）长得一样 */
+.status.ok   { color: var(--ok); }
+.status.warn { color: var(--warn); }
+.status.bad  { color: var(--bad); }

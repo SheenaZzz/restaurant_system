@@ -11,6 +11,17 @@ export type SyncResult = {
   cursor: number
 }
 
+/**
+ * 同步失败的两种性质完全不同，绝不能混为一谈：
+ *
+ * - `offline`：网络不通。**这是正常状态**，数据安全地排在 outbox 里。
+ * - `error`：连上了但服务端出错。这才需要人介入。
+ *
+ * 之前统一显示"同步失败"是个真问题 —— 服务员看到"失败"会重复操作，
+ * 而在餐馆里，一个骗人的状态提示比崩溃更危险。
+ */
+export type SyncFailure = { kind: 'offline' | 'error'; message: string }
+
 /** 同一时刻只允许一个同步在跑，否则同一批 op 会被发两遍。 */
 let inFlight: Promise<SyncResult | null> | null = null
 
@@ -70,14 +81,23 @@ async function doSync(): Promise<SyncResult | null> {
   // outbox 空也要发一次：这是拉取其它设备变更的唯一时机
   const body = JSON.stringify({ client_id: cid, since_cursor: since, ops })
 
-  const res = await fetch('/api/sync', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  })
+  let res: Response
+  try {
+    res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+  } catch {
+    // fetch 抛错 = 根本没连上 = 离线。不是错误，是排队。
+    const f: SyncFailure = { kind: 'offline', message: '离线，已排队' }
+    throw f
+  }
+
   if (!res.ok) {
     // 不清 outbox —— 下次重试。重复发送是安全的，因为 op_id 幂等。
-    throw new Error(`sync failed: HTTP ${res.status}`)
+    const f: SyncFailure = { kind: 'error', message: `服务端 HTTP ${res.status}` }
+    throw f
   }
 
   const data = await res.json()
@@ -96,13 +116,16 @@ async function doSync(): Promise<SyncResult | null> {
     for (const c of data.changes as {
       op_id: string
       entity: string
+      client_ts: string
       payload: Record<string, unknown>
     }[]) {
       if (c.entity !== 'ping_event') continue
       await db.events.put({
         op_id: c.op_id,
         label: String(c.payload.label ?? ''),
-        created_at: String(c.payload.created_at ?? new Date().toISOString()),
+        // 用源设备的 client_ts，不是"收到的时刻" ——
+        // 否则离线积压的记录会全被排到列表最前面，时间线是错的
+        created_at: c.client_ts,
         synced: 1,
         remote: 1,
       })
@@ -127,23 +150,47 @@ async function doSync(): Promise<SyncResult | null> {
  * ⚠️ iOS 不支持 Background Sync —— 后台绝不会自己重放。
  * 所以必须在**回到前台**时立刻同步，这是 iPad 上最关键的一个钩子。
  */
-export function installSyncTriggers(onResult?: (r: SyncResult | null) => void) {
+/** outbox 有积压时的重试间隔 —— 要快，员工在等它清零 */
+const POLL_PENDING = 4_000
+/** 空闲时的心跳 —— 只为拉别的设备的变更，可以慢 */
+const POLL_IDLE = 20_000
+
+export function installSyncTriggers(
+  onResult?: (r: SyncResult | null, failure?: SyncFailure) => void,
+) {
+  let timer: number | undefined
+  let stopped = false
+
+  const schedule = async () => {
+    if (stopped) return
+    const pending = await db.outbox.count()
+    window.clearTimeout(timer)
+    timer = window.setTimeout(run, pending > 0 ? POLL_PENDING : POLL_IDLE)
+  }
+
   const run = () => {
     sync()
       .then((r) => onResult?.(r))
-      .catch(() => onResult?.(null))
+      .catch((e: unknown) => {
+        const f: SyncFailure =
+          e && typeof e === 'object' && 'kind' in e
+            ? (e as SyncFailure)
+            : { kind: 'error', message: String(e) }
+        onResult?.(null, f)
+      })
+      .finally(schedule)
   }
 
   window.addEventListener('online', run)
+  // ⚠️ iOS 不支持 Background Sync —— 回到前台是最关键的一个钩子
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') run()
   })
-  // 兜底轮询：网络在"连着但不通"的状态时，online 事件不会触发
-  const timer = window.setInterval(run, 15_000)
   run()
 
   return () => {
+    stopped = true
     window.removeEventListener('online', run)
-    window.clearInterval(timer)
+    window.clearTimeout(timer)
   }
 }

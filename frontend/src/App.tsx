@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import db from './db'
-import { enqueue, installSyncTriggers, sync, type SyncResult } from './sync'
+import {
+  enqueue,
+  installSyncTriggers,
+  sync,
+  type SyncFailure,
+  type SyncResult,
+} from './sync'
 
 export default function App() {
   const [pending, setPending] = useState(0)
@@ -9,6 +15,7 @@ export default function App() {
   >([])
   const [online, setOnline] = useState(navigator.onLine)
   const [last, setLast] = useState<string>('—')
+  const [tone, setTone] = useState<'ok' | 'warn' | 'bad'>('ok')
 
   async function refresh() {
     setPending(await db.outbox.count())
@@ -17,12 +24,18 @@ export default function App() {
 
   // 手动同步和自动触发共用同一个上报路径，
   // 否则手点的那次不会刷新状态栏，会留下上一次的失败信息（误导性很强）
-  function report(r: SyncResult | null) {
-    setLast(
-      r
-        ? `applied ${r.applied} · dup ${r.duplicate} · rej ${r.rejected.length} · cursor ${r.cursor}`
-        : '同步失败（离线？）',
-    )
+  function report(r: SyncResult | null, f?: SyncFailure) {
+    if (r) {
+      setLast(`已同步 · applied ${r.applied} · dup ${r.duplicate} · cursor ${r.cursor}`)
+      setTone('ok')
+    } else if (f?.kind === 'offline') {
+      // 关键：离线**不是错误**。说成"失败"会让员工重复操作。
+      setLast('离线，数据已排队，联网后自动补发')
+      setTone('warn')
+    } else {
+      setLast(`同步出错：${f?.message ?? '未知'}`)
+      setTone('bad')
+    }
     void refresh()
   }
 
@@ -63,12 +76,21 @@ export default function App() {
       <div className="row">
         <button
           onClick={() => {
-            sync().then(report).catch(() => report(null))
+            sync()
+              .then((r) => report(r))
+              .catch((e: unknown) =>
+                report(
+                  null,
+                  e && typeof e === 'object' && 'kind' in e
+                    ? (e as SyncFailure)
+                    : { kind: 'error', message: String(e) },
+                ),
+              )
           }}
         >
           立即同步
         </button>
-        <code>{last}</code>
+        <code className={`status ${tone}`}>{last}</code>
       </div>
 
       <ul>

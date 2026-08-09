@@ -37,6 +37,10 @@ class ChangeOut(BaseModel):
     op_id: UUID
     client_id: str
     entity: str
+    # 操作在源设备上**实际发生**的时刻。
+    # payload 里没有时间，必须由这里带出去 —— 否则接收端只能用
+    # "收到的时刻"，离线积压两小时的记录会全被打上"刚刚"的时间戳。
+    client_ts: datetime
     payload: dict[str, Any]
 
 
