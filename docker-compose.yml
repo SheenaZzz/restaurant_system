@@ -14,8 +14,6 @@ services:
     volumes:
       # 命名卷：容器删了数据还在。这是"拔电源不丢数据"的第一层
       - pgdata:/var/lib/postgresql/data
-      # 只在卷为空时执行一次（首次初始化）
-      - ./db/init:/docker-entrypoint-initdb.d:ro
     ports:
       # 只绑到回环地址，不暴露给局域网
       - "127.0.0.1:5432:5432"

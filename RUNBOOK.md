@@ -31,13 +31,39 @@ docker compose restart api              # 重启后端
 docker compose exec db psql -U restaurant -d restaurant   # 进数据库
 ```
 
-**重建数据库**（改了 `db/init/*.sql` 必须这样，因为初始化脚本只在卷为空时跑）：
+## 数据库迁移（Alembic）
+
+schema 的单一事实来源是 `backend/app/models.py`。改完模型后：
+
+```bash
+docker compose run --rm --no-deps -v "$PWD/backend/alembic/versions:/app/alembic/versions" -e DATABASE_URL="postgresql+psycopg://restaurant:change_me_local_dev@db:5432/restaurant" api alembic revision --autogenerate -m "描述"
+```
+
+⚠️ **两个必踩的坑**：
+
+1. **必须挂载 `versions` 目录**，否则生成的迁移文件留在容器里，`--rm` 一删就没了
+2. **生成后必须 `docker compose build api` 再重启** —— 迁移文件是 `COPY` 进镜像的，
+   旧镜像里没有新迁移，`alembic upgrade head` 会**静默什么都不做**（日志里没有
+   `Running upgrade` 那一行就是这个情况）
+
+应用迁移：容器启动时 `entrypoint.sh` 自动跑 `alembic upgrade head`，无需手动。
+
+```bash
+docker compose build api && docker compose up -d api
+docker compose exec api python -m app.seed      # 种子数据，幂等
+docker compose exec api alembic current         # 当前版本
+docker compose exec api alembic history         # 迁移历史
+```
+
+**彻底重建数据库**：
 
 ```bash
 docker compose down -v && docker compose up -d --build
 ```
 
-> ⚠️ `-v` 会删掉数据卷。Step 7 上线之后**绝对不要**对生产执行。
+> ⚠️ `-v` 会删掉**所有**数据卷 —— 包括 `caddy_data`，也就是**本地 CA 根证书会重新生成**，
+> 之前装到 iPad 上的证书立刻失效，必须重新导出安装。
+> Step 7 上线之后**绝对不要**对生产执行。
 
 ## 验收测试（Step 1）
 
