@@ -25,3 +25,7 @@ pgdata/
 # OS
 .DS_Store
 Thumbs.db
+
+# 本地 CA 根证书（环境相关，不进版本库）
+caddy-root.crt
+frontend/public/root.crt

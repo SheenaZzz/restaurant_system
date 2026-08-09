@@ -1,52 +1,71 @@
 # ===========================================================================
 # 开发 / 局域网 iPad 测试
 # ---------------------------------------------------------------------------
-# 用 Caddy 内置 CA 签发证书。iPad 需要**手动信任一次** Caddy 的根证书：
-#   1. docker compose --profile lan cp caddy:/data/caddy/pki/authorities/local/root.crt ./root.crt
-#   2. 把 root.crt 传到 iPad（AirDrop / 邮件 / 局域网下载）
-#   3. 设置 → 通用 → VPN与设备管理 → 安装描述文件
-#   4. ⚠️ 还要去 设置 → 通用 → 关于本机 → 证书信任设置 → 打开开关
-#      （少了第 4 步证书不会被信任，Service Worker 仍然注册不了）
+# 用 Caddy 内置 CA 给局域网 IP 签证书。iPad 需要**手动信任一次**根证书。
+# 步骤见 RUNBOOK.md。
 #
-# 这是零成本的临时方案。买了域名之后换成下面的生产块，iPad 就不用装任何证书。
+# ⚠️ 192.168.1.148 是 DHCP 分配的，路由器重启后可能变。
+#    变了要改这里并 `docker compose --profile lan restart caddy`。
+#    长期方案是在路由器上做 DHCP 保留（见 DEPLOYMENT.md §2.4）。
 # ===========================================================================
 
 {
-	# 全站使用 Caddy 本地 CA
+	# 用 Caddy 本地 CA 签发，而不是去找 Let's Encrypt
+	#（公共 CA 不会给私有 IP 签证书）
 	local_certs
-	# 本地 CA 不需要邮箱，也不要往外发 ACME 请求
-	auto_https disable_redirects
 }
 
-# 把 192.168.x.x 换成你这台机器的局域网 IP
-:443, 192.168.1.10 {
+# ⚠️ 为什么用主机名而不是 IP：
+#    用 IP 访问 HTTPS 时客户端**不发送 SNI** —— RFC 6066 规定
+#    SNI 只能是主机名，不能是 IP 字面量。没有 SNI，Caddy 匹配不到
+#    站点就直接拒绝握手（curl 报 SEC_E_ILLEGAL_MESSAGE）。
+#
+#    sheena.local 走 mDNS（Bonjour），iOS 原生支持，Windows 10+ 自带响应器。
+#    额外好处：不受 DHCP 换 IP 影响。
+#
+#    这次踩的坑，正是生产环境坚持用域名而不是裸 IP 的理由。
+https://sheena.local, https://localhost {
 	handle /api/* {
 		reverse_proxy api:8000
 	}
 
 	handle {
 		root * /srv
-		# SPA：任何未知路径都回退到 index.html
+		# SPA：任何未知路径都回退到 index.html，
+		# 这样离线直接打开 App 也能进得去
 		try_files {path} /index.html
 		file_server
 	}
 
 	encode gzip
+
 	log {
 		output stdout
 		format console
 	}
 }
 
+# 明文 HTTP 站点 —— 专门用来做对照实验：
+# 同一个 App 走 :8080，Service Worker 会注册失败，
+# 断网后重开就是一片空白。
+http://sheena.local:8080, http://192.168.1.148:8080, http://localhost:8080 {
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
+
 # ===========================================================================
-# 生产（店内服务器）—— 买好域名后启用，删掉上面的开发块
+# 生产（店内服务器）—— 买好域名后启用，删掉上面两块
 # ---------------------------------------------------------------------------
-# 关键点：DNS-01 challenge **不需要公网入站端口**，只需要能改 DNS 记录。
-# 所以可以给一个解析到内网 IP（192.168.1.10）的域名签发真证书，
-# iPad 直接信任，无需安装任何根证书。
+# 关键：DNS-01 challenge **不需要公网入站端口**，只要能改 DNS 记录。
+# 所以可以给一个解析到内网 IP 的域名签发真证书，iPad 无需安装任何根证书。
 #
-# ⚠️ 需要带 Cloudflare DNS 插件的 Caddy 镜像，官方镜像不含。
-#    用 caddy:builder 自行构建：
+# ⚠️ 需要带 Cloudflare DNS 插件的 Caddy 镜像，官方镜像不含：
 #      xcaddy build --with github.com/caddy-dns/cloudflare
 # ===========================================================================
 
@@ -54,16 +73,13 @@
 # 	tls {
 # 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 # 	}
-#
 # 	handle /api/* {
 # 		reverse_proxy api:8000
 # 	}
-#
 # 	handle {
 # 		root * /srv
 # 		try_files {path} /index.html
 # 		file_server
 # 	}
-#
 # 	encode gzip
 # }

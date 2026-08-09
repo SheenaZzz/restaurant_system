@@ -60,21 +60,57 @@ docker compose start api
 
 ## iPad 真机测试
 
+### 电脑侧（一条命令）
+
 ```bash
-cd frontend && npm run build && cd ..
-docker compose --profile lan up -d
+cd frontend && npm run build && cd .. && docker compose --profile lan up -d
 ```
 
-1. 改 `ops/Caddyfile`，把 `192.168.1.10` 换成本机局域网 IP
-   （`ipconfig` 看 IPv4；本机当前为 `192.168.1.148`）
-2. 导出 Caddy 根证书并装到 iPad：
-   ```bash
-   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./root.crt
-   ```
-   传到 iPad → 设置 → 通用 → VPN与设备管理 → 安装描述文件
-   → **再去 设置 → 通用 → 关于本机 → 证书信任设置 打开开关**（这步最容易漏）
-3. Safari 打开 `https://<局域网IP>` → 分享 → 添加到主屏幕
-4. 从主屏幕图标进入 → 开飞行模式 → 点 10 次 → 关飞行模式 → 核对计数
+起来后两个入口：
+
+| 入口 | 用途 |
+|---|---|
+| `https://sheena.local` | 正式站点，Service Worker 能注册 |
+| `http://sheena.local:8080` | **对照组**，明文，SW 注册不了 |
+
+> ⚠️ **用主机名而不是 IP。** 用 IP 访问 HTTPS 时客户端不发送 SNI
+> （RFC 6066 规定 SNI 只能是主机名），Caddy 匹配不到站点会直接拒绝握手。
+> `sheena.local` 走 mDNS，iOS 原生支持，还不受 DHCP 换 IP 影响。
+>
+> 换机器要改 `ops/Caddyfile` 里的主机名（`hostname` 命令可查）。
+
+### iPad 侧
+
+**1. 装根证书**（只需一次）
+
+Safari 打开 `http://sheena.local:8080/root.crt` → 提示"已下载描述文件"
+
+- 设置 → 通用 → VPN与设备管理 → 安装
+- **⚠️ 再去 设置 → 通用 → 关于本机 → 证书信任设置 → 打开开关**
+  （最容易漏的一步；少了它证书不被信任，SW 仍然注册不了）
+
+**2. 对照实验 —— 这才是重点**
+
+| 步骤 | HTTP（`:8080`） | HTTPS |
+|---|---|---|
+| ① Safari 打开，分享 → 添加到主屏幕 | ✅ | ✅ |
+| ② 从主屏幕图标进入，点几次「记录一次」 | ✅ | ✅ |
+| ③ **完全退出 App**（上划关闭） | | |
+| ④ 开飞行模式 | | |
+| ⑤ 再点主屏幕图标 | ❌ **一片空白** | ✅ **正常进入** |
+| ⑥ 继续点「记录一次」 | 进不去 | ✅ 排队，显示「待同步 N」 |
+| ⑦ 关飞行模式 → 自动重放 | | ✅ 归零 |
+
+> ⚠️ 两个站点要用**不同的主屏幕图标**分别测；
+> iOS 里主屏幕 App 和 Safari 的存储是隔离的，且不同来源互不共享。
+
+**3. 核对数据**
+
+```bash
+curl -s localhost:8000/api/debug/count
+```
+
+三个数应相等，且恰好等于总点击次数（含之前的 16）。
 
 > 买了域名之后换成 Caddyfile 里的生产块（Let's Encrypt DNS-01），
 > iPad 就不需要装任何证书了。

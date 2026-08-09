@@ -45,8 +45,9 @@ services:
     profiles: ["lan"]
     restart: unless-stopped
     ports:
-      - "80:80"
       - "443:443"
+      # 明文对照站点：用来演示"没有 HTTPS 就没有 Service Worker"
+      - "8080:8080"
     volumes:
       - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./frontend/dist:/srv:ro
