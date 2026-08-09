@@ -29,8 +29,25 @@ export type SyncResult = {
  */
 export type SyncFailure = { kind: 'offline' | 'error'; message: string }
 
+/** 单次请求的硬超时。Fetch API **没有默认超时** —— 见下方 STUCK_MS 的说明。 */
+const FETCH_TIMEOUT = 10_000
+
+/**
+ * in-flight 看门狗。
+ *
+ * 踩过的坑（真机上丢了 6 条记录）：
+ * 开飞行模式的瞬间，正好有一个 fetch 在途。Fetch API 没有默认超时，
+ * 这个 promise **永远不会 settle** —— 于是 `inFlight` 永久挂着，
+ * 之后每次 sync() 都直接返回这个卡死的 promise，**再也不发起新请求**。
+ * 定时器照常跑，Caddy 却再也收不到任何东西，而 UI 停在死锁前的最后一次上报。
+ *
+ * 两道防线：① fetch 加 AbortController 硬超时 ② 这个看门狗兜底。
+ */
+const STUCK_MS = 30_000
+
 /** 同一时刻只允许一个同步在跑，否则同一批 op 会被发两遍。 */
 let inFlight: Promise<SyncResult | null> | null = null
+let inFlightAt = 0
 
 /**
  * 写入路径：**先写本地，再排队**。
@@ -72,11 +89,19 @@ export async function enqueue(
 }
 
 export async function sync(): Promise<SyncResult | null> {
-  if (inFlight) return inFlight
-  inFlight = doSync().finally(() => {
-    inFlight = null
+  // 只在"确实还在跑"时复用。超过看门狗时限就认定它卡死了，
+  // 丢弃并重新发起 —— 重复发送是安全的，op_id 保证幂等。
+  if (inFlight && Date.now() - inFlightAt < STUCK_MS) return inFlight
+
+  if (inFlight) console.warn('[sync] 上一次同步疑似卡死，丢弃并重试')
+
+  inFlightAt = Date.now()
+  const p = doSync().finally(() => {
+    // 只有当自己仍是当前那一个时才清空，避免被后来者覆盖后误清
+    if (inFlight === p) inFlight = null
   })
-  return inFlight
+  inFlight = p
+  return p
 }
 
 /**
@@ -122,16 +147,26 @@ async function doSync(): Promise<SyncResult | null> {
   const body = JSON.stringify({ client_id: cid, since_cursor: since, ops })
 
   let res: Response
+  const ctrl = new AbortController()
+  const timer = window.setTimeout(() => ctrl.abort(), FETCH_TIMEOUT)
   try {
     res = await fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
+      signal: ctrl.signal,
     })
-  } catch {
-    // fetch 抛错 = 根本没连上 = 离线。不是错误，是排队。
-    const f: SyncFailure = { kind: 'offline', message: '离线，已排队' }
+  } catch (e) {
+    // 超时中止的请求**可能其实已经送达并处理了**，只是响应没回来。
+    // 不要紧 —— 下次重放会得到 duplicate，这正是 op_id 幂等的价值。
+    const aborted = (e as Error)?.name === 'AbortError'
+    const f: SyncFailure = {
+      kind: 'offline',
+      message: aborted ? '请求超时，已排队重试' : '离线，已排队',
+    }
     throw f
+  } finally {
+    window.clearTimeout(timer)
   }
 
   if (!res.ok) {

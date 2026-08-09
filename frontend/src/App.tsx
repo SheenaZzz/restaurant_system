@@ -71,6 +71,7 @@ export default function App() {
         <span className="grow" />
         <span className={pending ? 'badge warn' : 'badge'}>待同步 {pending}</span>
         {dead > 0 && <span className="badge bad">失败 {dead}</span>}
+        <span className="badge build">build {__BUILD__}</span>
       </header>
 
       <button className="big" onClick={tap}>

@@ -146,3 +146,9 @@ li {
   background: color-mix(in srgb, var(--bad) 25%, transparent);
   color: var(--bad);
 }
+
+.badge.build {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.55;
+}

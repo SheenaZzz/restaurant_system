@@ -2,7 +2,11 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// 构建标记：真机调试时一眼看出设备有没有拿到新代码
+const BUILD = new Date().toISOString().replace('T', ' ').slice(5, 19)
+
 export default defineConfig({
+  define: { __BUILD__: JSON.stringify(BUILD) },
   plugins: [
     react(),
     VitePWA({
