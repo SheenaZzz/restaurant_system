@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Role } from './auth'
-import { loadCatalog, money, refreshCatalog, type Catalog, type Drinks } from './catalog'
-import {
-  openChecksByTable,
-  openTable,
-  pendingCheckUuids,
-  type Guests,
-} from './checks'
+import { loadCatalog, money, refreshCatalog, type Catalog } from './catalog'
+import { openChecksByTable, openTable, pendingCheckUuids } from './checks'
 import CheckDetail from './CheckDetail'
 import type { LocalCheck } from './db'
 import OpenSheet from './OpenSheet'
@@ -104,9 +99,12 @@ export default function FloorPlan({ role }: { role: Role }) {
           tableLabel={sheetFor}
           prices={cat.prices}
           period={cat.current_period_kind}
+          taxRate={cat.tax_rate}
+          menu={cat.menu}
+          categories={cat.categories}
           onCancel={() => setSheetFor(null)}
-          onConfirm={async (label: string, guests: Guests, drinks: Drinks) => {
-            await openTable(label, guests, drinks)
+          onConfirm={async (label, guests, drinks, lines) => {
+            await openTable(label, guests, drinks, lines)
             setSheetFor(null)
             await reload()
           }}

@@ -3,6 +3,7 @@ import type { Role } from './auth'
 import { loadCatalog, money, refreshCatalog, type Catalog } from './catalog'
 import {
   allChecks,
+  isTogo,
   openTogo,
   pendingCheckUuids,
   type NewLine,
@@ -27,7 +28,8 @@ export default function ToGoView({ role }: { role: Role }) {
 
   const reload = useCallback(async () => {
     const all = await allChecks()
-    setRows(all.filter((r) => r.source !== 'dine_in'))
+    // 白名单判断 —— 老数据没有 source，用排除法会把堂食单混进来
+    setRows(all.filter(isTogo))
     setPending(await pendingCheckUuids())
     setPick((p) => (p ? (all.find((r) => r.check_uuid === p.check_uuid) ?? null) : null))
   }, [])

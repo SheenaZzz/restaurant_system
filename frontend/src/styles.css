@@ -1005,3 +1005,32 @@ ol.timeline li:last-child { border-left-color: transparent; }
 
 table.kv.lines td { padding: 6px 2px; }
 table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
+
+/* 弹层标题行里的次级入口：够醒目，但不跟主操作抢 */
+.sheet h2 .headbtn {
+  padding: 9px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sheet h2 .headbtn:active { transform: scale(0.97); }
+
+/* 高频快捷操作：用主色标出来，但比主按钮小一号 —— 它是加速器，不是主流程 */
+.quickbtn {
+  width: 100%;
+  margin: 8px 0 0;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.quickbtn:active { transform: scale(0.99); }

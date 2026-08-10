@@ -58,7 +58,7 @@ export async function applyCheckOp(
       // 客户端离线时拿不到数据库主键，只能自己生成标识
       check_uuid: opId,
       source: 'dine_in',
-      lines: [],
+      lines: mapLines(payload.lines, await loadCatalog()),
       table_label: String(payload.table_label ?? '?'),
       status: 'open',
       opened_at: clientTs,
@@ -362,8 +362,10 @@ export async function openTable(
   tableLabel: string,
   guests: Guests,
   drinks: Drinks,
+  /** 开桌时就点的菜 —— 整桌不吃自助、直接点餐的场景 */
+  lines: NewLine[] = [],
 ): Promise<string> {
-  const payload = { table_label: tableLabel, guests, drinks }
+  const payload = { table_label: tableLabel, guests, drinks, lines }
   // enqueue 内部生成 op_id，这里要拿到它作为 check_uuid，
   // 所以先自己生成再传进去
   const opId = uuid()
@@ -391,8 +393,20 @@ export async function closeTable(checkUuid: string): Promise<void> {
 export async function openChecksByTable(): Promise<Map<string, LocalCheck>> {
   const rows = await db.checks.where('status').equals('open').toArray()
   const m = new Map<string, LocalCheck>()
-  for (const r of rows) m.set(r.table_label, r)
+  // ⚠️ 只认堂食。自提单没有桌位，混进楼面会占掉一个格子。
+  //    `source` 缺失的是加这个字段之前的老数据 —— 那时只有堂食，所以当堂食处理。
+  for (const r of rows) if (isDineIn(r)) m.set(r.table_label, r)
   return m
+}
+
+/** 老数据没有 source 字段。那时只有堂食，所以缺失即堂食。 */
+export function isDineIn(c: LocalCheck): boolean {
+  return c.source === undefined || c.source === 'dine_in'
+}
+
+/** 自提用**白名单**判断，不用"不是堂食"—— 后者会把老数据和将来的新类型一起放进来。 */
+export function isTogo(c: LocalCheck): boolean {
+  return c.source === 'buffet_togo' || c.source === 'phone_order'
 }
 
 
@@ -582,5 +596,21 @@ export async function addLines(checkUuid: string, lines: NewLine[]): Promise<voi
   await enqueue('add_order_lines', payload, opId)
   await applyCheckOp('add_order_lines', opId, payload, new Date().toISOString(), {
     synced: 0, remote: 0, who: (await getIdentity())?.display_name,
+  })
+}
+
+
+/** payload 里的菜转成本地明细（补上菜名和价格）。 */
+function mapLines(raw: unknown, cat: Awaited<ReturnType<typeof loadCatalog>>): LocalLine[] {
+  const menu = new Map((cat?.menu ?? []).map((m) => [m.id, m]))
+  return ((raw ?? []) as any[]).map((l) => {
+    const mi = menu.get(l.menu_item_id)
+    return {
+      menu_item_id: l.menu_item_id,
+      name: mi?.name_zh ?? mi?.name_en ?? `#${l.menu_item_id}`,
+      qty: l.qty ?? 1,
+      unit_price_cents: mi?.open_price ? (l.amount_cents ?? 0) : (mi?.price_cents ?? 0),
+      notes: l.notes,
+    }
   })
 }

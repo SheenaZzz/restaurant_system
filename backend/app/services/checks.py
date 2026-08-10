@@ -204,8 +204,12 @@ def open_check(db: Session, op_id: uuidlib.UUID, payload: dict, client_ts: datet
     #    不等于坐在桌上的人数。后面做消耗率预测时要的正是前者
     #    （只有吃的人才消耗菜），所以这个口径是对的 —— 但如果将来
     #    要统计真实上座率，需要另外记一个字段。
-    if total_guests == 0 and total_drinks == 0:
-        raise BusinessError("至少要有一位客人或一份饮料")
+    lines = payload.get("lines") or []
+
+    # 整桌都不吃自助、直接点菜是常见情况 —— 所以三者有其一即可。
+    # 全空才拒绝：那是一张没有任何内容的单，没有意义。
+    if total_guests == 0 and total_drinks == 0 and not lines:
+        raise BusinessError("至少要有一位客人、一份饮料，或点一道菜")
 
     # ⚠️ 用 op 的 client_ts 而不是服务端当前时间：
     # 离线两小时后补发的单，必须落在**当时**那个营业时段里
@@ -253,6 +257,10 @@ def open_check(db: Session, op_id: uuidlib.UUID, payload: dict, client_ts: datet
                 unit_price_cents=price,
             )
         )
+
+    # 开桌时就带的菜（整桌点餐不吃自助的场景）
+    if lines:
+        _add_lines(db, chk, lines, client_ts)
 
     _recalc_service_charge(db, chk)
 

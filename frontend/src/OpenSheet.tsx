@@ -1,5 +1,17 @@
 import { useState } from 'react'
-import { estimateCents, money, type Drinks, type PriceRow } from './catalog'
+import {
+  estimateCents,
+  money,
+  serviceCents,
+  partySize,
+  taxCents,
+  type Category,
+  type Drinks,
+  type MenuItem,
+  type PriceRow,
+} from './catalog'
+import type { NewLine } from './checks'
+import MenuPicker from './MenuPicker'
 import type { Guests } from './checks'
 
 /**
@@ -14,23 +26,38 @@ export default function OpenSheet({
   tableLabel,
   prices,
   period,
+  taxRate,
+  menu,
+  categories,
   onCancel,
   onConfirm,
 }: {
   tableLabel: string
   prices: PriceRow[]
   period: 'lunch' | 'dinner'
+  taxRate: number
+  menu: MenuItem[]
+  categories: Category[]
   onCancel: () => void
-  onConfirm: (label: string, guests: Guests, drinks: Drinks) => void | Promise<void>
+  onConfirm: (
+    label: string,
+    guests: Guests,
+    drinks: Drinks,
+    lines: NewLine[],
+  ) => void | Promise<void>
 }) {
   // 默认 2 位成人 —— 最常见的情况，很多时候直接点确认就完事
   const [guests, setGuests] = useState<Guests>({ adult: 2, child: 0, senior: 0 })
   const [drinks, setDrinks] = useState<Drinks>({ adult: 0, child: 0 })
   const [busy, setBusy] = useState(false)
+  // 整桌不吃自助、直接点菜 —— 这在店里很常见，不该逼人先填 0 个人
+  const [ordering, setOrdering] = useState(false)
 
   const total = guests.adult + guests.child + guests.senior
   const totalDrinks = drinks.adult + drinks.child
-  const est = estimateCents(prices, period, guests, drinks)
+  const sub = estimateCents(prices, period, guests, drinks)
+  const svc = serviceCents(sub, partySize(guests, drinks))
+  const est = sub + svc + taxCents(sub, svc, taxRate)
   // 饮料数**可以**超过吃 buffet 的人数 —— 陪同的人不吃自助只要饮料
 
   // 一键：成人饮料 = 成人 + 长者（长者饮料按成人价），儿童饮料 = 儿童
@@ -55,12 +82,34 @@ export default function OpenSheet({
     </div>
   )
 
+  if (ordering) {
+    return (
+      <MenuPicker
+        menu={menu}
+        categories={categories}
+        title={`${tableLabel} 直接点餐`}
+        onCancel={() => setOrdering(false)}
+        onConfirm={async (lines) => {
+          // 人数和饮料都是 0，整桌走单品
+          await onConfirm(tableLabel, { adult: 0, child: 0, senior: 0 },
+                          { adult: 0, child: 0 }, lines)
+        }}
+      />
+    )
+  }
+
   return (
     <div className="sheet-back" onClick={onCancel}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <h2>
           {tableLabel} 开桌
           <span className="period-tag">{period === 'lunch' ? '午市' : '晚市'}</span>
+          <span className="grow" />
+          {/* 放在标题行右侧：整桌点餐的人一进来就该看到这个岔路，
+              而不是填完人数滚到底部才发现走错了 */}
+          <button className="headbtn" onClick={() => setOrdering(true)}>
+            直接点餐
+          </button>
         </h2>
 
         <Row label="成人" k="adult" />
@@ -94,13 +143,16 @@ export default function OpenSheet({
         {/* 全员要饮料是高频操作。按人数自动分档：
             成人+长者 → 成人饮料，儿童 → 儿童饮料 */}
         {total > 0 && !suggestionApplied && (
-          <button className="linkbtn wide" onClick={() => setDrinks(suggested)}>
+          <button className="quickbtn" onClick={() => setDrinks(suggested)}>
             全部都要饮料（成人 {suggested.adult}
             {suggested.child > 0 && ` · 儿童 ${suggested.child}`}）
           </button>
         )}
 
         <p className="total">{money(est)}</p>
+        {svc > 0 && (
+          <p className="hint">含大桌服务费 {money(svc)}（满 5 人 10%）</p>
+        )}
 
         <div className="sheet-actions">
           <button onClick={onCancel}>取消</button>
@@ -110,7 +162,7 @@ export default function OpenSheet({
             onClick={async () => {
               setBusy(true)
               try {
-                await onConfirm(tableLabel, guests, drinks)
+                await onConfirm(tableLabel, guests, drinks, [])
               } finally {
                 setBusy(false)
               }
