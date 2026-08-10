@@ -1,37 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import { canManage, type Role } from './auth'
+import type { Role } from './auth'
 import { loadCatalog, money, refreshCatalog, type Catalog, type Drinks } from './catalog'
-import {
-  closeWithPayment,
-  mergeTables,
-  modifyTable,
-  openChecksByTable,
-  openTable,
-  transferTable,
-  voidTable,
-  type Guests,
-  type Payment,
-} from './checks'
+import { openChecksByTable, openTable, type Guests } from './checks'
+import CheckDetail from './CheckDetail'
 import type { LocalCheck } from './db'
-import EditSheet from './EditSheet'
 import OpenSheet from './OpenSheet'
-import PaymentSheet from './PaymentSheet'
-import TransferSheet from './TransferSheet'
 
 export default function FloorPlan({ role }: { role: Role }) {
   const [cat, setCat] = useState<Catalog | null>(null)
   const [open, setOpen] = useState<Map<string, LocalCheck>>(new Map())
   const [sheetFor, setSheetFor] = useState<string | null>(null)
   const [detailFor, setDetailFor] = useState<LocalCheck | null>(null)
-
-  // 三个从详情页发起的动作
-  const [moving, setMoving] = useState<LocalCheck | null>(null)
-  const [paying, setPaying] = useState<LocalCheck | null>(null)
-  const [editing, setEditing] = useState<LocalCheck | null>(null)
-  const [voiding, setVoiding] = useState<LocalCheck | null>(null)
-  const [reason, setReason] = useState('')
-
-  const manage = canManage(role)
 
   const reload = useCallback(async () => {
     const m = await openChecksByTable()
@@ -121,130 +100,16 @@ export default function FloorPlan({ role }: { role: Role }) {
         />
       )}
 
-      {/* --- 桌位详情：楼面上直接能做的动作 --- */}
-      {detailFor && !moving && !paying && !editing && !voiding && (
-        <div className="sheet-back" onClick={() => setDetailFor(null)}>
-          <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <h2>{detailFor.table_label}</h2>
-            <p className="muted">
-              成人 {detailFor.adult} · 儿童 {detailFor.child} · 长者 {detailFor.senior}
-              {detailFor.drink_adult > 0 && ` · 成人饮料 ${detailFor.drink_adult}`}
-              {detailFor.drink_child > 0 && ` · 儿童饮料 ${detailFor.drink_child}`}
-            </p>
-            <p className="total">{money(detailFor.est_cents)}</p>
-            {detailFor.service_cents > 0 && (
-              <p className="hint">含大桌服务费 {money(detailFor.service_cents)}（10%）</p>
-            )}
-
-            <div className="actiongrid">
-              <button onClick={() => setMoving(detailFor)}>换桌 / 并桌</button>
-              {manage && <button onClick={() => setEditing(detailFor)}>改单</button>}
-              {manage && (
-                <button
-                  className="danger"
-                  onClick={() => {
-                    setReason('')
-                    setVoiding(detailFor)
-                  }}
-                >
-                  作废
-                </button>
-              )}
-            </div>
-
-            <div className="sheet-actions">
-              <button onClick={() => setDetailFor(null)}>返回</button>
-              <button className="primary" onClick={() => setPaying(detailFor)}>
-                结账
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {moving && (
-        <TransferSheet
-          check={moving}
-          others={openList.filter((o) => o.check_uuid !== moving.check_uuid)}
-          onCancel={() => setMoving(null)}
-          onTransfer={async (label) => {
-            await transferTable(moving.check_uuid, label)
-            setMoving(null)
-            setDetailFor(null)
-            await reload()
-          }}
-          onMerge={async (uuids) => {
-            await mergeTables(moving.check_uuid, uuids)
-            setMoving(null)
-            setDetailFor(null)
-            await reload()
-          }}
-        />
-      )}
-
-      {paying && (
-        <PaymentSheet
-          check={paying}
-          title="结账"
-          onCancel={() => setPaying(null)}
-          onConfirm={async (p: Payment) => {
-            await closeWithPayment(paying.check_uuid, p)
-            setPaying(null)
-            setDetailFor(null)
-            await reload()
-          }}
-        />
-      )}
-
-      {editing && (
-        <EditSheet
-          check={editing}
+      {detailFor && (
+        <CheckDetail
+          check={detailFor}
+          role={role}
           prices={cat.prices}
           period={cat.current_period_kind}
-          onCancel={() => setEditing(null)}
-          onConfirm={async (guests: Guests, drinks: Drinks) => {
-            await modifyTable(editing.check_uuid, guests, drinks)
-            setEditing(null)
-            await reload()
-          }}
+          openChecks={openList}
+          onClose={() => setDetailFor(null)}
+          onChanged={reload}
         />
-      )}
-
-      {voiding && (
-        <div className="sheet-back" onClick={() => setVoiding(null)}>
-          <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <h2>作废 {voiding.table_label}</h2>
-            <p className="total">{money(voiding.est_cents)}</p>
-            <p className="hint">
-              作废会把这单从营业额里剔除，必须填写原因，会记录操作人。
-              作废后可以在清单页随时「恢复」。
-            </p>
-            <label className="reason">
-              原因
-              <input
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="例如：客人取消 / 录错桌号"
-                autoFocus
-              />
-            </label>
-            <div className="sheet-actions">
-              <button onClick={() => setVoiding(null)}>取消</button>
-              <button
-                className="primary danger"
-                disabled={!reason.trim()}
-                onClick={async () => {
-                  await voidTable(voiding.check_uuid, reason.trim())
-                  setVoiding(null)
-                  setDetailFor(null)
-                  await reload()
-                }}
-              >
-                确认作废
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </>
   )
