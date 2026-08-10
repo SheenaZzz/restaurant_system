@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { canManage, type Role } from './auth'
-import { loadCatalog, money, type PriceRow } from './catalog'
+import {
+  loadCatalog,
+  money,
+  type Category,
+  type MenuItem,
+  type PriceRow,
+} from './catalog'
 import { allChecks, pendingCheckUuids, totalsOf } from './checks'
 import CheckDetail, { operatorText, PAY_LABEL, STATUS_LABEL } from './CheckDetail'
 import type { LocalCheck } from './db'
@@ -17,6 +23,8 @@ const FILTERS: { k: Filter; label: string }[] = [
 export default function ListView({ role }: { role: Role }) {
   const [rows, setRows] = useState<LocalCheck[]>([])
   const [prices, setPrices] = useState<PriceRow[]>([])
+  const [menu, setMenu] = useState<MenuItem[]>([])
+  const [cats, setCats] = useState<Category[]>([])
   const [period, setPeriod] = useState<'lunch' | 'dinner'>('dinner')
   const [now, setNow] = useState(new Date())
   const [pick, setPick] = useState<LocalCheck | null>(null)
@@ -37,6 +45,8 @@ export default function ListView({ role }: { role: Role }) {
     loadCatalog().then((c) => {
       if (c) {
         setPrices(c.prices)
+        setMenu(c.menu)
+        setCats(c.categories)
         setPeriod(c.current_period_kind)
       }
     })
@@ -176,6 +186,8 @@ export default function ListView({ role }: { role: Role }) {
           prices={prices}
           period={period}
           openChecks={openChecks}
+          menu={menu}
+          categories={cats}
           pending={pending.has(pick.check_uuid)}
           onClose={() => setPick(null)}
           onChanged={reload}

@@ -19,6 +19,9 @@ from ..models import (
     DiningCheck,
     DiningTable,
     HeadCharge,
+    MenuItem,
+    OrderLine,
+    PickupOrder,
     ServicePeriod,
 )
 from .period import resolve_period
@@ -70,10 +73,16 @@ def _recalc_service_charge(db: Session, chk: DiningCheck) -> None:
         chk.service_charge_rate = None
         return
 
-    subtotal = db.scalar(
+    head = db.scalar(
         select(func.coalesce(func.sum(HeadCharge.qty * HeadCharge.unit_price_cents), 0))
         .where(HeadCharge.check_id == chk.id)
     ) or 0
+    # 单点菜品也要计入服务费基数（退掉的不算）
+    lines = db.scalar(
+        select(func.coalesce(func.sum(OrderLine.qty * OrderLine.unit_price_cents), 0))
+        .where(OrderLine.check_id == chk.id, OrderLine.status != "voided")
+    ) or 0
+    subtotal = head + lines
     # 四舍五入到分。用 Decimal 而不是浮点 —— 钱不能用 float。
     chk.service_charge_cents = int(
         (Decimal(int(subtotal)) * SERVICE_CHARGE_RATE).quantize(
@@ -580,3 +589,205 @@ def merge_checks(db: Session, payload: dict, client_ts: datetime) -> None:
     # 并完之后人数变了 —— 两桌各 3 人本来都不收服务费，
     # 并成 6 人就要收了。这是并桌最容易被忽略的后果。
     _recalc_service_charge(db, target)
+
+
+# ---------------------------------------------------------------------------
+# Buffet 外带（称重）
+# ---------------------------------------------------------------------------
+
+TOGO_ITEM_EN = "Buffet To-Go (by weight)"
+
+
+def togo_sale(db: Session, op_id: uuidlib.UUID, payload: dict,
+              client_ts: datetime, user_id: int | None) -> None:
+    """一笔 buffet 外带。
+
+    payload = {"amount_cents": 1875, "payment": {...}}
+
+    和堂食完全不同的三点：
+      - **没有桌号** —— 柜台交易，不占座
+      - **没有人头** —— 秤直接给出金额，我们不知道也不需要知道几个人
+      - **没有服务费** —— 大桌服务费是针对堂食大桌的
+
+    金额落在 order_line 上（qty=1，unit_price 就是称出来的钱），
+    而不是 head_charge —— head_charge 的语义是"按人头"，
+    硬塞一个 qty=1 的行进去，后面算客流时就会把它当成一个人。
+
+    **一步到位创建并结账** —— 外带是当场付清的，不存在"未结的外带单"。
+    做成两步（先开单再结账）只会在断网重放时多一次失败机会。
+    """
+    amount = payload.get("amount_cents")
+    if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
+        raise BusinessError(f"金额非法: {amount!r}")
+
+    item = db.scalar(select(MenuItem).where(MenuItem.name_en == TOGO_ITEM_EN))
+    if item is None:
+        raise BusinessError("外带项目未配置（请先跑 seed）")
+
+    period = resolve_period(db, client_ts)
+
+    chk = DiningCheck(
+        client_uuid=op_id,
+        table_id=None,
+        period_id=period.id,
+        source="togo",
+        status="closed",          # 柜台即付，直接结账
+        opened_at=client_ts,
+        closed_at=client_ts,
+        opened_by=user_id,
+    )
+    db.add(chk)
+    db.flush()
+
+    db.add(
+        OrderLine(
+            check_id=chk.id,
+            menu_item_id=item.id,
+            qty=1,
+            unit_price_cents=amount,
+            status="served",      # 外带没有后厨流程
+            placed_at=client_ts,
+            ready_at=client_ts,
+        )
+    )
+
+    if "payment" in payload:
+        _apply_payment(chk, payload.get("payment"))
+
+
+# ---------------------------------------------------------------------------
+# 自提：Buffet To Go（按重量）+ 电话点菜
+# ---------------------------------------------------------------------------
+
+
+def _add_lines(db: Session, chk: DiningCheck, raw, client_ts: datetime) -> None:
+    """把菜品加到账单上。堂食和自提共用 —— 一桌里有人吃自助、有人点菜，
+    跟自提点菜在数据上是同一件事。
+
+    价格一律服务端解析。唯一的例外是 `open_price` 的条目
+    （Buffet To Go 按重量称），那种金额只能由前台从秤上读出来输入。
+    """
+    if not isinstance(raw, list) or not raw:
+        raise BusinessError("没有要加的菜")
+
+    for item in raw:
+        if not isinstance(item, dict):
+            raise BusinessError(f"菜品格式非法: {item!r}")
+
+        mid = item.get("menu_item_id")
+        if not isinstance(mid, int):
+            raise BusinessError(f"menu_item_id 非法: {mid!r}")
+
+        mi = db.get(MenuItem, mid)
+        if mi is None or not mi.active:
+            raise BusinessError(f"菜品不存在或已下架: {mid}")
+
+        qty = item.get("qty", 1)
+        if isinstance(qty, bool) or not isinstance(qty, int) or qty <= 0:
+            raise BusinessError(f"数量非法: {qty!r}")
+
+        if mi.open_price:
+            amt = item.get("amount_cents")
+            if isinstance(amt, bool) or not isinstance(amt, int) or amt <= 0:
+                raise BusinessError(f"{mi.name_zh} 需要输入金额")
+            price = amt
+        else:
+            if mi.price_cents is None:
+                raise BusinessError(f"{mi.name_zh} 没有定价，不能单点")
+            price = mi.price_cents
+
+        notes = item.get("notes")
+        notes = notes.strip() if isinstance(notes, str) and notes.strip() else None
+
+        db.add(
+            OrderLine(
+                check_id=chk.id,
+                menu_item_id=mi.id,
+                qty=qty,
+                # 价格快照 —— 改菜单不会改动历史账单
+                unit_price_cents=price,
+                notes=notes,
+                status="placed",
+                placed_at=client_ts,
+            )
+        )
+
+
+def open_togo_check(db: Session, op_id: uuidlib.UUID, payload: dict,
+                    client_ts: datetime, user_id: int | None) -> None:
+    """开一张自提单。
+
+    两种：
+      buffet_togo  自助餐打包，秤上直接出金额，前台把数字录进来
+      phone_order  电话点菜，从菜单选
+
+    **不占桌、不算大桌服务费** —— service charge 看的是 head_charge 的人头数，
+    自提单没有人头，自然是 0，不需要额外判断。
+    """
+    source = payload.get("source")
+    if source not in ("buffet_togo", "phone_order"):
+        raise BusinessError(f"自提类型非法: {source!r}")
+
+    period = resolve_period(db, client_ts)
+    chk = DiningCheck(
+        client_uuid=op_id,
+        table_id=None,
+        period_id=period.id,
+        source=source,
+        status="open",
+        opened_at=client_ts,
+        opened_by=user_id,
+    )
+    db.add(chk)
+    db.flush()
+
+    _add_lines(db, chk, payload.get("lines"), client_ts)
+
+    name = payload.get("customer_name")
+    phone = payload.get("phone_last4")
+    promised = payload.get("promised_at")
+    if name or phone or promised:
+        db.add(
+            PickupOrder(
+                check_id=chk.id,
+                customer_name=(name or None),
+                # PII 原则：只留后四位，够核对身份就行
+                phone_last4=(str(phone)[-4:] if phone else None),
+                promised_at=promised,
+                status="placed",
+            )
+        )
+
+
+def add_order_lines(db: Session, payload: dict, client_ts: datetime) -> None:
+    """给已有账单加菜。**堂食也能用** ——
+    一桌两人，一个吃自助一个点菜，就是这个场景。
+    """
+    chk = _load_check(db, payload)
+    if chk.status not in ("open", "closed"):
+        raise BusinessError(f"{chk.status} 状态的单不能加菜")
+
+    _add_lines(db, chk, payload.get("lines"), client_ts)
+    # 加菜会改变金额，大桌服务费要跟着重算
+    _recalc_service_charge(db, chk)
+
+
+def void_order_line(db: Session, payload: dict, client_ts: datetime) -> None:
+    """退掉一道菜（做错了 / 客人不要了）。
+
+    **不物理删除**，只把状态标成 voided —— 退菜是要进老板报表的，
+    删掉就等于这道菜从没出现过。
+    """
+    chk = _load_check(db, payload)
+    line_id = payload.get("line_id")
+    if not isinstance(line_id, int):
+        raise BusinessError(f"line_id 非法: {line_id!r}")
+
+    line = db.get(OrderLine, line_id)
+    if line is None or line.check_id != chk.id:
+        raise BusinessError("这道菜不在这张单上")
+    if line.status == "voided":
+        return  # 幂等
+
+    line.status = "voided"
+    _recalc_service_charge(db, chk)

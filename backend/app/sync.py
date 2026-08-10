@@ -19,14 +19,17 @@ from sqlalchemy.orm import Session
 
 from .schemas import SyncOpIn
 from .services.checks import (
+    add_order_lines,
     close_check,
     merge_checks,
     modify_check,
     open_check,
+    open_togo_check,
     restore_check,
     set_payment,
     transfer_check,
     void_check,
+    void_order_line,
 )
 
 log = logging.getLogger(__name__)
@@ -45,6 +48,10 @@ _HANDLERS: dict[str, frozenset[str]] = {
     "transfer_check": _FRONT,
     "merge_checks": _FRONT,
     "set_payment": _FRONT,
+    # 自提与加菜都是日常操作
+    "open_togo_check": _FRONT,
+    "add_order_lines": _FRONT,
+    "void_order_line": _FRONT,
     "modify_check": _FRONT_MANAGER,
     "void_check": _FRONT_MANAGER,
     "restore_check": _FRONT_MANAGER,
@@ -78,6 +85,16 @@ def _apply_effect(db: Session, op: SyncOpIn, user) -> None:
 
     elif op.entity == "set_payment":
         set_payment(db, op.payload, op.client_ts)
+
+    elif op.entity == "open_togo_check":
+        open_togo_check(db, op.op_id, op.payload, op.client_ts,
+                        user.id if user else None)
+
+    elif op.entity == "add_order_lines":
+        add_order_lines(db, op.payload, op.client_ts)
+
+    elif op.entity == "void_order_line":
+        void_order_line(db, op.payload, op.client_ts)
 
     elif op.entity == "ping_event":
         label = op.payload.get("label")

@@ -21,9 +21,28 @@ export interface Drinks {
   child: number
 }
 
+export interface MenuItem {
+  id: number
+  name_en: string
+  name_zh: string
+  category: string
+  price_cents: number | null
+  is_buffet_dish: boolean
+  station: string
+  sort_order: number
+  /** 开放价：金额当场输入（Buffet To Go 按重量称） */
+  open_price: boolean
+}
+
+export interface Category {
+  key: string
+  label: string
+}
+
 export interface Catalog {
+  categories: Category[]
   tables: TableInfo[]
-  menu: unknown[]
+  menu: MenuItem[]
   prices: PriceRow[]
   current_period_kind: 'lunch' | 'dinner'
   fetched_at: string

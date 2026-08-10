@@ -13,6 +13,7 @@ from argon2 import PasswordHasher
 from sqlalchemy import select
 
 from .db import SessionLocal
+from .menu_data import MENU_ITEMS
 from .models import AppUser, BuffetPrice, DiningTable, MenuItem
 
 ph = PasswordHasher()
@@ -25,46 +26,43 @@ TABLES = (
     + [(f"C{i}", 8, "large") for i in range(1, 5)]
 )
 
-# (name_en, name_zh, category, price_cents, is_buffet_dish, station)
-# price_cents=None 表示 buffet 台上的菜，不单独计价
-MENU: list[tuple[str, str, str, int | None, bool, str]] = [
-    # --- buffet 台上的菜：不计价，但**要建档**，否则补菜事件没有对象可挂 ---
-    ("General Tso's Chicken", "左宗棠鸡", "buffet_entree", None, True, "wok"),
-    ("Sesame Chicken", "芝麻鸡", "buffet_entree", None, True, "wok"),
-    ("Broccoli Beef", "西兰花牛肉", "buffet_entree", None, True, "wok"),
-    ("Sweet & Sour Pork", "咕咾肉", "buffet_entree", None, True, "wok"),
-    ("Lo Mein", "捞面", "buffet_noodle", None, True, "wok"),
-    ("Fried Rice", "炒饭", "buffet_rice", None, True, "wok"),
-    ("Salt & Pepper Shrimp", "椒盐虾", "buffet_seafood", None, True, "fryer"),
-    ("Crab Rangoon", "蟹角", "buffet_appetizer", None, True, "fryer"),
-    ("Spring Roll", "春卷", "buffet_appetizer", None, True, "fryer"),
-    ("Hot & Sour Soup", "酸辣汤", "buffet_soup", None, True, "wok"),
-    ("Salad Bar", "沙拉吧", "buffet_cold", None, True, "cold"),
-    ("Fresh Fruit", "水果", "buffet_dessert", None, True, "cold"),
-    # --- 单点菜品：进后厨，要出票 ---
-    ("Peking Duck (Half)", "北京烤鸭（半只）", "entree", 2899, False, "wok"),
-    ("Salt & Pepper Lobster", "椒盐龙虾", "entree", 3299, False, "wok"),
-    ("Steamed Whole Fish", "清蒸全鱼", "entree", 2699, False, "wok"),
-    ("Walnut Shrimp", "核桃虾", "entree", 1899, False, "wok"),
-    # --- 饮料：station='drink'，**不进后厨队列** ---
-    #     注意：按人无限续杯的汽水走 head_charge，不走这里。
-    #     这里只放单独计价的特饮。
-    ("Thai Iced Tea", "泰式奶茶", "drink", 495, False, "drink"),
-    ("Fresh Coconut", "椰子", "drink", 695, False, "drink"),
-    ("Bottled Water", "瓶装水", "drink", 150, False, "none"),
+# Buffet 台上的菜：不计价，但**要建档** —— 否则补菜事件没有对象可挂。
+# Step 5 上线补菜记录时会用到，菜名等店里确认后再补全。
+BUFFET_DISHES = [
+    ("General Tso's Chicken", "左宗棠鸡", "buffet_entree", "wok"),
+    ("Sesame Chicken", "芝麻鸡（自助）", "buffet_entree", "wok"),
+    ("Broccoli Beef", "西兰花牛肉（自助）", "buffet_entree", "wok"),
+    ("Sweet & Sour Pork", "咕咾肉（自助）", "buffet_entree", "wok"),
+    ("Lo Mein", "捞面（自助）", "buffet_noodle", "wok"),
+    ("Fried Rice", "炒饭（自助）", "buffet_rice", "wok"),
+    ("Salt & Pepper Shrimp", "椒盐虾（自助）", "buffet_seafood", "fryer"),
+    ("Crab Rangoon", "蟹角（自助）", "buffet_appetizer", "fryer"),
+    ("Spring Roll", "春卷（自助）", "buffet_appetizer", "fryer"),
+    ("Hot & Sour Soup", "酸辣汤（自助）", "buffet_soup", "wok"),
+    ("Salad Bar", "沙拉吧", "buffet_cold", "cold"),
+    ("Fresh Fruit", "水果", "buffet_dessert", "cold"),
+]
+
+# 自提专用：金额由前台当场输入（秤上直接出数），系统只记账
+TOGO_ITEMS = [
+    ("Buffet To Go (by weight)", "自助餐打包（按重量）", "togo", "none"),
 ]
 
 # 人头价（占位）。改价时**新增一行**并给新的 effective_from，
 # 绝不覆盖旧行 —— 否则历史账单金额会跟着变。
 PRICES = [
-    ("lunch", "admission", "adult", 1299),
+    # ✅ 成人价来自菜单：午市 $14.05、晚市 $15.88
+    ("lunch", "admission", "adult", 1405),
+    ("dinner", "admission", "adult", 1588),
+    # ⚠️ 菜单上**没有印**儿童和长者价，下面是占位值，需要跟店里确认后改。
+    #    改价的正确做法是新增一行 + 新的 effective_from，不要覆盖这几行。
     ("lunch", "admission", "child", 699),
     ("lunch", "admission", "senior", 1099),
-    ("dinner", "admission", "adult", 1899),
     ("dinner", "admission", "child", 999),
-    ("dinner", "admission", "senior", 1599),
+    ("dinner", "admission", "senior", 1399),
     # 饮料按人无限续杯 —— 所以它是第二项人头费，不是单品。
-    # 儿童饮料另有价格；长者饮料按成人价，所以没有 senior 这一档。
+    # ⚠️ 菜单上也没有印饮料价，下面同样是占位值。
+    #    儿童饮料另有价格；长者饮料按成人价，所以没有 senior 这一档。
     ("lunch", "drink", "adult", 250),
     ("lunch", "drink", "child", 150),
     ("dinner", "drink", "adult", 250),
@@ -99,24 +97,34 @@ def seed() -> None:
             n += 1
         added["dining_table"] = n
 
-        # --- 菜单 ---
+        # --- 菜单：单品 + buffet 台上的菜 + 自提条目 ---
         existing_menu = {m.name_en for m in db.scalars(select(MenuItem)).all()}
         n = 0
-        for i, (en, zh, cat, price, is_buffet, station) in enumerate(MENU):
-            if en in existing_menu:
-                continue
-            db.add(
-                MenuItem(
-                    name_en=en,
-                    name_zh=zh,
-                    category=cat,
-                    price_cents=price,
-                    is_buffet_dish=is_buffet,
-                    station=station,
-                    sort_order=i,
-                )
-            )
-            n += 1
+        i = 0
+        for en, zh, cat, price, station in MENU_ITEMS:
+            if en not in existing_menu:
+                db.add(MenuItem(name_en=en, name_zh=zh, category=cat,
+                                price_cents=price, is_buffet_dish=False,
+                                station=station, sort_order=i))
+                n += 1
+                existing_menu.add(en)
+            i += 1
+        for en, zh, cat, station in BUFFET_DISHES:
+            if en not in existing_menu:
+                db.add(MenuItem(name_en=en, name_zh=zh, category=cat,
+                                price_cents=None, is_buffet_dish=True,
+                                station=station, sort_order=i))
+                n += 1
+                existing_menu.add(en)
+            i += 1
+        for en, zh, cat, station in TOGO_ITEMS:
+            if en not in existing_menu:
+                db.add(MenuItem(name_en=en, name_zh=zh, category=cat,
+                                price_cents=0, is_buffet_dish=False,
+                                station=station, sort_order=i, open_price=True))
+                n += 1
+                existing_menu.add(en)
+            i += 1
         added["menu_item"] = n
 
         # --- 人头价：逐行幂等（不能整表判断，否则新增档位加不进去）---

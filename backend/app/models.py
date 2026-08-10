@@ -61,6 +61,9 @@ class MenuItem(Base):
     station: Mapped[str] = mapped_column(Text, nullable=False, default="none")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # 开放价：金额由前台当场输入，不看 price_cents。
+    # Buffet To Go 是按重量称的 —— 秤上直接出金额，系统只负责记账。
+    open_price: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         CheckConstraint(
@@ -195,7 +198,11 @@ class DiningCheck(Base):
     payment_note: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
-        CheckConstraint("source IN ('dine_in','pickup')", name="ck_check_source"),
+        # togo = buffet 外带，按重量称重、柜台即付。没有桌号、没有人头，
+        # 只有一个金额（秤已经算好了）。
+        CheckConstraint(
+            "source IN ('dine_in','pickup','togo')", name="ck_check_source"
+        ),
         CheckConstraint(
             "status IN ('open','closed','voided','merged')", name="ck_check_status"
         ),
@@ -204,10 +211,10 @@ class DiningCheck(Base):
             " OR payment_method IN ('cash','card','mixed','other')",
             name="ck_check_payment_method",
         ),
-        # 堂食必须有桌号，自取必须没有
+        # 堂食必须有桌号；自取和外带都没有
         CheckConstraint(
             "(source = 'dine_in' AND table_id IS NOT NULL)"
-            " OR (source = 'pickup' AND table_id IS NULL)",
+            " OR (source IN ('pickup','togo') AND table_id IS NULL)",
             name="ck_check_table_matches_source",
         ),
         Index("ix_check_period_status", "period_id", "status"),

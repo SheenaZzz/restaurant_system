@@ -888,3 +888,120 @@ ol.timeline li:last-child { border-left-color: transparent; }
 
 /* 弹层最高不超过视口，超了内部滚动，确认按钮始终够得着 */
 .sheet { max-height: 88vh; overflow-y: auto; }
+
+/* ---- 自提 ---- */
+.togo-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 18px 0 6px;
+}
+.bigcard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 22px 20px;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--accent);
+  border-radius: 14px;
+  cursor: pointer;
+}
+.bigcard:active { transform: scale(0.985); }
+.bigcard:disabled { opacity: 0.4; cursor: default; }
+.bigcard.buffet { border-left-color: var(--ok); }
+.bigcard.phone { border-left-color: var(--accent); }
+.bc-title { font-size: 21px; font-weight: 700; }
+.bc-sub { color: var(--muted); font-size: 13px; }
+
+/* ---- 点菜 ---- */
+.sheet.menu-sheet { max-width: 760px; }
+.search {
+  width: 100%;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  font-size: 17px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.menu-body { display: grid; grid-template-columns: 128px 1fr; gap: 12px; }
+@media (max-width: 620px) { .menu-body { grid-template-columns: 1fr; } }
+
+.menu-cats { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+.menu-cats button {
+  padding: 11px 10px;
+  font-size: 14px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.menu-cats button.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+.menu-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.mi { position: relative; }
+.mi-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.mi.on .mi-main { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.mi-zh { font-size: 15px; font-weight: 600; }
+.mi-en { font-size: 11px; color: var(--muted); }
+.mi-price { font-size: 13px; color: var(--ok); font-variant-numeric: tabular-nums; }
+
+.mi-qty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 2px;
+  background: var(--bg);
+  border-radius: 8px;
+}
+.mi-qty button {
+  width: 30px;
+  height: 30px;
+  font-size: 17px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.mi-qty span { min-width: 20px; text-align: center; font-weight: 700; }
+
+.cart {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+table.kv.lines td { padding: 6px 2px; }
+table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }

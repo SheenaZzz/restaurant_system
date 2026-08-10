@@ -120,6 +120,8 @@ export default function FloorPlan({ role }: { role: Role }) {
           prices={cat.prices}
           period={cat.current_period_kind}
           openChecks={openList}
+          menu={cat.menu}
+          categories={cat.categories}
           pending={pending.has(detailFor.check_uuid)}
           onClose={() => setDetailFor(null)}
           onChanged={reload}

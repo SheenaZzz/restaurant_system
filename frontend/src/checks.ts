@@ -7,7 +7,7 @@ import {
   type PriceRow,
 } from './catalog'
 import { getIdentity } from './auth'
-import db, { setMeta, uuid, type LocalCheck } from './db'
+import db, { setMeta, uuid, type LocalCheck, type LocalLine } from './db'
 import { enqueue } from './sync'
 
 export interface Guests {
@@ -55,6 +55,8 @@ export async function applyCheckOp(
       // 账单的身份就是创建它那条 op 的 op_id ——
       // 客户端离线时拿不到数据库主键，只能自己生成标识
       check_uuid: opId,
+      source: 'dine_in',
+      lines: [],
       table_label: String(payload.table_label ?? '?'),
       status: 'open',
       opened_at: clientTs,
@@ -116,6 +118,67 @@ export async function applyCheckOp(
         pre_void_status: row.status,
         status: 'voided',
         void_reason: String(payload.reason ?? ''),
+      })
+    }
+  } else if (entity === 'open_togo_check') {
+    const cat = await loadCatalog()
+    const menu = new Map((cat?.menu ?? []).map((m) => [m.id, m]))
+    const lines: LocalLine[] = ((payload.lines ?? []) as any[]).map((l) => {
+      const mi = menu.get(l.menu_item_id)
+      return {
+        menu_item_id: l.menu_item_id,
+        name: mi?.name_zh ?? mi?.name_en ?? `#${l.menu_item_id}`,
+        qty: l.qty ?? 1,
+        // 开放价条目的金额由前台输入；其余取菜单价
+        unit_price_cents: mi?.open_price
+          ? (l.amount_cents ?? 0)
+          : (mi?.price_cents ?? 0),
+        notes: l.notes,
+      }
+    })
+    await db.checks.put({
+      check_uuid: opId,
+      source: payload.source === 'buffet_togo' ? 'buffet_togo' : 'phone_order',
+      table_label: payload.source === 'buffet_togo' ? '自助打包' : '电话单',
+      lines,
+      customer_name: payload.customer_name as string | undefined,
+      phone_last4: payload.phone_last4
+        ? String(payload.phone_last4).slice(-4)
+        : undefined,
+      status: 'open',
+      opened_at: clientTs,
+      adult: 0, child: 0, senior: 0, drink_adult: 0, drink_child: 0,
+      // 自提单没有人头，不触发大桌服务费
+      service_cents: 0,
+      est_cents: lines.reduce((a, l) => a + l.qty * l.unit_price_cents, 0),
+      by: opts.who,
+      last_by: opts.who,
+      ...opts,
+    })
+  } else if (entity === 'add_order_lines') {
+    const row = await db.checks.get(String(payload.check_uuid ?? ''))
+    if (row) {
+      const cat = await loadCatalog()
+      const menu = new Map((cat?.menu ?? []).map((m) => [m.id, m]))
+      const add: LocalLine[] = ((payload.lines ?? []) as any[]).map((l) => {
+        const mi = menu.get(l.menu_item_id)
+        return {
+          menu_item_id: l.menu_item_id,
+          name: mi?.name_zh ?? mi?.name_en ?? `#${l.menu_item_id}`,
+          qty: l.qty ?? 1,
+          unit_price_cents: mi?.open_price
+            ? (l.amount_cents ?? 0)
+            : (mi?.price_cents ?? 0),
+          notes: l.notes,
+        }
+      })
+      const lines = [...(row.lines ?? []), ...add]
+      await db.checks.put({
+        ...row,
+        lines,
+        est_cents: recalcEst(row, lines),
+        last_by: opts.who ?? row.last_by,
+        ...opts,
       })
     }
   } else if (entity === 'transfer_check') {
@@ -444,4 +507,58 @@ export async function resetLocalData(): Promise<{ ok: boolean; pending: number }
     await setMeta('cursor', 0)
   })
   return { ok: true, pending: 0 }
+}
+
+
+/** 本地重算总额：人头 + 单点 + 服务费。仅供显示，落库以服务端为准。 */
+function recalcEst(row: LocalCheck, lines: LocalLine[]): number {
+  const head = row.est_cents - (row.service_cents ?? 0) -
+    (row.lines ?? []).filter((l) => !l.voided)
+      .reduce((a, l) => a + l.qty * l.unit_price_cents, 0)
+  const lineSum = lines
+    .filter((l) => !l.voided)
+    .reduce((a, l) => a + l.qty * l.unit_price_cents, 0)
+  const size = Math.max(
+    row.adult + row.child + row.senior,
+    row.drink_adult + row.drink_child,
+  )
+  const svc = serviceCents(head + lineSum, size)
+  return head + lineSum + svc
+}
+
+export interface NewLine {
+  menu_item_id: number
+  qty: number
+  amount_cents?: number
+  notes?: string
+}
+
+/** 开一张自提单（Buffet To Go 或 电话点菜）。 */
+export async function openTogo(
+  source: 'buffet_togo' | 'phone_order',
+  lines: NewLine[],
+  customer?: { name?: string; phone?: string },
+): Promise<string> {
+  const payload = {
+    source,
+    lines,
+    customer_name: customer?.name,
+    phone_last4: customer?.phone,
+  }
+  const opId = uuid()
+  await enqueue('open_togo_check', payload, opId)
+  await applyCheckOp('open_togo_check', opId, payload, new Date().toISOString(), {
+    synced: 0, remote: 0, who: (await getIdentity())?.display_name,
+  })
+  return opId
+}
+
+/** 给已有账单加菜 —— **堂食也能用**（一桌里有人吃自助有人点菜）。 */
+export async function addLines(checkUuid: string, lines: NewLine[]): Promise<void> {
+  const payload = { check_uuid: checkUuid, lines }
+  const opId = uuid()
+  await enqueue('add_order_lines', payload, opId)
+  await applyCheckOp('add_order_lines', opId, payload, new Date().toISOString(), {
+    synced: 0, remote: 0, who: (await getIdentity())?.display_name,
+  })
 }

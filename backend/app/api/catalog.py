@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..core.deps import CurrentUser
 from ..db import get_db
+from ..menu_data import CATEGORIES
 from ..models import BuffetPrice, DiningTable, MenuItem
 from ..services.period import period_kind_of, store_now
 
@@ -38,6 +39,7 @@ class MenuItemOut(BaseModel):
     is_buffet_dish: bool
     station: str
     sort_order: int
+    open_price: bool
 
 
 class PriceOut(BaseModel):
@@ -47,7 +49,13 @@ class PriceOut(BaseModel):
     price_cents: int
 
 
+class CategoryOut(BaseModel):
+    key: str
+    label: str
+
+
 class CatalogOut(BaseModel):
+    categories: list[CategoryOut]
     tables: list[TableOut]
     menu: list[MenuItemOut]
     prices: list[PriceOut]
@@ -72,6 +80,7 @@ def catalog(user: CurrentUser, db: Session = Depends(get_db)):
     ).all()
 
     return CatalogOut(
+        categories=[CategoryOut(key=k, label=v) for k, v in CATEGORIES],
         tables=[TableOut.model_validate(t, from_attributes=True) for t in tables],
         menu=[MenuItemOut.model_validate(m, from_attributes=True) for m in menu],
         prices=[PriceOut.model_validate(p, from_attributes=True) for p in prices],

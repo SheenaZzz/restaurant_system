@@ -27,10 +27,29 @@ export interface Meta {
   value: unknown
 }
 
+/** 账单上的一道菜。 */
+export interface LocalLine {
+  /** 服务端行 id；本地刚加的还没有，同步后才会有 */
+  line_id?: number
+  menu_item_id: number
+  name: string
+  qty: number
+  unit_price_cents: number
+  notes?: string
+  voided?: boolean
+}
+
 /** 楼面上的一张账单（本地镜像）。UI 只读它 —— 所以断网照样能用。 */
 export interface LocalCheck {
   check_uuid: string
+  /** dine_in 占桌；phone_order / buffet_togo 是自提，没有桌号 */
+  source: 'dine_in' | 'phone_order' | 'buffet_togo'
   table_label: string
+  /** 单点菜品 */
+  lines: LocalLine[]
+  /** 自提单的客人信息 */
+  customer_name?: string
+  phone_last4?: string
   status: 'open' | 'closed' | 'voided' | 'merged'
   opened_at: string
   adult: number

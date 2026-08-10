@@ -12,6 +12,7 @@ import DeadLetters from './DeadLetters'
 import FloorPlan from './FloorPlan'
 import ListView from './ListView'
 import MonthView from './MonthView'
+import ToGoView from './ToGoView'
 import LoginPage from './LoginPage'
 import { resetLocalData } from './checks'
 import {
@@ -41,7 +42,7 @@ export default function App() {
   const [last, setLast] = useState<string>('—')
   const [tone, setTone] = useState<'ok' | 'warn' | 'bad'>('ok')
   const [dead, setDead] = useState(0)
-  const [view, setView] = useState<'floor' | 'list' | 'month'>('floor')
+  const [view, setView] = useState<'floor' | 'togo' | 'list' | 'month'>('floor')
   const [showDead, setShowDead] = useState(false)
   const [showSync, setShowSync] = useState(false)
 
@@ -158,6 +159,12 @@ export default function App() {
             楼面
           </button>
           <button
+            className={view === 'togo' ? 'on' : ''}
+            onClick={() => setView('togo')}
+          >
+            自提
+          </button>
+          <button
             className={view === 'list' ? 'on' : ''}
             onClick={() => setView('list')}
           >
@@ -184,6 +191,8 @@ export default function App() {
         </>
       ) : view === 'floor' ? (
         <FloorPlan role={identity.role} />
+      ) : view === 'togo' ? (
+        <ToGoView role={identity.role} />
       ) : view === 'month' ? (
         <MonthView />
       ) : (

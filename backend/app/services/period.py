@@ -19,8 +19,9 @@ from ..models import ServicePeriod
 # Step 7 上线前应换成真实时区名，这里先保持简单可测。
 STORE_UTC_OFFSET = int(os.getenv("STORE_UTC_OFFSET", "-5"))
 
-# 午市/晚市的分界（店内本地时间）
-LUNCH_TO_DINNER = time(16, 0)
+# 午市/晚市的分界（店内本地时间）。
+# 菜单上印的是：午市自助 11:00–15:00，晚市自助 15:00–20:30。
+LUNCH_TO_DINNER = time(15, 0)
 
 # 营业日的分界。凌晨 2 点前打的单仍算前一天 ——
 # 否则收市后补录的单会掉到第二天，日结对不上。

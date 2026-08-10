@@ -1,7 +1,14 @@
 import { useState } from 'react'
 import { canManage, type Role } from './auth'
-import { money, type Drinks, type PriceRow } from './catalog'
 import {
+  money,
+  type Category,
+  type Drinks,
+  type MenuItem,
+  type PriceRow,
+} from './catalog'
+import {
+  addLines,
   closeWithPayment,
   mergeTables,
   modifyTable,
@@ -14,6 +21,7 @@ import {
 } from './checks'
 import type { LocalCheck } from './db'
 import CheckHistory from './CheckHistory'
+import MenuPicker from './MenuPicker'
 import EditSheet from './EditSheet'
 import PaymentSheet from './PaymentSheet'
 import TransferSheet from './TransferSheet'
@@ -45,6 +53,8 @@ export default function CheckDetail({
   prices,
   period,
   openChecks,
+  menu,
+  categories,
   pending = false,
   onClose,
   onChanged,
@@ -55,14 +65,17 @@ export default function CheckDetail({
   period: 'lunch' | 'dinner'
   /** 其它未结账单，供并桌选择 */
   openChecks: LocalCheck[]
+  /** 菜单，用于加菜。不传就不显示加菜按钮 */
+  menu?: MenuItem[]
+  categories?: Category[]
   /** 这张单还有操作没上传到服务端 */
   pending?: boolean
   onClose: () => void
   onChanged: () => void | Promise<void>
 }) {
-  const [sub, setSub] = useState<'pay' | 'move' | 'edit' | 'void' | 'history' | null>(
-    null,
-  )
+  const [sub, setSub] = useState<
+    'pay' | 'move' | 'edit' | 'void' | 'history' | 'addlines' | null
+  >(null)
   const [reason, setReason] = useState('')
   const manage = canManage(role)
   const c = check
@@ -115,6 +128,21 @@ export default function CheckDetail({
         onCancel={() => setSub(null)}
         onConfirm={async (guests: Guests, drinks: Drinks) => {
           await modifyTable(c.check_uuid, guests, drinks)
+          await done()
+        }}
+      />
+    )
+  }
+
+  if (sub === 'addlines' && menu && categories) {
+    return (
+      <MenuPicker
+        menu={menu}
+        categories={categories}
+        title={`${c.table_label} 加菜`}
+        onCancel={() => setSub(null)}
+        onConfirm={async (lines) => {
+          await addLines(c.check_uuid, lines)
           await done()
         }}
       />
@@ -220,6 +248,15 @@ export default function CheckDetail({
                 {c.pay_note && ` · ${c.pay_note}`}
               </td>
             </tr>
+            {(c.customer_name || c.phone_last4) && (
+              <tr>
+                <td className="dim">客人</td>
+                <td className="num">
+                  {c.customer_name ?? '—'}
+                  {c.phone_last4 && ` · 尾号 ${c.phone_last4}`}
+                </td>
+              </tr>
+            )}
             <tr>
               <td className="dim">操作人</td>
               <td className="num">{operatorText(c)}</td>
@@ -233,6 +270,26 @@ export default function CheckDetail({
           </tbody>
         </table>
 
+        {(c.lines ?? []).length > 0 && (
+          <>
+            <div className="divider" />
+            <table className="kv lines">
+              <tbody>
+                {(c.lines ?? []).map((l, i) => (
+                  <tr key={i} className={l.voided ? 'voided' : ''}>
+                    <td>
+                      {l.name}
+                      {l.qty > 1 && <span className="dim"> ×{l.qty}</span>}
+                      {l.notes && <div className="dim small">{l.notes}</div>}
+                    </td>
+                    <td className="num">{money(l.qty * l.unit_price_cents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+
         <p className="total">{money(c.est_cents)}</p>
 
         {pending && (
@@ -243,6 +300,11 @@ export default function CheckDetail({
         )}
 
         <div className="actiongrid">
+          {menu && categories && c.status !== 'voided' && c.status !== 'merged' && (
+            <button className="primaryish" onClick={() => setSub('addlines')}>
+              加菜
+            </button>
+          )}
           <button onClick={() => setSub('history')}>查看历史</button>
         </div>
 
@@ -271,7 +333,10 @@ export default function CheckDetail({
                 <button className="primaryish" onClick={() => setSub('pay')}>
                   结账
                 </button>
-                <button onClick={() => setSub('move')}>换桌 / 并桌</button>
+                {/* 自提单没有桌位，换桌/并桌对它没有意义 */}
+                {c.source === 'dine_in' && (
+                  <button onClick={() => setSub('move')}>换桌 / 并桌</button>
+                )}
               </>
             )}
             {c.status === 'closed' && (
