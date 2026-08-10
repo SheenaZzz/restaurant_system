@@ -384,3 +384,36 @@ export async function updatePayment(
     synced: 0, remote: 0, who: (await getIdentity())?.display_name,
   })
 }
+
+
+/**
+ * 哪些账单还有操作没上传。
+ *
+ * ⚠️ **从 outbox 实时推导，不存状态。**
+ *
+ * 原来在 LocalCheck 上存了个 `synced` 字段，同步成功后按 op_id 去标记。
+ * 但那只对开桌成立 —— 开桌那条 op 的 id 恰好就是账单 id。
+ * 结账/改单/换桌用的是**新的 op_id**，标记匹配不上，
+ * 于是那张单会**永远显示"待同步"**，而它其实早就上传成功了。
+ *
+ * 一个永远不消失的警告等于没有警告：员工看两次就学会无视它，
+ * 真出问题时也不会再看。所以这里改成算出来的 ——
+ * outbox 里没有引用它的 op，它就是干净的，不可能算错。
+ */
+export async function pendingCheckUuids(): Promise<Set<string>> {
+  const ops = await db.outbox.toArray()
+  const out = new Set<string>()
+  for (const o of ops) {
+    if (o.entity === 'open_check') {
+      // 开桌：账单的身份就是这条 op 的 id
+      out.add(o.op_id)
+      continue
+    }
+    const cu = o.payload?.check_uuid
+    if (typeof cu === 'string') out.add(cu)
+    // 并桌还会影响被并入的那几张
+    const srcs = o.payload?.source_uuids
+    if (Array.isArray(srcs)) for (const x of srcs) if (typeof x === 'string') out.add(x)
+  }
+  return out
+}

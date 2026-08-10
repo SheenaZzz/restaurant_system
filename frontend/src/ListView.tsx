@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { canManage, type Role } from './auth'
 import { loadCatalog, money, type PriceRow } from './catalog'
-import { allChecks, totalsOf } from './checks'
+import { allChecks, pendingCheckUuids, totalsOf } from './checks'
 import CheckDetail, { PAY_LABEL, STATUS_LABEL } from './CheckDetail'
 import type { LocalCheck } from './db'
 
@@ -21,10 +21,12 @@ export default function ListView({ role }: { role: Role }) {
   const [now, setNow] = useState(new Date())
   const [pick, setPick] = useState<LocalCheck | null>(null)
   const [filter, setFilter] = useState<Filter>('all')
+  const [pending, setPending] = useState<Set<string>>(new Set())
 
   const reload = useCallback(async () => {
     const all = await allChecks()
     setRows(all)
+    setPending(await pendingCheckUuids())
     // 详情开着时底下可能被别的设备改了 —— 跟着刷新，
     // 否则会拿着过期的金额去结账
     setPick((p) => (p ? (all.find((r) => r.check_uuid === p.check_uuid) ?? null) : null))
@@ -129,7 +131,9 @@ export default function ListView({ role }: { role: Role }) {
                 >
                   {STATUS_LABEL[c.status]}
                 </span>
-                {!c.synced && <span className="tag warn">待同步</span>}
+                {pending.has(c.check_uuid) && (
+                  <span className="tag warn">未上传</span>
+                )}
                 <span className="grow" />
                 <span className="c-time">
                   {new Date(c.opened_at).toLocaleTimeString('zh-CN', {
@@ -148,11 +152,8 @@ export default function ListView({ role }: { role: Role }) {
               </div>
 
               <div className="c-line">
-                {guests > 0 && <span className="chip">{guests} 人</span>}
-                {c.adult > 0 && <span className="chip">成 {c.adult}</span>}
-                {c.child > 0 && <span className="chip">童 {c.child}</span>}
-                {c.senior > 0 && <span className="chip">长 {c.senior}</span>}
-                {drinks > 0 && <span className="chip">饮 {drinks}</span>}
+                {guests > 0 && <span className="chip">{guestText(c)}</span>}
+                {drinks > 0 && <span className="chip">{drinkText(c)}</span>}
               </div>
 
               <div className="c-foot">
@@ -175,12 +176,34 @@ export default function ListView({ role }: { role: Role }) {
           prices={prices}
           period={period}
           openChecks={openChecks}
+          pending={pending.has(pick.check_uuid)}
           onClose={() => setPick(null)}
           onChanged={reload}
         />
       )}
     </>
   )
+}
+
+/**
+ * 「3人（成2童1）」而不是「3人 · 成2 · 童1」——
+ * 后者容易被读成三个并列的数字，加起来变成 6 个人。
+ * 只有一种客型时不显示括号，省得每张卡都写「2人（成2）」这种废话。
+ */
+function guestText(c: LocalCheck): string {
+  const total = c.adult + c.child + c.senior
+  const parts: string[] = []
+  if (c.adult) parts.push(`成${c.adult}`)
+  if (c.child) parts.push(`童${c.child}`)
+  if (c.senior) parts.push(`长${c.senior}`)
+  return parts.length > 1 ? `${total}人（${parts.join('')}）` : `${total}人`
+}
+
+function drinkText(c: LocalCheck): string {
+  const total = c.drink_adult + c.drink_child
+  return c.drink_adult && c.drink_child
+    ? `饮${total}（成${c.drink_adult}童${c.drink_child}）`
+    : `饮${total}`
 }
 
 function Stat({

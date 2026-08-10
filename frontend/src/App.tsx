@@ -42,6 +42,7 @@ export default function App() {
   const [dead, setDead] = useState(0)
   const [view, setView] = useState<'floor' | 'list' | 'month'>('floor')
   const [showDead, setShowDead] = useState(false)
+  const [showSync, setShowSync] = useState(false)
 
   // 身份从 IndexedDB 读，**不需要网络** ——
   // 离线冷启动时也能立刻渲染出正确的角色界面
@@ -122,7 +123,12 @@ export default function App() {
           <span className={`role ${identity.role}`}>{ROLE_LABEL[identity.role]}</span>
         </span>
         <span className="grow" />
-        <span className={pending ? 'badge warn' : 'badge'}>待同步 {pending}</span>
+        <button
+          className={pending ? 'badge warn clickable' : 'badge clickable'}
+          onClick={() => setShowSync(true)}
+        >
+          未上传 {pending}
+        </button>
         {dead > 0 && (
           <button className="badge bad clickable" onClick={() => setShowDead(true)}>
             失败 {dead}
@@ -204,6 +210,60 @@ export default function App() {
       </div>
 
       {showDead && <DeadLetters onClose={() => { setShowDead(false); void refresh() }} />}
+
+      {/* 一个员工看不懂的状态标签等于没有标签 —— 必须能点开问"这是什么" */}
+      {showSync && (
+        <div className="sheet-back" onClick={() => setShowSync(false)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <h2>未上传 {pending}</h2>
+            <p className="hint">
+              这台 iPad 上有 <b>{pending}</b> 条操作还没传到店里的服务器。
+            </p>
+            <table className="kv">
+              <tbody>
+                <tr>
+                  <td className="dim">要我做什么吗</td>
+                  <td className="num">不用。联网后会自动补发。</td>
+                </tr>
+                <tr>
+                  <td className="dim">数据会丢吗</td>
+                  <td className="num">不会。已经存在这台 iPad 上了。</td>
+                </tr>
+                <tr>
+                  <td className="dim">多久补发一次</td>
+                  <td className="num">有积压时每 4 秒重试一次</td>
+                </tr>
+                <tr>
+                  <td className="dim">现在网络</td>
+                  <td className="num">{online ? '在线' : '离线'}</td>
+                </tr>
+                <tr>
+                  <td className="dim">上次同步</td>
+                  <td className="num">{last}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="hint">
+              如果一直不归零，说明服务器连不上（检查店内 WiFi 和后台机器）。
+              红色的「失败 N」才是需要人处理的 —— 那是服务端明确拒绝的操作。
+            </p>
+            <div className="sheet-actions">
+              <button onClick={() => setShowSync(false)}>知道了</button>
+              <button
+                className="primary"
+                onClick={() => {
+                  sync()
+                    .then((r) => report(r))
+                    .catch(() => {})
+                  setShowSync(false)
+                }}
+              >
+                立即重试
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!isFront(identity.role) && (
         <ul>

@@ -44,6 +44,7 @@ export default function CheckDetail({
   prices,
   period,
   openChecks,
+  pending = false,
   onClose,
   onChanged,
 }: {
@@ -53,6 +54,8 @@ export default function CheckDetail({
   period: 'lunch' | 'dinner'
   /** 其它未结账单，供并桌选择 */
   openChecks: LocalCheck[]
+  /** 这张单还有操作没上传到服务端 */
+  pending?: boolean
   onClose: () => void
   onChanged: () => void | Promise<void>
 }) {
@@ -164,7 +167,7 @@ export default function CheckDetail({
           <span className={`tag ${c.status === 'open' ? 'warn' : c.status === 'voided' ? 'bad' : 'ok'}`}>
             {STATUS_LABEL[c.status]}
           </span>
-          {!c.synced && <span className="tag warn">待同步</span>}
+          {pending && <span className="tag warn">未上传</span>}
         </h2>
 
         <table className="kv">
@@ -221,6 +224,13 @@ export default function CheckDetail({
         </table>
 
         <p className="total">{money(c.est_cents)}</p>
+
+        {pending && (
+          <p className="hint">
+            这张单还有改动**只存在这台 iPad 上**，没传到服务器。
+            联网后会自动补发，不用做任何操作。
+          </p>
+        )}
 
         {c.status === 'merged' ? (
           <p className="hint">这张单已并入其它单，明细已转移，不再计入营业额。</p>

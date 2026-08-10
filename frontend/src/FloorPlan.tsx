@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Role } from './auth'
 import { loadCatalog, money, refreshCatalog, type Catalog, type Drinks } from './catalog'
-import { openChecksByTable, openTable, type Guests } from './checks'
+import {
+  openChecksByTable,
+  openTable,
+  pendingCheckUuids,
+  type Guests,
+} from './checks'
 import CheckDetail from './CheckDetail'
 import type { LocalCheck } from './db'
 import OpenSheet from './OpenSheet'
@@ -11,10 +16,12 @@ export default function FloorPlan({ role }: { role: Role }) {
   const [open, setOpen] = useState<Map<string, LocalCheck>>(new Map())
   const [sheetFor, setSheetFor] = useState<string | null>(null)
   const [detailFor, setDetailFor] = useState<LocalCheck | null>(null)
+  const [pending, setPending] = useState<Set<string>>(new Set())
 
   const reload = useCallback(async () => {
     const m = await openChecksByTable()
     setOpen(m)
+    setPending(await pendingCheckUuids())
     // 详情页开着的时候，底下的数据可能被别的设备改了 —— 跟着刷新，
     // 否则会拿着过期的金额去结账
     setDetailFor((d) => (d ? (m.get(d.table_label) ?? null) : null))
@@ -60,7 +67,13 @@ export default function FloorPlan({ role }: { role: Role }) {
                 return (
                   <button
                     key={t.label}
-                    className={`table ${chk ? (chk.synced ? 'busy' : 'busy pending') : 'free'}`}
+                    className={`table ${
+                      chk
+                        ? pending.has(chk.check_uuid)
+                          ? 'busy pending'
+                          : 'busy'
+                        : 'free'
+                    }`}
                     onClick={() => (chk ? setDetailFor(chk) : setSheetFor(t.label))}
                   >
                     <span className="tlabel">{t.label}</span>
@@ -107,6 +120,7 @@ export default function FloorPlan({ role }: { role: Role }) {
           prices={cat.prices}
           period={cat.current_period_kind}
           openChecks={openList}
+          pending={pending.has(detailFor.check_uuid)}
           onClose={() => setDetailFor(null)}
           onChanged={reload}
         />
