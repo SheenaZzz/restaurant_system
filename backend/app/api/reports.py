@@ -1,0 +1,234 @@
+"""报表：按营业日汇总。
+
+**权威数字只能从服务端算。** 客户端本地镜像里的金额是按缓存价估的，
+而且只包含这台设备同步到的部分 —— 拿它做月报会算错。
+代价是月报需要联网，但那不是关键路径（关键路径是开桌/关单，那些离线可用）。
+"""
+
+from datetime import date, datetime, timezone
+
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
+
+from ..core.deps import CurrentUser, require_role
+from ..db import get_db
+from ..models import DailyBatch
+
+router = APIRouter(prefix="/api/reports", tags=["reports"])
+
+
+class DayRow(BaseModel):
+    business_date: date
+    revenue_cents: int
+    service_cents: int
+    guests: int
+    drinks: int
+    check_count: int
+    cash_cents: int
+    card_cents: int
+    other_cents: int
+    unpaid_count: int
+    # 已记支付、但支付金额和账单金额对不上的单数。
+    # 最常见的成因：结账之后又改了单，支付金额没跟着改。
+    # 日结对账对不上时，先看这个数。
+    mismatch_count: int
+    voided_cents: int
+    voided_count: int
+    # 小费**不是系统算出来的** —— 卡机小费和桌上现金都在系统之外，
+    # 只能人工录入。所以它跟营业额的性质完全不同：
+    # 营业额是"应该收到多少"，小费是"实际拿到多少"。
+    tips_total_cents: int
+    tips_updated_by: str | None
+
+
+# 只有主管和老板能看整月营业额 —— 普通服务员没有理由看到全店经营数字。
+# 这不是不信任，是最小权限：能看见的人越少，泄露面越小。
+_GUARD = Depends(require_role("front_manager", "admin"))
+
+_SQL = text(
+    """
+    WITH per_check AS (
+        SELECT c.id,
+               p.business_date,
+               c.status,
+               COALESCE(SUM(h.qty * h.unit_price_cents), 0)              AS subtotal,
+               c.service_charge_cents                                    AS svc,
+               COALESCE(SUM(h.qty) FILTER (WHERE h.kind = 'admission'), 0) AS guests,
+               COALESCE(SUM(h.qty) FILTER (WHERE h.kind = 'drink'), 0)     AS drinks,
+               COALESCE(c.paid_cash_cents, 0)  AS cash,
+               COALESCE(c.paid_card_cents, 0)  AS card,
+               COALESCE(c.paid_other_cents, 0) AS other,
+               c.payment_method
+          FROM dining_check c
+          JOIN service_period p ON p.id = c.period_id
+          LEFT JOIN head_charge h ON h.check_id = c.id
+         WHERE p.business_date >= :d_from AND p.business_date <= :d_to
+         GROUP BY c.id, p.business_date
+    )
+    SELECT business_date,
+           -- merged 的单明细已搬到目标单，自己不计入任何统计；
+           -- voided 单独统计，不进营业额
+           COALESCE(SUM(subtotal + svc) FILTER (WHERE status IN ('open','closed')), 0) AS revenue_cents,
+           COALESCE(SUM(svc)            FILTER (WHERE status IN ('open','closed')), 0) AS service_cents,
+           COALESCE(SUM(guests)         FILTER (WHERE status IN ('open','closed')), 0) AS guests,
+           COALESCE(SUM(drinks)         FILTER (WHERE status IN ('open','closed')), 0) AS drinks,
+           COUNT(*)                     FILTER (WHERE status IN ('open','closed'))     AS check_count,
+           COALESCE(SUM(cash)  FILTER (WHERE status = 'closed'), 0) AS cash_cents,
+           COALESCE(SUM(card)  FILTER (WHERE status = 'closed'), 0) AS card_cents,
+           COALESCE(SUM(other) FILTER (WHERE status = 'closed'), 0) AS other_cents,
+           -- 已结但没记支付方式的单数：日结对账对不上时，先看这个数
+           COUNT(*) FILTER (WHERE status = 'closed' AND payment_method IS NULL) AS unpaid_count,
+           COUNT(*) FILTER (
+               WHERE status = 'closed'
+                 AND payment_method IS NOT NULL
+                 AND cash + card + other <> subtotal + svc
+           ) AS mismatch_count,
+           COALESCE(SUM(subtotal + svc) FILTER (WHERE status = 'voided'), 0) AS voided_cents,
+           COUNT(*)                     FILTER (WHERE status = 'voided')      AS voided_count
+      FROM per_check
+     GROUP BY business_date
+     ORDER BY business_date
+    """
+)
+
+
+@router.get("/daily", response_model=list[DayRow], dependencies=[_GUARD])
+def daily(
+    d_from: date = Query(alias="from"),
+    d_to: date = Query(alias="to"),
+    db: Session = Depends(get_db),
+):
+    rows = db.execute(_SQL, {"d_from": d_from, "d_to": d_to}).mappings().all()
+
+    tips = {
+        r.business_date: r
+        for r in db.execute(
+            text(
+                """
+                SELECT b.business_date,
+                       COALESCE(b.tips_total_cents, 0) AS tips_total,
+                       u.display_name                   AS by_name
+                  FROM daily_batch b
+                  LEFT JOIN app_user u ON u.id = b.tips_updated_by
+                 WHERE b.business_date >= :d_from AND b.business_date <= :d_to
+                """
+            ),
+            {"d_from": d_from, "d_to": d_to},
+        ).all()
+    }
+
+    # 有小费但当天没有账单的情况也要显示 —— 比如系统上线前那几天，
+    # 老板可能只补录了小费。漏掉它们会让月度小费合计对不上。
+    dates = sorted({r["business_date"] for r in rows} | set(tips))
+    by_date = {r["business_date"]: r for r in rows}
+
+    out: list[DayRow] = []
+    for d in dates:
+        base = dict(by_date.get(d) or {})
+        t = tips.get(d)
+        out.append(
+            DayRow(
+                business_date=d,
+                revenue_cents=base.get("revenue_cents", 0),
+                service_cents=base.get("service_cents", 0),
+                guests=base.get("guests", 0),
+                drinks=base.get("drinks", 0),
+                check_count=base.get("check_count", 0),
+                cash_cents=base.get("cash_cents", 0),
+                card_cents=base.get("card_cents", 0),
+                other_cents=base.get("other_cents", 0),
+                unpaid_count=base.get("unpaid_count", 0),
+                mismatch_count=base.get("mismatch_count", 0),
+                voided_cents=base.get("voided_cents", 0),
+                voided_count=base.get("voided_count", 0),
+                tips_total_cents=t.tips_total if t else 0,
+                tips_updated_by=t.by_name if t else None,
+            )
+        )
+    return out
+
+
+class TipsIn(BaseModel):
+    business_date: date
+    # 一天一个总数。不分现金/刷卡，也不按单记 ——
+    # 店里收市时就是把卡机小费和桌上现金加一起报一个数。
+    tips_total_cents: int = Field(ge=0)
+
+
+@router.put("/tips", response_model=DayRow, dependencies=[_GUARD])
+def set_tips(body: TipsIn, user: CurrentUser, db: Session = Depends(get_db)):
+    """录入某一天的小费总额（一天一个数）。
+
+    ⚠️ **这是唯一一个不走 /api/sync 的写入。** 理由：
+      - 月报本来就是在线专用（权威数字只能服务端算），没有离线诉求
+      - 小费不在营业流程的关键路径上，失败重试即可
+      - 它写的是"日聚合"，而 sync 的本地镜像里根本没有日聚合这个概念
+
+    这是一个**经过权衡的例外**，不是随手开的后门 ——
+    任何会在离线时发生的写入，仍然必须走 sync。
+    """
+    row = db.scalar(
+        select(DailyBatch).where(DailyBatch.business_date == body.business_date)
+    )
+    if row is None:
+        row = DailyBatch(business_date=body.business_date)
+        db.add(row)
+
+    row.tips_total_cents = body.tips_total_cents
+    # 小费直接影响员工分账，改动必须能追溯到人
+    row.tips_updated_by = user.id
+    row.tips_updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return daily(d_from=body.business_date, d_to=body.business_date, db=db)[0]
+
+
+class MonthRow(BaseModel):
+    ym: str  # "2026-08"
+    revenue_cents: int
+    days: int
+    tips_total_cents: int
+
+
+@router.get("/months", response_model=list[MonthRow], dependencies=[_GUARD])
+def months(db: Session = Depends(get_db)):
+    """有数据的月份清单。
+
+    给月份选择器用 —— 没数据的月份直接灰掉，省得一格格翻着找。
+    同时把每月营业额一并带出来，选之前就能看到大概。
+    """
+    rows = db.execute(
+        text(
+            """
+            WITH per_check AS (
+                SELECT c.id, p.business_date, c.status,
+                       COALESCE(SUM(h.qty * h.unit_price_cents), 0) AS subtotal,
+                       c.service_charge_cents AS svc
+                  FROM dining_check c
+                  JOIN service_period p ON p.id = c.period_id
+                  LEFT JOIN head_charge h ON h.check_id = c.id
+                 GROUP BY c.id, p.business_date
+            ),
+            rev AS (
+                SELECT to_char(business_date, 'YYYY-MM') AS ym,
+                       SUM(subtotal + svc) FILTER (WHERE status IN ('open','closed')) AS revenue,
+                       COUNT(DISTINCT business_date) FILTER (WHERE status IN ('open','closed')) AS days
+                  FROM per_check GROUP BY 1
+            ),
+            tip AS (
+                SELECT to_char(business_date, 'YYYY-MM') AS ym,
+                       SUM(COALESCE(tips_total_cents, 0)) AS tips
+                  FROM daily_batch GROUP BY 1
+            )
+            SELECT COALESCE(rev.ym, tip.ym)            AS ym,
+                   COALESCE(rev.revenue, 0)::bigint    AS revenue_cents,
+                   COALESCE(rev.days, 0)               AS days,
+                   COALESCE(tip.tips, 0)::bigint       AS tips_total_cents
+              FROM rev FULL OUTER JOIN tip ON tip.ym = rev.ym
+             ORDER BY 1 DESC
+            """
+        )
+    ).mappings().all()
+    return [MonthRow(**dict(r)) for r in rows]

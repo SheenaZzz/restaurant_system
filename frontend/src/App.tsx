@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react'
-import { getIdentity, isFront, logout, refreshIdentity, type Identity } from './auth'
+import {
+  canManage,
+  getIdentity,
+  isFront,
+  logout,
+  refreshIdentity,
+  type Identity,
+} from './auth'
 import db from './db'
 import DeadLetters from './DeadLetters'
 import FloorPlan from './FloorPlan'
 import ListView from './ListView'
+import MonthView from './MonthView'
 import LoginPage from './LoginPage'
 import {
   enqueue,
@@ -32,7 +40,7 @@ export default function App() {
   const [last, setLast] = useState<string>('—')
   const [tone, setTone] = useState<'ok' | 'warn' | 'bad'>('ok')
   const [dead, setDead] = useState(0)
-  const [view, setView] = useState<'floor' | 'list'>('floor')
+  const [view, setView] = useState<'floor' | 'list' | 'month'>('floor')
   const [showDead, setShowDead] = useState(false)
 
   // 身份从 IndexedDB 读，**不需要网络** ——
@@ -148,6 +156,15 @@ export default function App() {
           >
             账单清单
           </button>
+          {/* 整月营业额只给主管和老板看 —— 最小权限 */}
+          {canManage(identity.role) && (
+            <button
+              className={view === 'month' ? 'on' : ''}
+              onClick={() => setView('month')}
+            >
+              月报
+            </button>
+          )}
         </div>
       )}
 
@@ -160,6 +177,8 @@ export default function App() {
         </>
       ) : view === 'floor' ? (
         <FloorPlan role={identity.role} />
+      ) : view === 'month' ? (
+        <MonthView />
       ) : (
         <ListView role={identity.role} />
       )}

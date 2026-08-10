@@ -413,24 +413,32 @@ class DailyBatch(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     business_date: Mapped[date] = mapped_column(Date, nullable=False, unique=True)
 
-    # 系统算出来的
-    computed_admission_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    computed_drink_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    computed_item_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    computed_total_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    guest_adult: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    guest_child: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    guest_senior: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    check_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    exception_total_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 系统算出来的。**全部可空** —— 它们是"日结那一刻"的快照，
+    # 只有真正日结时才有意义。一天没结束就填进去，等于存了个会过期的数字，
+    # 之后再有单进来就对不上了。日常查询一律实时算（见 reports.py）。
+    computed_admission_cents: Mapped[int | None] = mapped_column(Integer)
+    computed_drink_cents: Mapped[int | None] = mapped_column(Integer)
+    computed_item_cents: Mapped[int | None] = mapped_column(Integer)
+    computed_total_cents: Mapped[int | None] = mapped_column(Integer)
+    guest_adult: Mapped[int | None] = mapped_column(Integer)
+    guest_child: Mapped[int | None] = mapped_column(Integer)
+    guest_senior: Mapped[int | None] = mapped_column(Integer)
+    check_count: Mapped[int | None] = mapped_column(Integer)
+    exception_total_cents: Mapped[int | None] = mapped_column(Integer)
 
     # 手工录入（来自信用卡机和钱箱）
     reported_card_cents: Mapped[int | None] = mapped_column(Integer)
-    reported_card_tips_cents: Mapped[int | None] = mapped_column(Integer)
     reported_cash_cents: Mapped[int | None] = mapped_column(Integer)
-    reported_cash_tips_cents: Mapped[int | None] = mapped_column(Integer)
+
+    # 小费：**一天一个总数**，不分现金/刷卡，也不按单记。
+    # 店里的实际做法就是收市时把卡机小费和桌上现金加一起报一个数 ——
+    # 让系统去要更细的拆分，只会导致没人愿意录。
+    tips_total_cents: Mapped[int | None] = mapped_column(Integer)
 
     variance_cents: Mapped[int | None] = mapped_column(Integer)
+    # 小费最后一次是谁改的 —— 它直接影响员工分账，必须能追溯
+    tips_updated_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    tips_updated_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     # 录入与确认分离 —— 最基本的内控
     closed_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     closed_at: Mapped[datetime | None] = mapped_column(TZDateTime)

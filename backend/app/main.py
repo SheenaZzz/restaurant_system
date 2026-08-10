@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 
 from .api import auth as auth_api
 from .api import catalog as catalog_api
+from .api import reports as reports_api
 from .core.deps import CurrentUser, require_role
 from .db import get_db
 from .schemas import SyncRequest, SyncResponse
 from .sync import apply_ops, fetch_changes
 
-app = FastAPI(title="Restaurant System API", version="0.4.0")
+app = FastAPI(title="Restaurant System API", version="0.5.0")
 
 # 开发期前端在 :5173、后端在 :8000，跨源。
 # 生产两者都在 Caddy 后面同源，这段不会生效。
@@ -27,6 +28,7 @@ if _origins:
 
 app.include_router(auth_api.router)
 app.include_router(catalog_api.router)
+app.include_router(reports_api.router)
 
 
 @app.get("/api/health")
