@@ -7,7 +7,7 @@ import {
   type PriceRow,
 } from './catalog'
 import { getIdentity } from './auth'
-import db, { uuid, type LocalCheck } from './db'
+import db, { setMeta, uuid, type LocalCheck } from './db'
 import { enqueue } from './sync'
 
 export interface Guests {
@@ -416,4 +416,32 @@ export async function pendingCheckUuids(): Promise<Set<string>> {
     if (Array.isArray(srcs)) for (const x of srcs) if (typeof x === 'string') out.add(x)
   }
   return out
+}
+
+
+/**
+ * 清空本机的账单镜像，重新从服务端拉一遍。
+ *
+ * 什么时候需要：服务端的数据被清过（重测、修数据），而本机镜像还留着
+ * 早就不存在的单 —— 服务端删数据不会通知客户端，只有客户端自己重来。
+ *
+ * ⚠️ **outbox 不为空时拒绝执行。** 那里面是还没上传的真实操作，
+ * 清掉就是丢单。宁可让人先等它同步完，也不能"顺手"帮他删掉。
+ *
+ * 保留登录状态、设备 id 和菜单缓存 —— 重置的是"业务数据"，
+ * 不是"这台设备是谁"。
+ */
+export async function resetLocalData(): Promise<{ ok: boolean; pending: number }> {
+  const pending = await db.outbox.count()
+  if (pending > 0) return { ok: false, pending }
+
+  await db.transaction('rw', db.checks, db.events, db.deadletter, db.meta, async () => {
+    await db.checks.clear()
+    await db.events.clear()
+    await db.deadletter.clear()
+    // 游标归零 —— 下次同步会把服务端现有的变更全部重新拉一遍，
+    // 本地镜像由此重建。这是事件溯源的直接好处：不需要"导入数据"。
+    await setMeta('cursor', 0)
+  })
+  return { ok: true, pending: 0 }
 }

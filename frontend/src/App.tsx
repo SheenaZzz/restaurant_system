@@ -13,6 +13,7 @@ import FloorPlan from './FloorPlan'
 import ListView from './ListView'
 import MonthView from './MonthView'
 import LoginPage from './LoginPage'
+import { resetLocalData } from './checks'
 import {
   enqueue,
   installSyncTriggers,
@@ -261,6 +262,35 @@ export default function App() {
                 立即重试
               </button>
             </div>
+
+            {canManage(identity.role) && (
+              <>
+                <div className="divider" />
+                <p className="hint">
+                  <b>重置本机数据</b>：清空这台设备缓存的账单，重新从服务器拉一遍。
+                  服务端的数据被清理过、而本机还留着旧单时才需要 ——
+                  服务端删数据不会通知客户端。
+                </p>
+                <button
+                  className="linkbtn wide danger"
+                  onClick={async () => {
+                    const r = await resetLocalData()
+                    if (!r.ok) {
+                      setLast(`还有 ${r.pending} 条未上传，先等它同步完再重置`)
+                      setTone('bad')
+                      return
+                    }
+                    await sync().catch(() => {})
+                    await refresh()
+                    setShowSync(false)
+                    setLast('本机数据已重置，正在重新拉取')
+                    setTone('ok')
+                  }}
+                >
+                  重置本机数据
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
