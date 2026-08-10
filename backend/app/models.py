@@ -188,6 +188,11 @@ class DiningCheck(Base):
     # 当时适用的费率快照，0.100 = 10%
     service_charge_rate: Mapped[float | None] = mapped_column(Numeric(4, 3))
 
+    # --- 税 ---
+    # 同样是派生值但必须落库：税率会变，历史账单要按当时的税率算。
+    tax_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    tax_rate: Mapped[float | None] = mapped_column(Numeric(6, 5))
+
     # --- 支付方式：**只是记录**，系统不处理收款 ---
     # 之所以要记：日结时拿它和卡机/钱箱对账，差额才有意义。
     payment_method: Mapped[str | None] = mapped_column(Text)
@@ -571,3 +576,31 @@ class PingEvent(Base):
     )
     label: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+
+
+class TaxRate(Base):
+    """销售税率。
+
+    **改税率是新增一行 + 新的 effective_from，不覆盖旧行** ——
+    和 buffet_price 一个道理：覆盖了的话，历史账单重算就会用上新税率，
+    以前开的票和账就对不上了。
+
+    设一次基本不用再动，但税率确实会变（州/县调整），所以必须留改的口子。
+    """
+
+    __tablename__ = "tax_rate"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # 0.07100 = 7.1%
+    rate: Mapped[float] = mapped_column(Numeric(6, 5), nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    updated_at: Mapped[datetime] = mapped_column(
+        TZDateTime, nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("rate >= 0 AND rate < 1", name="ck_tax_rate_range"),
+        UniqueConstraint("effective_from", name="uq_tax_rate_effective"),
+    )

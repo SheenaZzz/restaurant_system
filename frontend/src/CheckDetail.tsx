@@ -239,6 +239,12 @@ export default function CheckDetail({
                 <td className="num">{money(c.service_cents)}</td>
               </tr>
             )}
+            {(c.tax_cents ?? 0) > 0 && (
+              <tr>
+                <td className="dim">税</td>
+                <td className="num">{money(c.tax_cents)}</td>
+              </tr>
+            )}
             <tr>
               <td className="dim">支付方式</td>
               <td className="num">

@@ -6,7 +6,7 @@
 """
 
 import uuid as uuidlib
-from datetime import datetime
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import select
@@ -23,6 +23,7 @@ from ..models import (
     OrderLine,
     PickupOrder,
     ServicePeriod,
+    TaxRate,
 )
 from .period import resolve_period
 from .pricing import resolve_head_prices
@@ -59,19 +60,26 @@ def _party_size(db: Session, check_id: int) -> int:
     return max(by_kind.get("admission", 0), by_kind.get("drink", 0))
 
 
-def _recalc_service_charge(db: Session, chk: DiningCheck) -> None:
-    """按当前人数重算服务费。**每次人数变动后都要调用。**
+def _current_tax_rate(db: Session, on: date) -> Decimal:
+    """取某个营业日适用的税率。没配过就是 0（不收税）。"""
+    r = db.scalar(
+        select(TaxRate.rate)
+        .where(TaxRate.effective_from <= on)
+        .order_by(TaxRate.effective_from.desc())
+        .limit(1)
+    )
+    return Decimal(str(r)) if r is not None else Decimal("0")
 
-    并桌是最容易触发它的场景：两桌各 3 人本来都不收，
+
+def _recalc_service_charge(db: Session, chk: DiningCheck) -> None:
+    """按当前人数重算服务费**和税**。每次金额或人数变动后都要调用。
+
+    并桌是最容易触发服务费的场景：两桌各 3 人本来都不收，
     并成 6 人就要收了 —— 这正是这个函数存在的理由。
     """
     db.flush()  # 让刚 add 的 head_charge 参与统计
 
     size = _party_size(db, chk.id)
-    if size < LARGE_PARTY_MIN:
-        chk.service_charge_cents = 0
-        chk.service_charge_rate = None
-        return
 
     head = db.scalar(
         select(func.coalesce(func.sum(HeadCharge.qty * HeadCharge.unit_price_cents), 0))
@@ -82,14 +90,34 @@ def _recalc_service_charge(db: Session, chk: DiningCheck) -> None:
         select(func.coalesce(func.sum(OrderLine.qty * OrderLine.unit_price_cents), 0))
         .where(OrderLine.check_id == chk.id, OrderLine.status != "voided")
     ) or 0
-    subtotal = head + lines
-    # 四舍五入到分。用 Decimal 而不是浮点 —— 钱不能用 float。
-    chk.service_charge_cents = int(
-        (Decimal(int(subtotal)) * SERVICE_CHARGE_RATE).quantize(
-            Decimal("1"), rounding=ROUND_HALF_UP
+    subtotal = int(head + lines)
+
+    # --- 大桌服务费 ---
+    if size >= LARGE_PARTY_MIN:
+        # 四舍五入到分。用 Decimal 而不是浮点 —— 钱不能用 float。
+        chk.service_charge_cents = int(
+            (Decimal(subtotal) * SERVICE_CHARGE_RATE).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
         )
+        chk.service_charge_rate = SERVICE_CHARGE_RATE
+    else:
+        chk.service_charge_cents = 0
+        chk.service_charge_rate = None
+
+    # --- 税 ---
+    # 税基 = 小计 + 服务费。
+    # ⚠️ 强制性服务费在多数州是应税的（自愿给的小费才免税），
+    #    我们这 10% 是满 5 人自动加的，属于强制性，所以计入税基。
+    #    如果店里的会计口径不同，改这一行即可。
+    period = db.get(ServicePeriod, chk.period_id)
+    on = period.business_date if period else date.today()
+    rate = _current_tax_rate(db, on)
+    base = subtotal + chk.service_charge_cents
+    chk.tax_cents = int(
+        (Decimal(base) * rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     )
-    chk.service_charge_rate = SERVICE_CHARGE_RATE
+    chk.tax_rate = rate if rate > 0 else None
 # 饮料只有成人/儿童两档 —— 长者饮料按成人价，这是店里的实际做法
 DRINK_TIERS = ("adult", "child")
 
@@ -350,10 +378,15 @@ def void_check(db: Session, payload: dict, client_ts: datetime,
     if not isinstance(reason, str) or not reason.strip():
         raise BusinessError("作废必须填写原因")
 
-    amount = db.scalar(
+    head = db.scalar(
         select(func.coalesce(func.sum(HeadCharge.qty * HeadCharge.unit_price_cents), 0))
         .where(HeadCharge.check_id == chk.id)
     ) or 0
+    lines_amt = db.scalar(
+        select(func.coalesce(func.sum(OrderLine.qty * OrderLine.unit_price_cents), 0))
+        .where(OrderLine.check_id == chk.id, OrderLine.status != "voided")
+    ) or 0
+    amount = int(head) + int(lines_amt) + chk.service_charge_cents + chk.tax_cents
 
     # 记下作废前是什么状态，撤销时恢复成它。
     # **不动 closed_at** —— 那是结账时间，跟作废是两回事。

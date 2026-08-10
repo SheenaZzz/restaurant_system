@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..core.deps import CurrentUser, require_role
 from ..db import get_db
-from ..models import DailyBatch
+from ..models import DailyBatch, TaxRate
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -23,6 +23,7 @@ class DayRow(BaseModel):
     business_date: date
     revenue_cents: int
     service_cents: int
+    tax_cents: int
     guests: int
     drinks: int
     check_count: int
@@ -55,6 +56,7 @@ _SQL = text(
                c.status,
                COALESCE(SUM(h.qty * h.unit_price_cents), 0)              AS subtotal,
                c.service_charge_cents                                    AS svc,
+               c.tax_cents                                               AS tax,
                COALESCE(SUM(h.qty) FILTER (WHERE h.kind = 'admission'), 0) AS guests,
                COALESCE(SUM(h.qty) FILTER (WHERE h.kind = 'drink'), 0)     AS drinks,
                COALESCE(c.paid_cash_cents, 0)  AS cash,
@@ -70,8 +72,9 @@ _SQL = text(
     SELECT business_date,
            -- merged 的单明细已搬到目标单，自己不计入任何统计；
            -- voided 单独统计，不进营业额
-           COALESCE(SUM(subtotal + svc) FILTER (WHERE status IN ('open','closed')), 0) AS revenue_cents,
+           COALESCE(SUM(subtotal + svc + tax) FILTER (WHERE status IN ('open','closed')), 0) AS revenue_cents,
            COALESCE(SUM(svc)            FILTER (WHERE status IN ('open','closed')), 0) AS service_cents,
+           COALESCE(SUM(tax)            FILTER (WHERE status IN ('open','closed')), 0) AS tax_cents,
            COALESCE(SUM(guests)         FILTER (WHERE status IN ('open','closed')), 0) AS guests,
            COALESCE(SUM(drinks)         FILTER (WHERE status IN ('open','closed')), 0) AS drinks,
            COUNT(*)                     FILTER (WHERE status IN ('open','closed'))     AS check_count,
@@ -83,9 +86,9 @@ _SQL = text(
            COUNT(*) FILTER (
                WHERE status = 'closed'
                  AND payment_method IS NOT NULL
-                 AND cash + card + other <> subtotal + svc
+                 AND cash + card + other <> subtotal + svc + tax
            ) AS mismatch_count,
-           COALESCE(SUM(subtotal + svc) FILTER (WHERE status = 'voided'), 0) AS voided_cents,
+           COALESCE(SUM(subtotal + svc + tax) FILTER (WHERE status = 'voided'), 0) AS voided_cents,
            COUNT(*)                     FILTER (WHERE status = 'voided')      AS voided_count
       FROM per_check
      GROUP BY business_date
@@ -133,6 +136,7 @@ def daily(
                 business_date=d,
                 revenue_cents=base.get("revenue_cents", 0),
                 service_cents=base.get("service_cents", 0),
+                tax_cents=base.get("tax_cents", 0),
                 guests=base.get("guests", 0),
                 drinks=base.get("drinks", 0),
                 check_count=base.get("check_count", 0),
@@ -205,7 +209,7 @@ def months(db: Session = Depends(get_db)):
             WITH per_check AS (
                 SELECT c.id, p.business_date, c.status,
                        COALESCE(SUM(h.qty * h.unit_price_cents), 0) AS subtotal,
-                       c.service_charge_cents AS svc
+                       c.service_charge_cents + c.tax_cents AS svc
                   FROM dining_check c
                   JOIN service_period p ON p.id = c.period_id
                   LEFT JOIN head_charge h ON h.check_id = c.id
@@ -232,3 +236,60 @@ def months(db: Session = Depends(get_db)):
         )
     ).mappings().all()
     return [MonthRow(**dict(r)) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# 税率设置
+# ---------------------------------------------------------------------------
+
+
+class TaxOut(BaseModel):
+    rate: float
+    effective_from: date
+    note: str | None
+    updated_by: str | None
+
+
+class TaxIn(BaseModel):
+    # 百分比，比如 7.1 表示 7.1%。用百分比而不是小数是因为
+    # 人看到的、税务局公布的都是「7.1%」—— 让人去换算成 0.071 只会填错。
+    rate_percent: float = Field(ge=0, lt=100)
+    effective_from: date
+    note: str | None = None
+
+
+@router.get("/tax", response_model=TaxOut | None, dependencies=[_GUARD])
+def get_tax(db: Session = Depends(get_db)):
+    row = db.execute(
+        text(
+            """
+            SELECT t.rate, t.effective_from, t.note, u.display_name AS updated_by
+              FROM tax_rate t LEFT JOIN app_user u ON u.id = t.updated_by
+             ORDER BY t.effective_from DESC LIMIT 1
+            """
+        )
+    ).mappings().first()
+    return TaxOut(**dict(row)) if row else None
+
+
+@router.put("/tax", response_model=TaxOut, dependencies=[_GUARD])
+def set_tax(body: TaxIn, user: CurrentUser, db: Session = Depends(get_db)):
+    """设定税率。设一次基本不用再动。
+
+    ⚠️ **同一个生效日只保留一条**（覆盖），不同生效日各留一行 ——
+    今天设错了当天改掉是正常操作；但换了生效日就是一次真正的调率，
+    历史账单必须还按旧税率算。
+    """
+    rate = round(body.rate_percent / 100, 5)
+    row = db.scalar(
+        select(TaxRate).where(TaxRate.effective_from == body.effective_from)
+    )
+    if row is None:
+        row = TaxRate(effective_from=body.effective_from)
+        db.add(row)
+    row.rate = rate
+    row.note = (body.note or None)
+    row.updated_by = user.id
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return get_tax(db)

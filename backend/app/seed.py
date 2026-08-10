@@ -8,13 +8,14 @@
 """
 
 from datetime import date
+from decimal import Decimal
 
 from argon2 import PasswordHasher
 from sqlalchemy import select
 
 from .db import SessionLocal
 from .menu_data import MENU_ITEMS
-from .models import AppUser, BuffetPrice, DiningTable, MenuItem
+from .models import AppUser, BuffetPrice, DiningTable, MenuItem, TaxRate
 
 ph = PasswordHasher()
 
@@ -148,6 +149,16 @@ def seed() -> None:
             )
             n += 1
         added["buffet_price"] = n
+
+        # --- 税率 ---
+        # ⚠️ 7.1% 是 Gardnerville（Douglas County, NV）的销售税率，**需要跟店里核对**。
+        #    设一次基本不用再动；要改在「设置」里改，会新增一行而不是覆盖。
+        if db.scalar(select(TaxRate.id).limit(1)) is None:
+            db.add(TaxRate(rate=Decimal("0.07100"), effective_from=date(2026, 1, 1),
+                           note="占位：Douglas County NV，需核对"))
+            added["tax_rate"] = 1
+        else:
+            added["tax_rate"] = 0
 
         # --- 账号 ---
         existing_users = {u.username for u in db.scalars(select(AppUser)).all()}

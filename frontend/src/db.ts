@@ -71,6 +71,8 @@ export interface LocalCheck {
   merged_into?: string
   /** 大桌服务费（本地估算） */
   service_cents: number
+  /** 税（本地估算） */
+  tax_cents: number
   /** 支付方式 */
   pay_method?: 'cash' | 'card' | 'mixed' | 'other'
   pay_cash?: number

@@ -3,6 +3,7 @@ import {
   loadCatalog,
   partySize,
   serviceCents,
+  taxCents,
   type Drinks,
   type PriceRow,
 } from './catalog'
@@ -50,6 +51,7 @@ export async function applyCheckOp(
     const prices: PriceRow[] = cat?.prices ?? []
     const sub = estimateCents(prices, cat?.current_period_kind ?? 'dinner', guests, drinks)
     const svc = serviceCents(sub, partySize(guests, drinks))
+    const tax = taxCents(sub, svc, cat?.tax_rate ?? 0)
 
     await db.checks.put({
       // 账单的身份就是创建它那条 op 的 op_id ——
@@ -63,8 +65,9 @@ export async function applyCheckOp(
       ...guests,
       drink_adult: drinks.adult,
       drink_child: drinks.child,
-      est_cents: sub + svc,
+      est_cents: sub + svc + tax,
       service_cents: svc,
+      tax_cents: tax,
       by: opts.who,
       last_by: opts.who,
       ...opts,
@@ -97,13 +100,15 @@ export async function applyCheckOp(
       cat?.prices ?? [], cat?.current_period_kind ?? 'dinner', guests, drinks,
     )
     const svc2 = serviceCents(sub2, partySize(guests, drinks))
+    const tax2 = taxCents(sub2, svc2, cat?.tax_rate ?? 0)
     await db.checks.put({
       ...row,
       ...guests,
       drink_adult: drinks.adult,
       drink_child: drinks.child,
-      est_cents: sub2 + svc2,
+      est_cents: sub2 + svc2 + tax2,
       service_cents: svc2,
+      tax_cents: tax2,
       last_by: opts.who ?? row.last_by,
       ...opts,
     })
@@ -148,9 +153,20 @@ export async function applyCheckOp(
       status: 'open',
       opened_at: clientTs,
       adult: 0, child: 0, senior: 0, drink_adult: 0, drink_child: 0,
-      // 自提单没有人头，不触发大桌服务费
+      // 自提单没有人头，不触发大桌服务费 —— 但一样要收税
       service_cents: 0,
-      est_cents: lines.reduce((a, l) => a + l.qty * l.unit_price_cents, 0),
+      tax_cents: taxCents(
+        lines.reduce((a, l) => a + l.qty * l.unit_price_cents, 0),
+        0,
+        cat?.tax_rate ?? 0,
+      ),
+      est_cents:
+        lines.reduce((a, l) => a + l.qty * l.unit_price_cents, 0) +
+        taxCents(
+          lines.reduce((a, l) => a + l.qty * l.unit_price_cents, 0),
+          0,
+          cat?.tax_rate ?? 0,
+        ),
       by: opts.who,
       last_by: opts.who,
       ...opts,
@@ -221,12 +237,14 @@ export async function applyCheckOp(
       )
       // 并完人数变了，服务费可能从 0 变成有 —— 这是并桌最容易忽略的后果
       const svc = serviceCents(sub, partySize(g, d))
+      const tax = taxCents(sub, svc, cat?.tax_rate ?? 0)
       await db.checks.put({
         ...target,
+        tax_cents: tax,
         ...g,
         drink_adult: d.adult,
         drink_child: d.child,
-        est_cents: sub + svc,
+        est_cents: sub + svc + tax,
         service_cents: svc,
         last_by: opts.who ?? target.last_by,
         ...opts,
@@ -512,7 +530,7 @@ export async function resetLocalData(): Promise<{ ok: boolean; pending: number }
 
 /** 本地重算总额：人头 + 单点 + 服务费。仅供显示，落库以服务端为准。 */
 function recalcEst(row: LocalCheck, lines: LocalLine[]): number {
-  const head = row.est_cents - (row.service_cents ?? 0) -
+  const head = row.est_cents - (row.service_cents ?? 0) - (row.tax_cents ?? 0) -
     (row.lines ?? []).filter((l) => !l.voided)
       .reduce((a, l) => a + l.qty * l.unit_price_cents, 0)
   const lineSum = lines
@@ -523,7 +541,11 @@ function recalcEst(row: LocalCheck, lines: LocalLine[]): number {
     row.drink_adult + row.drink_child,
   )
   const svc = serviceCents(head + lineSum, size)
-  return head + lineSum + svc
+  // 注意：税率从缓存的 catalog 拿不到（这是同步函数），
+  // 所以按原比例估。真实金额以服务端为准 —— 这只是显示用。
+  const taxRatio = row.est_cents > 0 ? (row.tax_cents ?? 0) / row.est_cents : 0
+  const beforeTax = head + lineSum + svc
+  return Math.round(beforeTax * (1 + taxRatio))
 }
 
 export interface NewLine {

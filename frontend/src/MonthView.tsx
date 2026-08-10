@@ -9,6 +9,7 @@ export interface DayRow {
   business_date: string
   revenue_cents: number
   service_cents: number
+  tax_cents: number
   guests: number
   drinks: number
   check_count: number
@@ -97,6 +98,7 @@ export default function MonthView() {
       drinks: a.drinks + r.drinks,
       checks: a.checks + r.check_count,
       service: a.service + r.service_cents,
+      tax: a.tax + r.tax_cents,
       voided: a.voided + r.voided_cents,
       tips: a.tips + r.tips_total_cents,
       unpaid: a.unpaid + r.unpaid_count,
@@ -106,7 +108,7 @@ export default function MonthView() {
       other: a.other + r.other_cents,
     }),
     {
-      revenue: 0, guests: 0, drinks: 0, checks: 0, service: 0, voided: 0, tips: 0,
+      revenue: 0, guests: 0, drinks: 0, checks: 0, service: 0, tax: 0, voided: 0, tips: 0,
       unpaid: 0, mismatch: 0, cash: 0, card: 0, other: 0,
     },
   )
@@ -150,6 +152,7 @@ export default function MonthView() {
             value={money(sum.guests ? Math.round(sum.revenue / sum.guests) : 0)}
           />
           {sum.service > 0 && <Stat label="大桌服务费" value={money(sum.service)} />}
+          {sum.tax > 0 && <Stat label="税" value={money(sum.tax)} />}
           <Stat
             label={`本月小费${sum.revenue ? `（${((sum.tips / sum.revenue) * 100).toFixed(1)}%）` : ''}`}
             value={money(sum.tips)}
@@ -250,6 +253,7 @@ export default function MonthView() {
                 <Row k="Buffet 客流" v={String(pick.guests)} />
                 <Row k="饮料份数" v={String(pick.drinks)} />
                 <Row k="大桌服务费" v={money(pick.service_cents)} />
+                <Row k="税" v={money(pick.tax_cents)} />
                 <Row k="现金" v={money(pick.cash_cents)} />
                 <Row k="刷卡" v={money(pick.card_cents)} />
                 <Row k="其它" v={money(pick.other_cents)} />

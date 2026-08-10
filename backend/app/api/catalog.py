@@ -62,6 +62,8 @@ class CatalogOut(BaseModel):
     # 客户端拿它决定用午市还是晚市的价格来**显示**金额。
     # 落库时服务端会自己再算一遍，不信这个值。
     current_period_kind: str
+    # 当前税率，供客户端**估算显示**用；落库金额一律服务端重算
+    tax_rate: float
     server_time: datetime
 
 
@@ -85,6 +87,15 @@ def catalog(user: CurrentUser, db: Session = Depends(get_db)):
         menu=[MenuItemOut.model_validate(m, from_attributes=True) for m in menu],
         prices=[PriceOut.model_validate(p, from_attributes=True) for p in prices],
         current_period_kind=period_kind_of(store_now()),
+        tax_rate=float(
+            db.execute(
+                text(
+                    "SELECT rate FROM tax_rate WHERE effective_from <= CURRENT_DATE"
+                    " ORDER BY effective_from DESC LIMIT 1"
+                )
+            ).scalar()
+            or 0
+        ),
         server_time=datetime.now(timezone.utc),
     )
 
@@ -97,6 +108,7 @@ class OpenCheckOut(BaseModel):
     drinks: int
     subtotal_cents: int
     service_charge_cents: int
+    tax_cents: int
     total_cents: int
     opened_by: str | None
 
@@ -118,8 +130,9 @@ def floor(user: CurrentUser, db: Session = Depends(get_db)):
                    COALESCE(SUM(h.qty) FILTER (WHERE h.kind='drink'), 0)     AS drinks,
                    COALESCE(SUM(h.qty * h.unit_price_cents), 0)   AS subtotal_cents,
                    c.service_charge_cents,
+                   c.tax_cents,
                    COALESCE(SUM(h.qty * h.unit_price_cents), 0)
-                     + c.service_charge_cents                      AS total_cents,
+                     + c.service_charge_cents + c.tax_cents        AS total_cents,
                    u.display_name                                 AS opened_by
               FROM dining_check c
               JOIN dining_table t ON t.id = c.table_id
@@ -127,7 +140,7 @@ def floor(user: CurrentUser, db: Session = Depends(get_db)):
               LEFT JOIN app_user u ON u.id = c.opened_by
              WHERE c.status = 'open' AND c.client_uuid IS NOT NULL
              GROUP BY c.client_uuid, t.label, c.opened_at, c.service_charge_cents,
-                      u.display_name
+                      c.tax_cents, u.display_name
              ORDER BY c.opened_at
             """
         )

@@ -45,6 +45,8 @@ export interface Catalog {
   menu: MenuItem[]
   prices: PriceRow[]
   current_period_kind: 'lunch' | 'dinner'
+  /** 当前税率，例如 0.071 = 7.1% */
+  tax_rate: number
   fetched_at: string
 }
 
@@ -126,4 +128,10 @@ export function partySize(
 /** 服务费估算，仅供显示；落库金额以服务端为准。 */
 export function serviceCents(subtotal: number, size: number): number {
   return size >= LARGE_PARTY_MIN ? Math.round(subtotal * SERVICE_CHARGE_RATE) : 0
+}
+
+
+/** 税：收在（小计 + 服务费）上。与后端 _recalc_service_charge 保持一致。 */
+export function taxCents(subtotal: number, service: number, rate: number): number {
+  return Math.round((subtotal + service) * rate)
 }

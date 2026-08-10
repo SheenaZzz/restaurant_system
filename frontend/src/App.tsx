@@ -12,6 +12,7 @@ import DeadLetters from './DeadLetters'
 import FloorPlan from './FloorPlan'
 import ListView from './ListView'
 import MonthView from './MonthView'
+import SettingsSheet from './SettingsSheet'
 import ToGoView from './ToGoView'
 import LoginPage from './LoginPage'
 import { resetLocalData } from './checks'
@@ -45,6 +46,7 @@ export default function App() {
   const [view, setView] = useState<'floor' | 'togo' | 'list' | 'month'>('floor')
   const [showDead, setShowDead] = useState(false)
   const [showSync, setShowSync] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
 
   // 身份从 IndexedDB 读，**不需要网络** ——
   // 离线冷启动时也能立刻渲染出正确的角色界面
@@ -137,6 +139,12 @@ export default function App() {
           </button>
         )}
         <span className="badge build">build {__BUILD__}</span>
+        {/* 设置一年也点不了几次，放个小齿轮就够，不占主界面 */}
+        {canManage(identity.role) && (
+          <button className="linkbtn" onClick={() => setShowSettings(true)}>
+            ⚙︎
+          </button>
+        )}
         <button
           className="linkbtn"
           onClick={async () => {
@@ -220,6 +228,8 @@ export default function App() {
       </div>
 
       {showDead && <DeadLetters onClose={() => { setShowDead(false); void refresh() }} />}
+
+      {showSettings && <SettingsSheet onClose={() => setShowSettings(false)} />}
 
       {/* 一个员工看不懂的状态标签等于没有标签 —— 必须能点开问"这是什么" */}
       {showSync && (
