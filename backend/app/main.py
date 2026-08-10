@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .api import auth as auth_api
 from .api import catalog as catalog_api
+from .api import history as history_api
 from .api import reports as reports_api
 from .core.deps import CurrentUser, require_role
 from .db import get_db
@@ -29,6 +30,7 @@ if _origins:
 app.include_router(auth_api.router)
 app.include_router(catalog_api.router)
 app.include_router(reports_api.router)
+app.include_router(history_api.router)
 
 
 @app.get("/api/health")

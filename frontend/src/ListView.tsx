@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { canManage, type Role } from './auth'
 import { loadCatalog, money, type PriceRow } from './catalog'
 import { allChecks, pendingCheckUuids, totalsOf } from './checks'
-import CheckDetail, { PAY_LABEL, STATUS_LABEL } from './CheckDetail'
+import CheckDetail, { operatorText, PAY_LABEL, STATUS_LABEL } from './CheckDetail'
 import type { LocalCheck } from './db'
 
 type Filter = 'all' | 'open' | 'closed' | 'voided'
@@ -159,7 +159,7 @@ export default function ListView({ role }: { role: Role }) {
               <div className="c-foot">
                 <span>{c.pay_method ? PAY_LABEL[c.pay_method] : '未记支付'}</span>
                 <span className="grow" />
-                <span>{c.by ?? '—'}</span>
+                <span>{operatorText(c)}</span>
               </div>
 
               {c.void_reason && <div className="c-note">{c.void_reason}</div>}

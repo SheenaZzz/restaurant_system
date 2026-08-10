@@ -765,3 +765,37 @@ table.kv .num { text-align: right; font-variant-numeric: tabular-nums; }
   font-size: 13px;
 }
 .c-note { color: var(--muted); font-size: 12px; }
+
+/* ---- 操作历史时间线 ---- */
+ol.timeline { list-style: none; margin: 12px 0; padding: 0; }
+ol.timeline li {
+  position: relative;
+  margin-left: 14px;
+  padding: 10px 0 12px 18px;
+  border-left: 2px solid var(--line);
+}
+ol.timeline li::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 16px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  border: 2px solid var(--bg);
+}
+ol.timeline li.ok::before   { background: var(--ok); }
+ol.timeline li.warn::before { background: var(--warn); }
+ol.timeline li.bad::before  { background: var(--bad); }
+ol.timeline li:last-child { border-left-color: transparent; }
+
+.t-head { display: flex; align-items: baseline; gap: 10px; }
+.t-title { font-size: 16px; font-weight: 600; }
+.t-diff {
+  margin-top: 4px;
+  padding-left: 2px;
+  color: var(--text);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}

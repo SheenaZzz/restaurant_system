@@ -13,6 +13,7 @@ import {
   type Payment,
 } from './checks'
 import type { LocalCheck } from './db'
+import CheckHistory from './CheckHistory'
 import EditSheet from './EditSheet'
 import PaymentSheet from './PaymentSheet'
 import TransferSheet from './TransferSheet'
@@ -59,7 +60,9 @@ export default function CheckDetail({
   onClose: () => void
   onChanged: () => void | Promise<void>
 }) {
-  const [sub, setSub] = useState<'pay' | 'move' | 'edit' | 'void' | null>(null)
+  const [sub, setSub] = useState<'pay' | 'move' | 'edit' | 'void' | 'history' | null>(
+    null,
+  )
   const [reason, setReason] = useState('')
   const manage = canManage(role)
   const c = check
@@ -114,6 +117,16 @@ export default function CheckDetail({
           await modifyTable(c.check_uuid, guests, drinks)
           await done()
         }}
+      />
+    )
+  }
+
+  if (sub === 'history') {
+    return (
+      <CheckHistory
+        checkUuid={c.check_uuid}
+        tableLabel={c.table_label}
+        onClose={() => setSub(null)}
       />
     )
   }
@@ -209,10 +222,7 @@ export default function CheckDetail({
             </tr>
             <tr>
               <td className="dim">操作人</td>
-              <td className="num">
-                {c.by ?? '—'}
-                {c.last_by && c.last_by !== c.by && ` · 最近 ${c.last_by}`}
-              </td>
+              <td className="num">{operatorText(c)}</td>
             </tr>
             {c.void_reason && (
               <tr>
@@ -231,6 +241,10 @@ export default function CheckDetail({
             联网后会自动补发，不用做任何操作。
           </p>
         )}
+
+        <div className="actiongrid">
+          <button onClick={() => setSub('history')}>查看历史</button>
+        </div>
 
         {c.status === 'merged' ? (
           <p className="hint">这张单已并入其它单，明细已转移，不再计入营业额。</p>
@@ -285,4 +299,20 @@ export default function CheckDetail({
       </div>
     </div>
   )
+}
+
+
+/**
+ * 操作人显示。
+ *
+ * `by`（开台的人）在早期数据里可能缺失 —— 那时还没把操作人带进本地镜像。
+ * 缺失时回退到 `last_by`，而不是显示成「— · 最近 张三」：
+ * 一个破折号加一句"最近"，读起来像"没人开台但有人改过"，
+ * 比直接显示那个人还难懂。
+ */
+export function operatorText(c: LocalCheck): string {
+  const opened = c.by ?? c.last_by
+  if (!opened) return '—'
+  if (c.last_by && c.by && c.last_by !== c.by) return `${c.by} · 最近 ${c.last_by}`
+  return opened
 }
