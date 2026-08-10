@@ -63,7 +63,9 @@ export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }
         </button>
 
         <p className="hint">
-          开发账号：front / kitchen / admin，密码 <code>&lt;账号&gt;-dev-pw</code>
+          开发账号：manager / front / kitchen / boss
+          <br />
+          密码统一为 <code>&lt;账号&gt;-dev-pw</code>
         </p>
       </form>
     </div>

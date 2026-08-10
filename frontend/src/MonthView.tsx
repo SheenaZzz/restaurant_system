@@ -3,6 +3,7 @@ import { authFetch } from './auth'
 import { money } from './catalog'
 import { getMeta, setMeta } from './db'
 import MonthPicker from './MonthPicker'
+import NumPad from './NumPad'
 
 export interface DayRow {
   business_date: string
@@ -34,7 +35,7 @@ export default function MonthView() {
   const [rows, setRows] = useState<DayRow[]>([])
   const [pick, setPick] = useState<DayRow | null>(null)
   const [state, setState] = useState<'loading' | 'live' | 'cached' | 'error'>('loading')
-  const [tipInput, setTipInput] = useState('')
+  const [tipCents, setTipCents] = useState(0)
   const [savingTip, setSavingTip] = useState(false)
   const [tipErr, setTipErr] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
@@ -71,7 +72,7 @@ export default function MonthView() {
     const r = rows.find((x) => x.business_date === pendingDay)
     if (r) {
       setPick(r)
-      setTipInput((r.tips_total_cents / 100).toFixed(2))
+      setTipCents(r.tips_total_cents)
       setTipErr(null)
     }
     setPendingDay(null)
@@ -190,7 +191,7 @@ export default function MonthView() {
               className={`cal-d${r ? ' has' : ''}${ds === todayStr ? ' today' : ''}${pick?.business_date === ds ? ' on' : ''}`}
               onClick={() => {
                 setPick(r ?? null)
-                setTipInput(r ? (r.tips_total_cents / 100).toFixed(2) : '')
+                setTipCents(r?.tips_total_cents ?? 0)
                 setTipErr(null)
               }}
               disabled={!r}
@@ -276,16 +277,8 @@ export default function MonthView() {
               </tbody>
             </table>
             <div className="tipbox">
-              <label className="reason">
-                当日小费总额
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={tipInput}
-                  onChange={(e) => setTipInput(e.target.value)}
-                  placeholder="0.00"
-                />
-              </label>
+              <div className="tiplabel">当日小费总额</div>
+              <NumPad value={tipCents} onChange={setTipCents} />
               <p className="hint">
                 一天录一个总数即可 —— 卡机小费和桌上现金加一起。
                 {pick.tips_updated_by && ` 上次由 ${pick.tips_updated_by} 录入。`}
@@ -295,13 +288,7 @@ export default function MonthView() {
                 className="linkbtn wide"
                 disabled={savingTip}
                 onClick={async () => {
-                  const cents = Math.round(
-                    Number(tipInput.replace(/[^\d.]/g, '') || '0') * 100,
-                  )
-                  if (!Number.isFinite(cents) || cents < 0) {
-                    setTipErr('金额不合法')
-                    return
-                  }
+                  const cents = tipCents
                   setSavingTip(true)
                   setTipErr(null)
                   try {

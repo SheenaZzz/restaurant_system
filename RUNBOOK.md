@@ -145,11 +145,15 @@ curl -s localhost:8000/api/debug/count
 
 ## 账号（开发用）
 
-| 账号 | 角色 | 密码 | PIN |
-|---|---|---|---|
-| `front` | front | `front-dev-pw` | 1111 |
-| `kitchen` | kitchen | `kitchen-dev-pw` | 2222 |
-| `admin` | admin | `admin-dev-pw` | — |
+| 账号 | 显示名 | 角色（代码里的键） | 密码 | PIN |
+|---|---|---|---|---|
+| `manager` | 前台主管 | `front_manager` | `manager-dev-pw` | 1111 |
+| `front` | 前台员工 | `front_employee` | `front-dev-pw` | 3333 |
+| `kitchen` | 后厨 | `kitchen` | `kitchen-dev-pw` | 2222 |
+| `boss` | 老板 | `admin` | `boss-dev-pw` | — |
+
+> 账号名和角色名是两回事：账号名是人登录时打的字，角色名是代码里做权限判断的键。
+> 所以 `boss` 的角色仍然叫 `admin`。
 
 ⚠️ 上线前必须改成每人独立的强密码，并把 `.env` 里的 `JWT_SECRET` 换成随机值：
 

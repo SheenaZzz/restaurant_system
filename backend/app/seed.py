@@ -72,11 +72,16 @@ PRICES = [
 ]
 
 # ⚠️ 开发用弱口令。Step 3 上线前必须改，且改成每人独立的密码。
+# (username, 显示名, role, 密码, PIN)
+# ⚠️ 账号名和角色名是两回事：
+#    账号名是人登录时打的字，角色名是代码里做权限判断的键。
+#    这里只改账号名，角色名保持 front_employee / front_manager / kitchen / admin ——
+#    改角色名要动数据库约束、RBAC 表和一堆判断，收益为零。
 USERS = [
-    ("front", "前台主管", "front_manager", "front-dev-pw", "1111"),
-    ("front2", "前台员工", "front_employee", "front2-dev-pw", "3333"),
+    ("manager", "前台主管", "front_manager", "manager-dev-pw", "1111"),
+    ("front", "前台员工", "front_employee", "front-dev-pw", "3333"),
     ("kitchen", "后厨", "kitchen", "kitchen-dev-pw", "2222"),
-    ("admin", "老板", "admin", "admin-dev-pw", None),
+    ("boss", "老板", "admin", "boss-dev-pw", None),
 ]
 
 
