@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { tr } from './i18n'
 import { login, type Identity } from './auth'
 
 export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }) {
@@ -31,10 +32,10 @@ export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }
   return (
     <div className="login-wrap">
       <form className="login" onSubmit={submit}>
-        <h1>餐馆运营系统</h1>
+        <h1>{tr('餐馆运营系统')}</h1>
 
         <label>
-          账号
+          {tr('账号')}
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
@@ -46,7 +47,7 @@ export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }
         </label>
 
         <label>
-          密码
+          {tr('密码')}
           <input
             type="password"
             value={password}
@@ -63,9 +64,9 @@ export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }
         </button>
 
         <p className="hint">
-          开发账号：manager / front / kitchen / boss
+          {tr('开发账号：manager / front / kitchen / boss')}
           <br />
-          密码统一为 <code>&lt;账号&gt;-dev-pw</code>
+          密码统一为 <code>{tr('&lt;账号&gt;-dev-pw')}</code>
         </p>
       </form>
     </div>

@@ -14,6 +14,7 @@
  */
 
 import type { Catalog } from './catalog'
+import { locale } from './i18n'
 
 /**
  * 缓存的 catalog 可能是加这个字段**之前**存的，那时没有这一项。
@@ -98,7 +99,7 @@ export function businessDateLabel(bdate: string): string {
   if (!y || !m || !d) return bdate
   // 用本地构造，不走 Date('YYYY-MM-DD')——那个按 UTC 解析，
   // 在 UTC-7 会显示成前一天。
-  return new Date(y, m - 1, d).toLocaleDateString('zh-CN', {
+  return new Date(y, m - 1, d).toLocaleDateString(locale(), {
     month: 'long',
     day: 'numeric',
     weekday: 'short',

@@ -52,6 +52,8 @@ class PriceOut(BaseModel):
 class CategoryOut(BaseModel):
     key: str
     label: str
+    # 分类的英文名，给中英切换用
+    label_en: str
 
 
 class ModifierOut(BaseModel):
@@ -123,7 +125,9 @@ def catalog(user: CurrentUser, db: Session = Depends(get_db)):
     now_local = clock.now()
 
     return CatalogOut(
-        categories=[CategoryOut(key=k, label=v) for k, v in CATEGORIES],
+        categories=[
+            CategoryOut(key=k, label=zh, label_en=en) for k, zh, en in CATEGORIES
+        ],
         tables=[TableOut.model_validate(t, from_attributes=True) for t in tables],
         menu=[MenuItemOut.model_validate(m, from_attributes=True) for m in menu],
         modifiers=[

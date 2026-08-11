@@ -63,6 +63,8 @@ class ModifierOut(BaseModel):
 class CategoryOut(BaseModel):
     key: str
     label: str
+    # 分类的英文名，给中英切换用
+    label_en: str
 
 
 class PricingOut(BaseModel):
@@ -107,7 +109,9 @@ def get_pricing(db: Session = Depends(get_db)):
         buffet_effective_from=max((r.effective_from for r in buffet), default=None),
         menu=[MenuItemOut.model_validate(m, from_attributes=True) for m in menu],
         modifiers=[ModifierOut.model_validate(m, from_attributes=True) for m in mods],
-        categories=[CategoryOut(key=k, label=v) for k, v in CATEGORIES],
+        categories=[
+            CategoryOut(key=k, label=zh, label_en=en) for k, zh, en in CATEGORIES
+        ],
         business_date=today,
     )
 

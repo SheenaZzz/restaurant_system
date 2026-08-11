@@ -33,6 +33,8 @@ export interface LocalLine {
   line_id?: number
   menu_item_id: number
   name: string
+  /** 英文菜名。下单当时一起存下来 —— 菜单改名不影响历史账单显示。 */
+  name_en?: string
   qty: number
   /**
    * ⚠️ **已经含加料的钱**（菜价 + Σ 加料单价），和服务端
@@ -40,8 +42,17 @@ export interface LocalLine {
    * 不要再去加 modifiers —— 会重复计一次。
    */
   unit_price_cents: number
-  /** 加了什么，仅供显示。金额已折进 unit_price_cents。 */
-  modifiers?: { label: string; price_cents: number }[]
+  /**
+   * 加了什么，仅供显示。金额已折进 unit_price_cents。
+   * label_en / modifier_id 是给中英切换用的：目录里的加料跟着语言显示，
+   * 手写的要求（没有 id）原样保留 —— 那是前台当场打进去的字。
+   */
+  modifiers?: {
+    label: string
+    label_en?: string
+    modifier_id?: number
+    price_cents: number
+  }[]
   notes?: string
   voided?: boolean
 }

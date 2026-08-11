@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { tr } from './i18n'
 import {
   loadCatalog,
   money,
@@ -70,24 +71,20 @@ export default function TransferSheet({
         <h2>{check.table_label}</h2>
 
         <div className="tabs">
-          <button className={tab === 'move' ? 'on' : ''} onClick={() => setTab('move')}>
-            换桌
-          </button>
-          <button className={tab === 'merge' ? 'on' : ''} onClick={() => setTab('merge')}>
-            并桌
-          </button>
+          <button className={tab === 'move' ? 'on' : ''} onClick={() => setTab('move')}>{tr('换桌')}</button>
+          <button className={tab === 'merge' ? 'on' : ''} onClick={() => setTab('merge')}>{tr('并桌')}</button>
         </div>
 
         {tab === 'move' ? (
           <>
-            <p className="hint">选一张空桌，整张单挪过去。已占用的桌不能选。</p>
+            <p className="hint">{tr('选一张空桌，整张单挪过去。已占用的桌不能选。')}</p>
             <div className="grid tight">
               {tables.map((t) => {
                 const busyT = occupied.has(t.label)
                 const self = t.label === check.table_label
                 return (
                   <button
-                    key={t.label}
+                    key={tr(t.label)}
                     className={`table ${busyT || self ? 'free' : ''}`}
                     disabled={busyT || self || busy}
                     onClick={async () => {
@@ -99,7 +96,7 @@ export default function TransferSheet({
                       }
                     }}
                   >
-                    <span className="tlabel">{t.label}</span>
+                    <span className="tlabel">{tr(t.label)}</span>
                     <span className="tseats">
                       {self ? '当前' : busyT ? '占用中' : `${t.seats} 座`}
                     </span>
@@ -111,11 +108,9 @@ export default function TransferSheet({
         ) : (
           <>
             <p className="hint">
-              选要并进 <b>{check.table_label}</b> 的单。明细会搬到这张单上，
-              原来的单标记为「已并入」，不再单独计入营业额。
-            </p>
+              选要并进 <b>{check.table_label}</b>{tr('的单。明细会搬到这张单上， 原来的单标记为「已并入」，不再单独计入营业额。')}</p>
 
-            {others.length === 0 && <p className="hint">没有其它未结账单。</p>}
+            {others.length === 0 && <p className="hint">{tr('没有其它未结账单。')}</p>}
 
             <ul className="pick">
               {others.map((o) => (
@@ -156,7 +151,7 @@ export default function TransferSheet({
             )}
 
             <div className="sheet-actions">
-              <button onClick={onCancel}>取消</button>
+              <button onClick={onCancel}>{tr('取消')}</button>
               <button
                 className="primary"
                 disabled={busy || picked.size === 0}
@@ -177,7 +172,7 @@ export default function TransferSheet({
 
         {tab === 'move' && (
           <div className="sheet-actions">
-            <button onClick={onCancel}>取消</button>
+            <button onClick={onCancel}>{tr('取消')}</button>
           </div>
         )}
       </div>

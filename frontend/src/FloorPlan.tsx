@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { tr } from './i18n'
 import type { Role } from './auth'
 import {
   businessDateLabel,
@@ -59,7 +60,7 @@ export default function FloorPlan({ role }: { role: Role }) {
   }, [reload])
 
   if (!cat) {
-    return <p className="hint">首次使用需要联网加载一次桌位和菜单…</p>
+    return <p className="hint">{tr('首次使用需要联网加载一次桌位和菜单…')}</p>
   }
 
   const zones = [...new Set(cat.tables.map((t) => t.zone ?? '—'))]
@@ -69,20 +70,20 @@ export default function FloorPlan({ role }: { role: Role }) {
     <>
       <div className="floor-head">
         <span className="period">
-          {cat.current_period_kind === 'lunch' ? '午市' : '晚市'}
+          {tr(cat.current_period_kind === 'lunch' ? '午市' : '晚市')}
         </span>
         {/* 营业日必须显示出来。旁边这些数字是"这一天"的，
             不写清是哪一天，跨零点之后员工没法判断该不该信 */}
         {bdate && <span className="bday">{businessDateLabel(bdate)}</span>}
         <span className="muted">
-          在座 {openList.reduce((s, c) => s + c.adult + c.child + c.senior, 0)} 人 · 开台{' '}
-          {open.size}/{cat.tables.length}
+          {tr('在座')} {openList.reduce((s, c) => s + c.adult + c.child + c.senior, 0)} ·{' '}
+          {tr('开台')} {open.size}/{cat.tables.length}
         </span>
       </div>
 
       {zones.map((z) => (
         <section key={z}>
-          <h3 className="zone">{z === 'main' ? '主厅' : z === 'large' ? '大桌' : z}</h3>
+          <h3 className="zone">{tr(z === 'main' ? '主厅' : z === 'large' ? '大桌' : z)}</h3>
           <div className="grid">
             {cat.tables
               .filter((t) => (t.zone ?? '—') === z)
@@ -90,7 +91,7 @@ export default function FloorPlan({ role }: { role: Role }) {
                 const chk = open.get(t.label)
                 return (
                   <button
-                    key={t.label}
+                    key={tr(t.label)}
                     className={`table ${
                       chk
                         ? pending.has(chk.check_uuid)
@@ -108,21 +109,21 @@ export default function FloorPlan({ role }: { role: Role }) {
                       setSheetFor(t.label)
                     }}
                   >
-                    <span className="tlabel">{t.label}</span>
+                    <span className="tlabel">{tr(t.label)}</span>
                     {chk ? (
                       <>
                         <span className="tguests">
-                          {chk.adult + chk.child + chk.senior} 人
+                          {chk.adult + chk.child + chk.senior} {tr('位')}
                           {chk.drink_adult + chk.drink_child > 0 &&
-                            ` · ${chk.drink_adult + chk.drink_child} 饮`}
+                            ` · ${chk.drink_adult + chk.drink_child} ${tr('饮')}`}
                         </span>
                         <span className="tmoney">
                           {money(chk.est_cents)}
-                          {chk.service_cents > 0 && <span className="svc"> +服务费</span>}
+                          {chk.service_cents > 0 && <span className="svc">{tr('+服务费')}</span>}
                         </span>
                       </>
                     ) : (
-                      <span className="tseats">{t.seats} 座</span>
+                      <span className="tseats">{t.seats} {tr('座')}</span>
                     )}
                   </button>
                 )
@@ -152,26 +153,21 @@ export default function FloorPlan({ role }: { role: Role }) {
       {blocked && (
         <div className="sheet-back" onClick={() => setBlocked(null)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <h2>{blocked.table_label} 还有一张没结的单</h2>
+            <h2>{blocked.table_label} · {tr('还有一张没结的单')}</h2>
             <p className="hint">
-              这张单开在 <b>{businessDateLabel(checkBusinessDate(blocked, cutoffHourOf(cat)))}</b>
-              ，金额 <b>{money(blocked.est_cents)}</b>，到现在还没结账。
+              {tr('开在')} <b>{businessDateLabel(checkBusinessDate(blocked, cutoffHourOf(cat)))}</b>
+              {' · '}<b>{money(blocked.est_cents)}</b>{' · '}{tr('尚未结账')}
             </p>
-            <p className="hint">
-              一张桌同时只能有一张未结账单，所以现在开不了新单。
-              先把它结掉或作废，这张桌就空出来了。
-            </p>
+            <p className="hint">{tr('一张桌同时只能有一张未结账单，所以现在开不了新单。 先把它结掉或作废，这张桌就空出来了。')}</p>
             <div className="sheet-actions">
-              <button onClick={() => setBlocked(null)}>取消</button>
+              <button onClick={() => setBlocked(null)}>{tr('取消')}</button>
               <button
                 className="primary"
                 onClick={() => {
                   setDetailFor(blocked)
                   setBlocked(null)
                 }}
-              >
-                去处理这张单
-              </button>
+              >{tr('去处理这张单')}</button>
             </div>
           </div>
         </div>

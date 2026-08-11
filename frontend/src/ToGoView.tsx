@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { lineName, tr } from './i18n'
 import type { Role } from './auth'
 import { loadCatalog, money, refreshCatalog, type Catalog } from './catalog'
 import {
@@ -8,7 +9,7 @@ import {
   pendingCheckUuids,
   type NewLine,
 } from './checks'
-import CheckDetail, { PAY_LABEL, STATUS_LABEL } from './CheckDetail'
+import CheckDetail, { operatorText, PAY_LABEL, STATUS_LABEL } from './CheckDetail'
 import type { LocalCheck } from './db'
 import MenuPicker, { TogoAmountSheet } from './MenuPicker'
 
@@ -42,7 +43,7 @@ export default function ToGoView({ role }: { role: Role }) {
     return () => window.clearInterval(t)
   }, [reload])
 
-  if (!cat) return <p className="hint">首次使用需要联网加载一次菜单…</p>
+  if (!cat) return <p className="hint">{tr('首次使用需要联网加载一次菜单…')}</p>
 
   const togoItem = cat.menu.find((m) => m.open_price)
   const openOnes = rows.filter((r) => r.status === 'open')
@@ -55,20 +56,17 @@ export default function ToGoView({ role }: { role: Role }) {
           disabled={!togoItem}
           onClick={() => setSheet('buffet')}
         >
-          <span className="bc-title">自助餐打包</span>
-          <span className="bc-sub">Buffet To Go · 按重量，直接录金额</span>
+          <span className="bc-title">{tr('自助餐打包')}</span>
+          <span className="bc-sub">{tr('Buffet To Go · 按重量，直接录金额')}</span>
         </button>
         <button className="bigcard phone" onClick={() => setSheet('phone')}>
-          <span className="bc-title">电话点菜</span>
-          <span className="bc-sub">从菜单点，客人到店自提</span>
+          <span className="bc-title">{tr('电话点菜')}</span>
+          <span className="bc-sub">{tr('从菜单点，客人到店自提')}</span>
         </button>
       </div>
 
-      <p className="hint">
-        自提单不占桌，也**不收大桌服务费** —— 服务费只按堂食人头算。
-      </p>
 
-      <h3 className="zone">未取 {openOnes.length} 单</h3>
+      <h3 className="zone">{tr('未取')} {openOnes.length}</h3>
 
       <div className="cards">
         {rows.map((c) => (
@@ -79,14 +77,14 @@ export default function ToGoView({ role }: { role: Role }) {
           >
             <div className="c-top">
               <span className="c-table">
-                {c.source === 'buffet_togo' ? '打包' : '电话'}
+                {tr(c.source === 'buffet_togo' ? '打包' : '电话')}
               </span>
               <span
                 className={`tag ${c.status === 'open' ? 'warn' : c.status === 'voided' ? 'bad' : 'ok'}`}
               >
-                {STATUS_LABEL[c.status]}
+                {tr(STATUS_LABEL[c.status])}
               </span>
-              {pending.has(c.check_uuid) && <span className="tag warn">未上传</span>}
+              {pending.has(c.check_uuid) && <span className="tag warn">{tr('未上传')}</span>}
               <span className="grow" />
               <span className="c-time">
                 {new Date(c.opened_at).toLocaleTimeString('zh-CN', {
@@ -102,14 +100,14 @@ export default function ToGoView({ role }: { role: Role }) {
             {(c.customer_name || c.phone_last4) && (
               <div className="c-line">
                 {c.customer_name && <span className="chip">{c.customer_name}</span>}
-                {c.phone_last4 && <span className="chip">尾号 {c.phone_last4}</span>}
+                {c.phone_last4 && <span className="chip">{tr('尾号')} {c.phone_last4}</span>}
               </div>
             )}
 
             <div className="c-line">
               {(c.lines ?? []).slice(0, 3).map((l, i) => (
                 <span key={i} className="chip">
-                  {l.name}
+                  {lineName(l, cat?.menu)}
                   {l.qty > 1 && ` ×${l.qty}`}
                 </span>
               ))}
@@ -119,13 +117,13 @@ export default function ToGoView({ role }: { role: Role }) {
             </div>
 
             <div className="c-foot">
-              <span>{c.pay_method ? PAY_LABEL[c.pay_method] : '未记支付'}</span>
+              <span>{c.pay_method ? tr(PAY_LABEL[c.pay_method]) : tr('未记支付')}</span>
               <span className="grow" />
-              <span>{c.by ?? '—'}</span>
+              <span>{operatorText(c)}</span>
             </div>
           </button>
         ))}
-        {rows.length === 0 && <p className="hint">还没有自提单。</p>}
+        {rows.length === 0 && <p className="hint">{tr('还没有自提单。')}</p>}
       </div>
 
       {sheet === 'buffet' && togoItem && (
@@ -145,7 +143,7 @@ export default function ToGoView({ role }: { role: Role }) {
           menu={cat.menu}
           categories={cat.categories}
           modifiers={cat.modifiers ?? []}
-          title="电话点菜"
+          title={tr('电话点菜')}
           onCancel={() => setSheet(null)}
           onConfirm={(lines) => {
             setPhoneLines(lines)
@@ -159,16 +157,14 @@ export default function ToGoView({ role }: { role: Role }) {
       {sheet === 'phone' && phoneLines && (
         <div className="sheet-back" onClick={() => setPhoneLines(null)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <h2>客人信息</h2>
-            <p className="hint">
-              都可以留空。**手机号只存后四位** —— 够核对身份就行，不多收。
-            </p>
+            <h2>{tr('客人信息')}</h2>
+            <p className="hint">{tr('都可以留空。手机号只记后四位。')}</p>
             <label className="reason">
-              姓名
+              {tr('姓名')}
               <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
             </label>
             <label className="reason">
-              手机号（只取后四位）
+              {tr('手机号（只取后四位）')}
               <input
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
@@ -176,7 +172,7 @@ export default function ToGoView({ role }: { role: Role }) {
               />
             </label>
             <div className="sheet-actions">
-              <button onClick={() => setPhoneLines(null)}>返回改菜</button>
+              <button onClick={() => setPhoneLines(null)}>{tr('返回改菜')}</button>
               <button
                 className="primary"
                 onClick={async () => {
@@ -188,9 +184,7 @@ export default function ToGoView({ role }: { role: Role }) {
                   setSheet(null)
                   await reload()
                 }}
-              >
-                建单
-              </button>
+              >{tr('建单')}</button>
             </div>
           </div>
         </div>

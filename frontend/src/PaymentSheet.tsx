@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { tr } from './i18n'
 import { money } from './catalog'
 import type { PayMethod, Payment } from './checks'
 import type { LocalCheck } from './db'
@@ -107,15 +108,15 @@ export default function PaymentSheet({
         <table className="kv duebox">
           <tbody>
             <tr>
-              <td className="dim">账单应收</td>
+              <td className="dim">{tr('账单应收')}</td>
               <td className="num">{money(check.est_cents)}</td>
             </tr>
             <tr>
-              <td className="dim">之前已收</td>
+              <td className="dim">{tr('之前已收')}</td>
               <td className="num">{money(collected ?? 0)}</td>
             </tr>
             <tr>
-              <td className="dim">本次待收</td>
+              <td className="dim">{tr('本次待收')}</td>
               <td className="num strong">{money(total)}</td>
             </tr>
           </tbody>
@@ -133,7 +134,7 @@ export default function PaymentSheet({
             className={method === m.k ? 'on' : ''}
             onClick={() => setMethod(m.k)}
           >
-            {m.label}
+            {tr(m.label)}
           </button>
         ))}
       </div>
@@ -149,7 +150,7 @@ export default function PaymentSheet({
                 setEntrySide('cash')
               }}
             >
-              <span className="sl">现金 {entrySide === 'cash' ? '（输入中）' : ''}</span>
+              <span className="sl">{tr('现金')} {entrySide === 'cash' ? tr('（输入中）') : ''}</span>
               <span className="sv">{money(cash)}</span>
             </button>
             <button
@@ -159,23 +160,23 @@ export default function PaymentSheet({
                 setEntrySide('card')
               }}
             >
-              <span className="sl">刷卡 {entrySide === 'card' ? '（输入中）' : ''}</span>
+              <span className="sl">{tr('刷卡')} {entrySide === 'card' ? tr('（输入中）') : ''}</span>
               <span className="sv">{money(card)}</span>
             </button>
           </div>
           <p className="hint">
-            点上面切换输入哪一边，<b>另一边自动等于余额</b> —— 加起来永远等于{topUp ? '本次待收' : '应收'}。
+            点上面切换输入哪一边，<b>{tr('另一边自动等于余额')}</b> —— 加起来永远等于{topUp ? '本次待收' : '应收'}。
           </p>
         </>
       )}
 
       {method === 'other' && (
         <label className="reason">
-          说明（必填）
+          {tr('说明（必填）')}
           <input
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="例如：gift card / 代金券"
+            placeholder={tr('例如：gift card / 代金券')}
             autoFocus
           />
         </label>
@@ -202,8 +203,8 @@ export default function PaymentSheet({
                 onChange={setEntered}
                 max={total}
                 quick={[
-                  { label: '一半', cents: Math.round(total / 2) },
-                  { label: '全额', cents: total },
+                  { label: tr('一半'), cents: Math.round(total / 2) },
+                  { label: tr('全额'), cents: total },
                 ]}
               />
             </div>
@@ -213,7 +214,7 @@ export default function PaymentSheet({
         )}
 
         <div className="sheet-actions">
-          <button onClick={onCancel}>取消</button>
+          <button onClick={onCancel}>{tr('取消')}</button>
           <button
             className="primary"
             disabled={busy || !valid}

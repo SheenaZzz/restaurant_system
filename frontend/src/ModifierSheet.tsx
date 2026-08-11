@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { modLabel, name as nameOf, tr } from './i18n'
 import {
   money,
   type MenuItem,
@@ -70,7 +71,7 @@ export default function ModifierSheet({
     <div className="sheet-back" onClick={onCancel}>
       <div className="sheet mod-sheet" onClick={(e) => e.stopPropagation()}>
         <h2>
-          {item.name_zh}
+          {nameOf(item)}
           <span className="period-tag">{money(item.price_cents ?? 0)}</span>
         </h2>
 
@@ -78,15 +79,12 @@ export default function ModifierSheet({
           <div className="mod-left">
             <div className="stepper">
               <button onClick={() => setQty((q) => Math.max(1, q - 1))}>−</button>
-              <span className="sl">
-                份数
-                <small>加料按份收，{qty} 份就是 {qty} 份的钱</small>
-              </span>
+              <span className="sl">{tr('份数')}</span>
               <span className="qty">{qty}</span>
               <button onClick={() => setQty((q) => q + 1)}>＋</button>
             </div>
 
-            <h3 className="zone">常用要求</h3>
+            <h3 className="zone">{tr('常用要求')}</h3>
             <div className="mod-grid">
               {modifiers.map((m) => (
                 <button
@@ -100,28 +98,28 @@ export default function ModifierSheet({
                     })
                   }
                 >
-                  <span className="m-name">{m.name_zh}</span>
+                  <span className="m-name">{nameOf(m)}</span>
                   {/* 免费的也把 0 写出来，不留空 —— 空着会被读成"没写价"，
                       员工得停下来想一秒 */}
                   <span className={`m-price${m.price_cents ? '' : ' free'}`}>
-                    {m.price_cents ? `+${money(m.price_cents)}` : '免费'}
+                    {m.price_cents ? `+${money(m.price_cents)}` : tr('免费')}
                   </span>
                 </button>
               ))}
               {modifiers.length === 0 && (
-                <p className="hint">还没有加载到加料目录，联网后再试。</p>
+                <p className="hint">{tr('还没有加载到加料目录，联网后再试。')}</p>
               )}
             </div>
 
             {custom.length > 0 && (
               <>
-                <h3 className="zone">手写要求</h3>
+                <h3 className="zone">{tr('手写要求')}</h3>
                 <div className="mod-custom-list">
                   {custom.map((c, i) => (
                     <div key={i} className="mod-custom">
-                      <span className="cc-label">{c.label}</span>
+                      <span className="cc-label">{modLabel(c, modifiers)}</span>
                       <span className="cc-price">
-                        {c.price_cents ? `+${money(c.price_cents)}` : '免费'}
+                        {c.price_cents ? `+${money(c.price_cents)}` : tr('免费')}
                       </span>
                       <button
                         className="cc-del"
@@ -151,17 +149,15 @@ export default function ModifierSheet({
                     <small> 直接放会变成独立的 flex item 自己占一行 ——
                     和宽度无关，多出来的 20px 全是从键盘那儿抢的。 */}
                 <span>
-                  自定义要求<small>　金额在下方输</small>
+                  {tr('自定义要求')} <small>{tr('金额在下方输')}</small>
                 </span>
                 <input
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  placeholder="例如：不放花生 / 分两盘装"
+                  placeholder={tr('例如：不放花生 / 分两盘装')}
                 />
               </label>
-              <button className="cust-add" disabled={!draft.trim()} onClick={addDraft}>
-                加进
-              </button>
+              <button className="cust-add" disabled={!draft.trim()} onClick={addDraft}>{tr('加进')}</button>
             </div>
 
             {/* 金额和「清空」并成一行。
@@ -171,9 +167,7 @@ export default function ModifierSheet({
                 NumPad 是三个页面共用的，所以不改它，只在这一栏里隐藏它自带的两行。 */}
             <div className="cust-amt">
               <span className="ca-val">{money(draftCents)}</span>
-              <button className="ca-clear" onClick={() => setDraftCents(0)}>
-                清空
-              </button>
+              <button className="ca-clear" onClick={() => setDraftCents(0)}>{tr('清空')}</button>
             </div>
 
             <NumPad value={draftCents} onChange={setDraftCents} />
@@ -182,13 +176,13 @@ export default function ModifierSheet({
 
         <div className="mod-total">
           <span>
-            {money(perDish)} / 份 × {qty}
+            {money(perDish)} / {tr('份')} × {qty}
           </span>
           <strong>{money(perDish * qty)}</strong>
         </div>
 
         <div className="sheet-actions">
-          <button onClick={onCancel}>取消</button>
+          <button onClick={onCancel}>{tr('取消')}</button>
           <button
             className="primary"
             onClick={() => {
@@ -199,9 +193,7 @@ export default function ModifierSheet({
                 : []
               onConfirm(qty, [...build(), ...extra])
             }}
-          >
-            确认
-          </button>
+          >{tr('确认')}</button>
         </div>
       </div>
     </div>

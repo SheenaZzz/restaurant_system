@@ -156,21 +156,23 @@ MENU_ITEMS: list[tuple[str, str, str, int, str]] = [
 ]
 
 # 分类的显示名与顺序
-CATEGORIES: list[tuple[str, str]] = [
-    ("lunch_special", "午市特餐"),
-    ("chef_special", "厨师特荐"),
-    ("appetizer", "开胃菜"),
-    ("soup", "汤"),
-    ("chicken", "鸡"),
-    ("beef", "牛肉"),
-    ("pork", "猪肉"),
-    ("seafood", "海鲜"),
-    ("vegetable", "蔬菜"),
-    ("moo_shi", "木须"),
-    ("egg_foo_young", "芙蓉"),
-    ("chow_mein", "炒面"),
-    ("rice_noodle", "炒米粉"),
-    ("fried_rice", "炒饭"),
-    ("combo", "套餐"),
-    ("togo", "自提"),
+# (key, 中文, English)。英文名给中英切换用 —— 菜品自己有 name_en，
+# 分类以前只有中文，切成英文时这一栏会突兀地留着中文。
+CATEGORIES: list[tuple[str, str, str]] = [
+    ("lunch_special", "午市特餐", "Lunch Specials"),
+    ("chef_special", "厨师特荐", "Chef's Specials"),
+    ("appetizer", "开胃菜", "Appetizers"),
+    ("soup", "汤", "Soups"),
+    ("chicken", "鸡", "Chicken"),
+    ("beef", "牛肉", "Beef"),
+    ("pork", "猪肉", "Pork"),
+    ("seafood", "海鲜", "Seafood"),
+    ("vegetable", "蔬菜", "Vegetables"),
+    ("moo_shi", "木须", "Moo Shi"),
+    ("egg_foo_young", "芙蓉", "Egg Foo Young"),
+    ("chow_mein", "炒面", "Chow Mein"),
+    ("rice_noodle", "炒米粉", "Rice Noodles"),
+    ("fried_rice", "炒饭", "Fried Rice"),
+    ("combo", "套餐", "Combos"),
+    ("togo", "自提", "To Go"),
 ]

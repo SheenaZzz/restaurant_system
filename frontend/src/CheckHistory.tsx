@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { tr } from './i18n'
 import { authFetch } from './auth'
 import { money } from './catalog'
 import { PAY_LABEL } from './CheckDetail'
@@ -84,7 +85,7 @@ function describe(op: HistoryOp, before: Snapshot, after: Snapshot) {
       for (const f of FIELDS) {
         const a = before[f.k] as number
         const b = after[f.k] as number
-        if (a !== b) diffs.push(`${f.label} ${a} → ${b}`)
+        if (a !== b) diffs.push(`${tr(f.label)} ${a} → ${b}`)
       }
       return {
         title: '改单',
@@ -182,8 +183,8 @@ export default function CheckHistory({
         <h2>{tableLabel} 操作历史</h2>
 
         {err && <p className="hint">{err}</p>}
-        {!ops && !err && <p className="hint">载入中…</p>}
-        {ops?.length === 0 && <p className="hint">还没有同步到服务器，暂无历史。</p>}
+        {!ops && !err && <p className="hint">{tr('载入中…')}</p>}
+        {ops?.length === 0 && <p className="hint">{tr('还没有同步到服务器，暂无历史。')}</p>}
 
         <ol className="timeline">
           {items.map(({ op, d }) => (
@@ -205,13 +206,10 @@ export default function CheckHistory({
           ))}
         </ol>
 
-        <p className="hint">
-          历史来自服务端的操作日志，**每一条都记录了是谁、什么时候做的**，
-          不能删改。
-        </p>
+        <p className="hint">{tr('历史来自服务端的操作日志，**每一条都记录了是谁、什么时候做的**， 不能删改。')}</p>
 
         <div className="sheet-actions">
-          <button onClick={onClose}>关闭</button>
+          <button onClick={onClose}>{tr('关闭')}</button>
         </div>
       </div>
     </div>

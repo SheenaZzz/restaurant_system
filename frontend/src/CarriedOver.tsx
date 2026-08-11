@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { tr } from './i18n'
 import type { Role } from './auth'
 import {
   businessDateLabel,
@@ -88,12 +89,12 @@ export function ClockDriftBanner() {
     <div className="carry-banner bad" role="alert">
       <span className="cb-n">⚠</span>
       <span className="cb-txt">
-        这台设备的时区和店里不一致
+        {tr('这台设备的时区和店里不一致')}
         <small>
-          店里 {offsetText(drift.storeMinutes)}，本机{' '}
-          {offsetText(drift.deviceMinutes)}（{deviceTzName()}）——
-          账单可能被算到错误的营业日。请到系统「设置 › 通用 › 日期与时间」
-          把时区改成店里的。
+          {tr('店里')} {offsetText(drift.storeMinutes)} · {tr('本机')}{' '}
+          {offsetText(drift.deviceMinutes)}（{deviceTzName()}）
+          <br />
+          {tr('账单可能被算到错误的营业日。请到 iPad 的系统设置里把时区改成店里的。')}
         </small>
       </span>
     </div>
@@ -104,14 +105,14 @@ function deviceTzName(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone
   } catch {
-    return '未知'
+    return tr('未知')
   }
 }
 
 /** 横幅：没有跨天未结单时**什么都不渲染**，不占位、不干扰。 */
 export function CarriedOverBanner({ role }: { role: Role }) {
   const [open, setOpen] = useState(false)
-  const { rows, cat, today, reload, pending } = useCarried()
+  const { rows, cat, reload, pending } = useCarried()
 
   if (rows.length === 0) return null
 
@@ -122,8 +123,8 @@ export function CarriedOverBanner({ role }: { role: Role }) {
       <button className="carry-banner" onClick={() => setOpen(true)}>
         <span className="cb-n">{rows.length}</span>
         <span className="cb-txt">
-          张跨天未结账单 · 共 {money(total)}
-          <small>楼面已翻到新的一天，这些还没结 —— 点开处理</small>
+          {tr('张跨天未结账单')} · {money(total)}
+          <small>{tr('楼面已翻到新的一天，这些还没结 —— 点开处理')}</small>
         </span>
         <span className="cb-go">›</span>
       </button>
@@ -133,7 +134,6 @@ export function CarriedOverBanner({ role }: { role: Role }) {
           role={role}
           rows={rows}
           cat={cat}
-          today={today}
           pending={pending}
           onChanged={reload}
           onClose={() => setOpen(false)}
@@ -147,7 +147,6 @@ function CarriedOverSheet({
   role,
   rows,
   cat,
-  today,
   pending,
   onChanged,
   onClose,
@@ -155,7 +154,6 @@ function CarriedOverSheet({
   role: Role
   rows: LocalCheck[]
   cat: Catalog | null
-  today: string
   pending: Set<string>
   onChanged: () => void | Promise<void>
   onClose: () => void
@@ -172,11 +170,9 @@ function CarriedOverSheet({
   return (
     <div className="sheet-back" onClick={onClose}>
       <div className="sheet wide" onClick={(e) => e.stopPropagation()}>
-        <h2>跨天未结账单 {rows.length}</h2>
+        <h2>{tr('跨天未结账单')} {rows.length}</h2>
         <p className="hint">
-          这些单开在 <b>{today}</b> 之前，到现在还没结账。
-          每一张都是<b>开了桌但没收到的钱</b> —— 结掉或作废（作废要填原因），
-          它们才会从这里消失。
+          {tr('这些单开在今天之前还没结账。每一张都是开了桌但没收到的钱 —— 结掉或作废后才会从这里消失。')}
         </p>
 
         <div className="carry-list">
@@ -188,13 +184,13 @@ function CarriedOverSheet({
                 className="carry-row"
                 onClick={() => setPick(c)}
               >
-                <span className="cr-day">{bd ? businessDateLabel(bd) : '时间异常'}</span>
+                <span className="cr-day">{bd ? businessDateLabel(bd) : tr('时间异常')}</span>
                 <span className="cr-table">
-                  {isTogo(c) ? (c.customer_name || '自提') : c.table_label}
+                  {isTogo(c) ? (c.customer_name || tr('自提')) : c.table_label}
                 </span>
                 <span className="cr-money">{money(c.est_cents)}</span>
                 <span className="cr-who">{operatorText(c)}</span>
-                {pending.has(c.check_uuid) && <span className="tag warn">未上传</span>}
+                {pending.has(c.check_uuid) && <span className="tag warn">{tr('未上传')}</span>}
                 <span className="cb-go">›</span>
               </button>
             )
@@ -202,12 +198,11 @@ function CarriedOverSheet({
         </div>
 
         <p className="hint">
-          ⚠️ 桌号相同的话，<b>今天开不了这张桌</b> —— 服务端只允许一张桌
-          同时有一张未结账单。先把这里处理完。
+          {tr('⚠️ 同一张桌今天开不了新单 —— 一张桌同时只能有一张未结账单。先把这里处理完。')}
         </p>
 
         <div className="sheet-actions">
-          <button onClick={onClose}>知道了</button>
+          <button onClick={onClose}>{tr('知道了')}</button>
         </div>
       </div>
 

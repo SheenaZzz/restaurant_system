@@ -1,4 +1,5 @@
 import { money } from './catalog'
+import { tr } from './i18n'
 
 /**
  * POS 式金额键盘。
@@ -61,10 +62,10 @@ export default function NumPad({
       </div>
 
       <div className="np-quick">
-        <button onClick={() => onChange(0)}>清空</button>
+        <button onClick={() => onChange(0)}>{tr('清空')}</button>
         {quick?.map((q) => (
-          <button key={q.label} className="np-q" onClick={() => onChange(q.cents)}>
-            {q.label}
+          <button key={tr(q.label)} className="np-q" onClick={() => onChange(q.cents)}>
+            {tr(q.label)}
           </button>
         ))}
       </div>

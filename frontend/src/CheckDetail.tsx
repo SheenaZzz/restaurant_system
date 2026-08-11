@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { modLabel, lineName, locale, tr, paren } from './i18n'
 import { canManage, type Role } from './auth'
 import {
   money,
@@ -118,7 +119,7 @@ export default function CheckDetail({
     return (
       <PaymentSheet
         check={c}
-        title="补收差额"
+        title={tr('补收差额')}
         amount={due}
         collected={paid}
         onCancel={() => setSub(null)}
@@ -169,7 +170,7 @@ export default function CheckDetail({
         menu={menu}
         categories={categories}
         modifiers={modifiers}
-        title={`${c.table_label} 加菜`}
+        title={`${tr(c.table_label)} · ${tr('加菜')}`}
         onCancel={() => setSub(null)}
         onConfirm={async (lines) => {
           await addLines(c.check_uuid, lines)
@@ -183,7 +184,7 @@ export default function CheckDetail({
     return (
       <CheckHistory
         checkUuid={c.check_uuid}
-        tableLabel={c.table_label}
+        tableLabel={tr(c.table_label)}
         onClose={() => setSub(null)}
       />
     )
@@ -193,7 +194,7 @@ export default function CheckDetail({
     return (
       <div className="sheet-back" onClick={() => setSub(null)}>
         <div className="sheet" onClick={(e) => e.stopPropagation()}>
-          <h2>作废 {c.table_label}</h2>
+          <h2>作废 {tr(c.table_label)}</h2>
           <p className="total">{money(c.est_cents)}</p>
           <p className="hint">
             作废会把这单从营业额里剔除，必须填写原因，会记录操作人。
@@ -201,16 +202,16 @@ export default function CheckDetail({
             {c.status === 'closed' && ' 恢复后仍是已结账状态，结账时间不变。'}
           </p>
           <label className="reason">
-            原因
+            {tr('原因')}
             <input
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="例如：客人取消 / 录错桌号"
+              placeholder={tr('例如：客人取消 / 录错桌号')}
               autoFocus
             />
           </label>
           <div className="sheet-actions">
-            <button onClick={() => setSub(null)}>取消</button>
+            <button onClick={() => setSub(null)}>{tr('取消')}</button>
             <button
               className="primary danger"
               disabled={!reason.trim()}
@@ -218,9 +219,7 @@ export default function CheckDetail({
                 await voidTable(c.check_uuid, reason.trim())
                 await done()
               }}
-            >
-              确认作废
-            </button>
+            >{tr('确认作废')}</button>
           </div>
         </div>
       </div>
@@ -234,53 +233,55 @@ export default function CheckDetail({
     <div className="sheet-back" onClick={onClose}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <h2>
-          {c.table_label}
+          {tr(c.table_label)}
           <span className={`tag ${c.status === 'open' ? 'warn' : c.status === 'voided' ? 'bad' : 'ok'}`}>
-            {STATUS_LABEL[c.status]}
+            {tr(STATUS_LABEL[c.status])}
           </span>
-          {pending && <span className="tag warn">未上传</span>}
+          {pending && <span className="tag warn">{tr('未上传')}</span>}
         </h2>
 
         <table className="kv">
           <tbody>
             <tr>
-              <td className="dim">开台</td>
+              <td className="dim">{tr('开台')}</td>
               <td className="num">
-                {new Date(c.opened_at).toLocaleString('zh-CN', { hour12: false })}
+                {new Date(c.opened_at).toLocaleString(locale(), { hour12: false })}
               </td>
             </tr>
             <tr>
-              <td className="dim">Buffet 人数</td>
+              <td className="dim">{tr('Buffet 人数')}</td>
               <td className="num">
                 {guests
-                  ? `${guests}（成 ${c.adult} · 童 ${c.child} · 长 ${c.senior}）`
+                  ? `${guests}${paren(`${tr('成人')} ${c.adult} · ${tr('儿童')} ${c.child} · ${tr('长者')} ${c.senior}`)}`
                   : '—'}
               </td>
             </tr>
             <tr>
-              <td className="dim">饮料</td>
+              <td className="dim">{tr('饮料')}</td>
               <td className="num">
-                {drinks ? `${drinks}（成 ${c.drink_adult} · 童 ${c.drink_child}）` : '—'}
+                {drinks
+                  ? `${drinks}${paren(`${tr('成人')} ${c.drink_adult} · ${tr('儿童')} ${c.drink_child}`)}`
+                  : '—'}
               </td>
             </tr>
             {c.service_cents > 0 && (
               <tr>
-                <td className="dim">大桌服务费 10%</td>
+                <td className="dim">{tr('大桌服务费 10%')}</td>
                 <td className="num">{money(c.service_cents)}</td>
               </tr>
             )}
             {(c.tax_cents ?? 0) > 0 && (
               <tr>
-                <td className="dim">税</td>
+                <td className="dim">{tr('税')}</td>
                 <td className="num">{money(c.tax_cents)}</td>
               </tr>
             )}
             <tr>
-              <td className="dim">支付方式</td>
+              <td className="dim">{tr('支付方式')}</td>
               <td className="num">
-                {c.pay_method ? PAY_LABEL[c.pay_method] : '未记录'}
+                {c.pay_method ? tr(PAY_LABEL[c.pay_method]) : tr('未记录')}
                 {c.pay_method === 'mixed' &&
-                  `（现 ${money(c.pay_cash ?? 0)} / 卡 ${money(c.pay_card ?? 0)}）`}
+                  paren(`${tr('现金')} ${money(c.pay_cash ?? 0)} / ${tr('刷卡')} ${money(c.pay_card ?? 0)}`)}
                 {c.pay_note && ` · ${c.pay_note}`}
               </td>
             </tr>
@@ -289,29 +290,29 @@ export default function CheckDetail({
                 在报表里看到一个计数，却不知道是哪一单差多少，等于没告诉你。 */}
             {due !== 0 && (
               <tr>
-                <td className="dim">{due > 0 ? '待收' : '多收（应退）'}</td>
+                <td className="dim">{tr(due > 0 ? '待收' : '多收（应退）')}</td>
                 <td className={`num ${due > 0 ? 'warnText' : 'badText'}`}>
                   {money(Math.abs(due))}
-                  <span className="dim"> · 已收 {money(paid)}</span>
+                  <span className="dim"> · {tr('已收')} {money(paid)}</span>
                 </td>
               </tr>
             )}
             {(c.customer_name || c.phone_last4) && (
               <tr>
-                <td className="dim">客人</td>
+                <td className="dim">{tr('客人')}</td>
                 <td className="num">
                   {c.customer_name ?? '—'}
-                  {c.phone_last4 && ` · 尾号 ${c.phone_last4}`}
+                  {c.phone_last4 && ` · ${tr('尾号')} ${c.phone_last4}`}
                 </td>
               </tr>
             )}
             <tr>
-              <td className="dim">操作人</td>
+              <td className="dim">{tr('操作人')}</td>
               <td className="num">{operatorText(c)}</td>
             </tr>
             {c.void_reason && (
               <tr>
-                <td className="dim">作废原因</td>
+                <td className="dim">{tr('作废原因')}</td>
                 <td className="num badText">{c.void_reason}</td>
               </tr>
             )}
@@ -326,7 +327,7 @@ export default function CheckDetail({
                 {(c.lines ?? []).map((l, i) => (
                   <tr key={i} className={l.voided ? 'voided' : ''}>
                     <td>
-                      {l.name}
+                      {lineName(l, menu)}
                       {l.qty > 1 && <span className="dim"> ×{l.qty}</span>}
                       {/* 加了什么必须列出来 —— 后厨要照着做，
                           客人问"我加的虾收了钱吗"也得答得上来。
@@ -335,7 +336,7 @@ export default function CheckDetail({
                         <div className="line-mods">
                           {l.modifiers!.map((m, j) => (
                             <span key={j} className="chip sm">
-                              {m.label}
+                              {modLabel(m, modifiers)}
                               {m.price_cents > 0 && ` +${money(m.price_cents)}`}
                             </span>
                           ))}
@@ -357,30 +358,24 @@ export default function CheckDetail({
             这里把差在哪说清楚，退钱和改数由人决定，别替他们写一笔。 */}
         {due < 0 && (
           <p className="hint warnbox">
-            已收 {money(paid)}，比现在的账单多 {money(-due)} ——
-            多半是结账后退了菜或改小了人数。
-            <b>请把多收的退给客人</b>，再用「改支付方式」把金额改成实收。
-          </p>
+            {tr('已收')} {money(paid)}, {tr('比账单多')} {money(-due)} —
+            {' '}{tr('多半是结账后退了菜或改小了人数。请把多收的退给客人，再用「改支付方式」把金额改成实收。')}</p>
         )}
 
         {pending && (
           <p className="hint">
-            这张单还有改动<b>只存在这台 iPad 上</b>，没传到服务器。
-            联网后会自动补发，不用做任何操作。
-          </p>
+            这张单还有改动<b>{tr('只存在这台 iPad 上')}</b>{tr('，没传到服务器。 联网后会自动补发，不用做任何操作。')}</p>
         )}
 
         <div className="actiongrid">
           {menu && categories && c.status !== 'voided' && c.status !== 'merged' && (
-            <button className="primaryish" onClick={() => setSub('addlines')}>
-              加菜
-            </button>
+            <button className="primaryish" onClick={() => setSub('addlines')}>{tr('加菜')}</button>
           )}
-          <button onClick={() => setSub('history')}>查看历史</button>
+          <button onClick={() => setSub('history')}>{tr('查看历史')}</button>
         </div>
 
         {c.status === 'merged' ? (
-          <p className="hint">这张单已并入其它单，明细已转移，不再计入营业额。</p>
+          <p className="hint">{tr('这张单已并入其它单，明细已转移，不再计入营业额。')}</p>
         ) : c.status === 'voided' ? (
           <div className="actiongrid">
             {manage ? (
@@ -390,23 +385,19 @@ export default function CheckDetail({
                   await restoreTable(c.check_uuid)
                   await done()
                 }}
-              >
-                恢复这一单
-              </button>
+              >{tr('恢复这一单')}</button>
             ) : (
-              <p className="hint">已作废。恢复需要主管权限。</p>
+              <p className="hint">{tr('已作废。恢复需要主管权限。')}</p>
             )}
           </div>
         ) : (
           <div className="actiongrid">
             {c.status === 'open' && (
               <>
-                <button className="primaryish" onClick={() => setSub('pay')}>
-                  结账
-                </button>
+                <button className="primaryish" onClick={() => setSub('pay')}>{tr('结账')}</button>
                 {/* 自提单没有桌位，换桌/并桌对它没有意义 */}
                 {c.source === 'dine_in' && (
-                  <button onClick={() => setSub('move')}>换桌 / 并桌</button>
+                  <button onClick={() => setSub('move')}>{tr('换桌 / 并桌')}</button>
                 )}
               </>
             )}
@@ -417,14 +408,14 @@ export default function CheckDetail({
                     结果不是漏收就是把之前那笔冲掉。 */}
                 {due > 0 && (
                   <button className="primaryish" onClick={() => setSub('topup')}>
-                    补收 {money(due)}
+                    {tr('补收')} {money(due)}
                   </button>
                 )}
-                <button onClick={() => setSub('pay')}>改支付方式</button>
+                <button onClick={() => setSub('pay')}>{tr('改支付方式')}</button>
               </>
             )}
             {/* 已结账的单也能改和作废 —— 结完账才发现录错是常事 */}
-            {manage && <button onClick={() => setSub('edit')}>改单</button>}
+            {manage && <button onClick={() => setSub('edit')}>{tr('改单')}</button>}
             {manage && (
               <button
                 className="danger"
@@ -432,15 +423,13 @@ export default function CheckDetail({
                   setReason('')
                   setSub('void')
                 }}
-              >
-                作废
-              </button>
+              >{tr('作废')}</button>
             )}
           </div>
         )}
 
         <div className="sheet-actions">
-          <button onClick={onClose}>关闭</button>
+          <button onClick={onClose}>{tr('关闭')}</button>
         </div>
       </div>
     </div>
@@ -459,6 +448,9 @@ export default function CheckDetail({
 export function operatorText(c: LocalCheck): string {
   const opened = c.by ?? c.last_by
   if (!opened) return '—'
-  if (c.last_by && c.by && c.last_by !== c.by) return `${c.by} · 最近 ${c.last_by}`
-  return opened
+  // tr() 查不到就原样返回 —— 种子账号叫「前台主管」会被翻掉，
+  // 真人姓名（张三）不在词表里，原样保留。这正是回退的用处。
+  if (c.last_by && c.by && c.last_by !== c.by)
+    return `${tr(c.by)} · ${tr('最近')} ${tr(c.last_by)}`
+  return tr(opened)
 }

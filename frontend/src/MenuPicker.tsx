@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { listSep, modLabel, catLabel, name as nameOf, tr } from './i18n'
 import {
   money,
   type Category,
@@ -26,7 +27,7 @@ interface CartEntry {
 /** 加料相同的才算同一条，可以合并份数。 */
 function modKey(mods: PickedModifier[]): string {
   return mods
-    .map((m) => (m.modifier_id !== undefined ? `#${m.modifier_id}` : `~${m.label}@${m.price_cents}`))
+    .map((m) => (m.modifier_id !== undefined ? `#${m.modifier_id}` : `~${tr(m.label)}@${m.price_cents}`))
     .sort()
     .join('|')
 }
@@ -133,7 +134,7 @@ export default function MenuPicker({
           className="search"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="搜菜名（中文或英文）"
+          placeholder={tr('搜菜名（中文或英文）')}
         />
 
         {/* 搜索时分类栏整个不渲染 —— 必须同时把网格改回单列。
@@ -148,7 +149,7 @@ export default function MenuPicker({
                   className={cat === c.key ? 'on' : ''}
                   onClick={() => setCat(c.key)}
                 >
-                  {c.label}
+                  {catLabel(c)}
                 </button>
               ))}
             </div>
@@ -163,7 +164,7 @@ export default function MenuPicker({
                       高峰期绝大多数菜是不带要求的，这条路必须最快 ——
                       要求先弹一个窗再让人点"确认"，一晚上多按几百次。 */}
                   <button className="mi-main" onClick={() => bump(m.id, 1)}>
-                    <span className="mi-zh">{m.name_zh}</span>
+                    <span className="mi-zh">{nameOf(m)}</span>
                     <span className="mi-en">{m.name_en}</span>
                     <span className="mi-price">{money(m.price_cents ?? 0)}</span>
                   </button>
@@ -171,10 +172,8 @@ export default function MenuPicker({
                   <button
                     className="mi-cust"
                     onClick={() => setCustomizing(m)}
-                    title="加辣、加料、特殊要求"
-                  >
-                    定制
-                  </button>
+                    title={tr('加辣、加料、特殊要求')}
+                  >{tr('定制')}</button>
                   {n > 0 && (
                     <div className="mi-qty">
                       <button onClick={() => bump(m.id, -1)}>−</button>
@@ -185,7 +184,7 @@ export default function MenuPicker({
                 </div>
               )
             })}
-            {shown.length === 0 && <p className="hint">没有匹配的菜。</p>}
+            {shown.length === 0 && <p className="hint">{tr('没有匹配的菜。')}</p>}
           </div>
         </div>
 
@@ -196,14 +195,17 @@ export default function MenuPicker({
                 key={`${e.menu_item_id}-${modKey(e.modifiers)}`}
                 className={`chip${e.modifiers.length ? ' has-mod' : ''}`}
               >
-                {byId.get(e.menu_item_id)?.name_zh} ×{e.qty}
+                {nameOf(byId.get(e.menu_item_id))} ×{e.qty}
                 {/* 加了什么必须写在车里 —— 只显示菜名的话，
                     "加虾的那份"和"没加的那份"长得一模一样，改都没法改 */}
                 {e.modifiers.length > 0 && (
                   <small>
                     {e.modifiers
-                      .map((m) => (m.price_cents ? `${m.label}+${money(m.price_cents)}` : m.label))
-                      .join('、')}
+                      .map((m) => {
+                        const label = modLabel(m, modifiers)
+                        return m.price_cents ? `${label}+${money(m.price_cents)}` : label
+                      })
+                      .join(listSep())}
                   </small>
                 )}
                 <button
@@ -230,7 +232,7 @@ export default function MenuPicker({
         )}
 
         <div className="sheet-actions">
-          <button onClick={onCancel}>取消</button>
+          <button onClick={onCancel}>{tr('取消')}</button>
           <button
             className="primary"
             disabled={busy || count === 0}
@@ -249,7 +251,7 @@ export default function MenuPicker({
               }
             }}
           >
-            {busy ? '…' : `确认 ${count} 项 · ${money(total)}`}
+            {busy ? '…' : `${tr('确认')} ${count} · ${money(total)}`}
           </button>
         </div>
       </div>
@@ -276,13 +278,11 @@ export function TogoAmountSheet({
   return (
     <div className="sheet-back" onClick={onCancel}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <h2>自助餐打包</h2>
-        <p className="hint">
-          秤上算出多少就录多少 —— 系统只负责记进总账，不做称重也不算单品。
-        </p>
+        <h2>{tr('自助餐打包')}</h2>
+        <p className="hint">{tr('秤上算出多少就录多少 —— 系统只负责记进总账，不做称重也不算单品。')}</p>
         <NumPad value={cents} onChange={setCents} />
         <div className="sheet-actions">
-          <button onClick={onCancel}>取消</button>
+          <button onClick={onCancel}>{tr('取消')}</button>
           <button
             className="primary"
             disabled={busy || cents <= 0}

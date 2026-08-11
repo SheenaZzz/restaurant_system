@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { tr } from './i18n'
 import { authFetch } from './auth'
 import { money } from './catalog'
 
@@ -53,7 +54,7 @@ export default function MonthPicker({
   return (
     <div className="sheet-back" onClick={onClose}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <h2>选择月份</h2>
+        <h2>{tr('选择月份')}</h2>
 
         <div className="month-head">
           <button onClick={() => setY((v) => v - 1)} disabled={y <= minY - 1}>
@@ -92,7 +93,7 @@ export default function MonthPicker({
         <div className="divider" />
 
         <label className="reason">
-          跳到某一天
+          {tr('跳到某一天')}
           <input
             type="date"
             value={day}
@@ -107,16 +108,14 @@ export default function MonthPicker({
         </label>
 
         <div className="sheet-actions">
-          <button onClick={onClose}>取消</button>
+          <button onClick={onClose}>{tr('取消')}</button>
           <button
             className="primary"
             onClick={() => {
               onPick(today.getFullYear(), today.getMonth() + 1)
               onClose()
             }}
-          >
-            回到本月
-          </button>
+          >{tr('回到本月')}</button>
         </div>
       </div>
     </div>

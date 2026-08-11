@@ -37,6 +37,12 @@ export interface MenuItem {
 export interface Category {
   key: string
   label: string
+  /**
+   * 分类的英文名，服务端下发。
+   * 和菜名、加料名一样**不进词表** —— 这些是数据，跟着字段走。
+   * 老缓存里没有，读的时候回退到中文。
+   */
+  label_en?: string
 }
 
 /** 加料 / 特殊要求目录（加辣、加虾、加蔬菜…）。价格按**份**算。 */

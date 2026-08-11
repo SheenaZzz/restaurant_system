@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { getLang, locale, tr } from './i18n'
 import { authFetch } from './auth'
 import { money } from './catalog'
 import { getMeta, setMeta } from './db'
@@ -50,7 +51,10 @@ const SOURCE_LABEL: Record<string, string> = {
   phone_order: '电话单',
 }
 
-const WEEK = ['一', '二', '三', '四', '五', '六', '日']
+const MONTH_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+const WEEK_ZH = ['一', '二', '三', '四', '五', '六', '日']
+const WEEK_EN = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
 
 /** 缓存最近一次拉到的月报，离线时至少能看到上次的数字。 */
 const cacheKey = (y: number, m: number) => `report_${y}_${m}`
@@ -189,54 +193,54 @@ export default function MonthView() {
         <button onClick={() => shift(-1)}>‹</button>
         {/* 标题可点 —— 一格格翻着找去年同期太慢了 */}
         <button className="mtitle tappable" onClick={() => setPicking(true)}>
-          {year} 年 {month} 月 ▾
+          {getLang() === 'zh' ? `${year} 年 ${month} 月` : `${MONTH_EN[month - 1]} ${year}`} ▾
         </button>
         <button onClick={() => shift(1)}>›</button>
-        {state === 'cached' && <span className="tag warn">离线·上次数据</span>}
-        {state === 'loading' && <span className="dim small">载入中…</span>}
-        {state === 'error' && <span className="tag bad">需要联网</span>}
+        {state === 'cached' && <span className="tag warn">{tr('离线·上次数据')}</span>}
+        {state === 'loading' && <span className="dim small">{tr('载入中…')}</span>}
+        {state === 'error' && <span className="tag bad">{tr('需要联网')}</span>}
       </div>
 
       <div className="list-head">
         <div className="stats">
-          <Stat label="本月营业额" value={money(sum.revenue)} big />
-          <Stat label="营业天数" value={String(openDays)} />
-          <Stat label="客流" value={String(sum.guests)} />
-          <Stat label="饮料份数" value={String(sum.drinks)} />
-          <Stat label="单数" value={String(sum.checks)} />
+          <Stat label={tr('本月营业额')} value={money(sum.revenue)} big />
+          <Stat label={tr('营业天数')} value={String(openDays)} />
+          <Stat label={tr('客流')} value={String(sum.guests)} />
+          <Stat label={tr('饮料份数')} value={String(sum.drinks)} />
+          <Stat label={tr('单数')} value={String(sum.checks)} />
           <Stat
-            label="日均"
+            label={tr('日均')}
             value={money(openDays ? Math.round(sum.revenue / openDays) : 0)}
           />
           <Stat
-            label="客单价"
+            label={tr('客单价')}
             value={money(sum.guests ? Math.round(sum.revenue / sum.guests) : 0)}
           />
-          {sum.service > 0 && <Stat label="大桌服务费" value={money(sum.service)} />}
-          {sum.tax > 0 && <Stat label="税" value={money(sum.tax)} />}
+          {sum.service > 0 && <Stat label={tr('大桌服务费')} value={money(sum.service)} />}
+          {sum.tax > 0 && <Stat label={tr('税')} value={money(sum.tax)} />}
           <Stat
-            label={`本月小费${sum.revenue ? `（${((sum.tips / sum.revenue) * 100).toFixed(1)}%）` : ''}`}
+            label={`${tr('本月小费')}${sum.revenue ? `（${((sum.tips / sum.revenue) * 100).toFixed(1)}%）` : ''}`}
             value={money(sum.tips)}
           />
         </div>
       </div>
 
       <div className="stats payline">
-        <Stat label="现金" value={money(sum.cash)} />
-        <Stat label="刷卡" value={money(sum.card)} />
-        <Stat label="其它" value={money(sum.other)} />
+        <Stat label={tr('现金')} value={money(sum.cash)} />
+        <Stat label={tr('刷卡')} value={money(sum.card)} />
+        <Stat label={tr('其它')} value={money(sum.other)} />
         {sum.voided > 0 && (
-          <Stat label="作废" value={money(sum.voided)} bad />
+          <Stat label={tr('作废')} value={money(sum.voided)} bad />
         )}
         {/* 这两个数不为零就是对账会出问题的地方，必须放在显眼位置 */}
-        {sum.unpaid > 0 && <Stat label="未记支付方式" value={`${sum.unpaid} 单`} bad />}
+        {sum.unpaid > 0 && <Stat label={tr('未记支付方式')} value={`${sum.unpaid} ${tr('单')}`} bad />}
         {sum.mismatch > 0 && (
-          <Stat label="支付与账单不符" value={`${sum.mismatch} 单`} bad />
+          <Stat label={tr('支付与账单不符')} value={`${sum.mismatch} ${tr('单')}`} bad />
         )}
       </div>
 
       <div className="cal">
-        {WEEK.map((w) => (
+        {(getLang() === 'zh' ? WEEK_ZH : WEEK_EN).map((w) => (
           <div key={w} className="cal-h">
             {w}
           </div>
@@ -265,7 +269,7 @@ export default function MonthView() {
                 <>
                   <span className="v">{money(r.revenue_cents)}</span>
                   {r.tips_total_cents > 0 && (
-                    <span className="tip">小费 {money(r.tips_total_cents)}</span>
+                    <span className="tip">{tr('小费')} {money(r.tips_total_cents)}</span>
                   )}
                   {/* 用条形长度表示相对高低 —— 一眼看出哪几天忙 */}
                   <span className="bar" style={{ width: `${Math.round(ratio * 100)}%` }} />
@@ -280,7 +284,7 @@ export default function MonthView() {
       </div>
 
       {rows.length === 0 && state !== 'loading' && (
-        <p className="hint">这个月还没有营业数据。</p>
+        <p className="hint">{tr('这个月还没有营业数据。')}</p>
       )}
 
       {picking && (
@@ -337,7 +341,7 @@ export default function MonthView() {
                     {pick.voided_count > 0 && (
                       <Row
                         k="作废"
-                        v={`${pick.voided_count} 单 · ${money(pick.voided_cents)}`}
+                        v={`${pick.voided_count} ${tr('单')} · ${money(pick.voided_cents)}`}
                         bad
                         onOpen={() => setDrill('voided')}
                       />
@@ -345,7 +349,7 @@ export default function MonthView() {
                     {pick.unpaid_count > 0 && (
                       <Row
                         k="未记支付方式"
-                        v={`${pick.unpaid_count} 单`}
+                        v={`${pick.unpaid_count} ${tr('单')}`}
                         bad
                         onOpen={() => setDrill('unpaid')}
                       />
@@ -353,7 +357,7 @@ export default function MonthView() {
                     {pick.mismatch_count > 0 && (
                       <Row
                         k="支付与账单不符"
-                        v={`${pick.mismatch_count} 单`}
+                        v={`${pick.mismatch_count} ${tr('单')}`}
                         bad
                         onOpen={() => setDrill('mismatch')}
                       />
@@ -366,13 +370,12 @@ export default function MonthView() {
                     「凌晨 2 点前的单算前一天」，改成 0 点后就成了假的。
                     过时的说明比没有说明更糟。 */}
                 <p className="hint">
-                  数字来自服务端，按<b>营业日</b>归集（分界时间见 ⚙︎ 设置）。
-                </p>
+                  数字来自服务端，按<b>{tr('营业日')}</b>{tr('归集（分界时间见 ⚙︎ 设置）。')}</p>
               </div>
 
               <div className="pay-right">
                 <div className="tipbox">
-                  <div className="tiplabel">当日小费总额</div>
+                  <div className="tiplabel">{tr('当日小费总额')}</div>
                   <NumPad value={tipCents} onChange={setTipCents} />
                   <p className="hint">
                     一天录一个总数 —— 卡机小费和桌上现金加一起。
@@ -388,7 +391,7 @@ export default function MonthView() {
                 和设置页当初一样的毛病：显眼的按钮不是你要按的那个，
                 而且键盘一高就把它挤到屏幕外，每次都得先滚一下。 */}
             <div className="sheet-actions">
-              <button onClick={() => setPick(null)}>关闭</button>
+              <button onClick={() => setPick(null)}>{tr('关闭')}</button>
               <button className="primary" disabled={savingTip} onClick={saveTip}>
                 {savingTip ? '保存中…' : '保存小费'}
               </button>
@@ -480,14 +483,14 @@ function DayCheckList({
     <div className="sheet-back" onClick={onClose}>
       <div className="sheet wide" onClick={(e) => e.stopPropagation()}>
         <h2>
-          {DRILL_TITLE[kind]}
+          {tr(DRILL_TITLE[kind])}
           <span className="period-tag">{date}</span>
         </h2>
-        <p className="hint">{DRILL_HINT[kind]}</p>
+        <p className="hint">{tr(DRILL_HINT[kind])}</p>
 
         {err && <p className="err">{err}</p>}
-        {!rows && !err && <p className="hint">载入中…</p>}
-        {rows?.length === 0 && <p className="hint">这一天没有这类账单。</p>}
+        {!rows && !err && <p className="hint">{tr('载入中…')}</p>}
+        {rows?.length === 0 && <p className="hint">{tr('这一天没有这类账单。')}</p>}
 
         <div className="carry-list">
           {rows?.map((r) => {
@@ -495,7 +498,7 @@ function DayCheckList({
             return (
               <div key={r.check_uuid ?? `${r.opened_at}`} className="carry-row static">
                 <span className="cr-day">
-                  {new Date(r.opened_at).toLocaleTimeString('zh-CN', {
+                  {new Date(r.opened_at).toLocaleTimeString(locale(), {
                     hour12: false,
                     hour: '2-digit',
                     minute: '2-digit',
@@ -507,7 +510,7 @@ function DayCheckList({
                 <span className="cr-money">
                   {money(r.total_cents)}
                   {kind !== 'voided' && (
-                    <span className="dim"> · 已收 {money(r.paid_cents)}</span>
+                    <span className="dim"> · {tr('已收')} {money(r.paid_cents)}</span>
                   )}
                 </span>
                 {kind === 'mismatch' && (
@@ -528,7 +531,7 @@ function DayCheckList({
         </div>
 
         <div className="sheet-actions">
-          <button onClick={onClose}>关闭</button>
+          <button onClick={onClose}>{tr('关闭')}</button>
         </div>
       </div>
     </div>

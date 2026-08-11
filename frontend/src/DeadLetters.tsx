@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { tr } from './i18n'
 import db, { type DeadLetter } from './db'
 
 /**
@@ -19,12 +20,9 @@ export default function DeadLetters({ onClose }: { onClose: () => void }) {
     <div className="sheet-back" onClick={onClose}>
       <div className="sheet wide" onClick={(e) => e.stopPropagation()}>
         <h2>被拒绝的操作（{rows.length}）</h2>
-        <p className="hint">
-          这些操作服务端明确拒绝了，不会自动重试。看清原因后手动重新录入即可，
-          确认无误后再清除。
-        </p>
+        <p className="hint">{tr('这些操作服务端明确拒绝了，不会自动重试。看清原因后手动重新录入即可， 确认无误后再清除。')}</p>
 
-        {rows.length === 0 && <p className="hint">没有失败记录。</p>}
+        {rows.length === 0 && <p className="hint">{tr('没有失败记录。')}</p>}
 
         <ul className="dl">
           {rows.map((d) => (
@@ -42,7 +40,7 @@ export default function DeadLetters({ onClose }: { onClose: () => void }) {
         </ul>
 
         <div className="sheet-actions">
-          <button onClick={onClose}>关闭</button>
+          <button onClick={onClose}>{tr('关闭')}</button>
           {rows.length > 0 && (
             <button
               className="danger"
@@ -50,9 +48,7 @@ export default function DeadLetters({ onClose }: { onClose: () => void }) {
                 await db.deadletter.clear()
                 setRows([])
               }}
-            >
-              全部清除
-            </button>
+            >{tr('全部清除')}</button>
           )}
         </div>
       </div>

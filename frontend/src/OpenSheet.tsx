@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { tr, paren } from './i18n'
 import {
   estimateCents,
   money,
@@ -92,7 +93,7 @@ export default function OpenSheet({
         menu={menu}
         categories={categories}
         modifiers={modifiers}
-        title={`${tableLabel} 直接点餐`}
+        title={`${tableLabel} · ${tr('直接点餐')}`}
         onCancel={() => setOrdering(false)}
         onConfirm={async (lines) => {
           // 人数和饮料都是 0，整桌走单品
@@ -107,25 +108,25 @@ export default function OpenSheet({
     <div className="sheet-back" onClick={onCancel}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <h2>
-          {tableLabel} 开桌
-          <span className="period-tag">{period === 'lunch' ? '午市' : '晚市'}</span>
+          {tableLabel} · {tr('开桌')}
+          <span className="period-tag">
+            {tr(period === 'lunch' ? '午市' : '晚市')}
+          </span>
           <span className="grow" />
           {/* 放在标题行右侧：整桌点餐的人一进来就该看到这个岔路，
               而不是填完人数滚到底部才发现走错了 */}
-          <button className="headbtn" onClick={() => setOrdering(true)}>
-            直接点餐
-          </button>
+          <button className="headbtn" onClick={() => setOrdering(true)}>{tr('直接点餐')}</button>
         </h2>
 
-        <Row label="成人" k="adult" />
-        <Row label="儿童" k="child" />
-        <Row label="长者" k="senior" />
+        <Row label={tr('成人')} k="adult" />
+        <Row label={tr('儿童')} k="child" />
+        <Row label={tr('长者')} k="senior" />
 
         <div className="divider" />
 
         <div className="stepper">
           <span className="sl">
-            成人饮料<small>（长者同价 · 按人无限续）</small>
+            {tr('成人饮料')}<small>{tr('（长者同价 · 按人无限续）')}</small>
           </span>
           <button onClick={() => bumpDrink('adult', -1)} disabled={drinks.adult === 0}>
             −
@@ -136,7 +137,7 @@ export default function OpenSheet({
 
         <div className="stepper">
           <span className="sl">
-            儿童饮料<small>（另有价格）</small>
+            {tr('儿童饮料')}<small>{tr('（另有价格）')}</small>
           </span>
           <button onClick={() => bumpDrink('child', -1)} disabled={drinks.child === 0}>
             −
@@ -149,18 +150,24 @@ export default function OpenSheet({
             成人+长者 → 成人饮料，儿童 → 儿童饮料 */}
         {total > 0 && !suggestionApplied && (
           <button className="quickbtn" onClick={() => setDrinks(suggested)}>
-            全部都要饮料（成人 {suggested.adult}
-            {suggested.child > 0 && ` · 儿童 ${suggested.child}`}）
+            {tr('全部都要饮料')}
+            {paren(
+              `${tr('成人')} ${suggested.adult}` +
+                (suggested.child > 0 ? ` · ${tr('儿童')} ${suggested.child}` : ''),
+            )}
           </button>
         )}
 
         <p className="total">{money(est)}</p>
         {svc > 0 && (
-          <p className="hint">含大桌服务费 {money(svc)}（满 5 人 10%）</p>
+          <p className="hint">
+            {tr('含大桌服务费')} {money(svc)}
+            {paren(tr('满 5 人 10%'))}
+          </p>
         )}
 
         <div className="sheet-actions">
-          <button onClick={onCancel}>取消</button>
+          <button onClick={onCancel}>{tr('取消')}</button>
           <button
             className="primary"
             disabled={busy || (total === 0 && totalDrinks === 0)}
@@ -173,7 +180,11 @@ export default function OpenSheet({
               }
             }}
           >
-            {busy ? '…' : total === 0 ? '开桌（仅饮料）' : `开桌 ${total} 人`}
+            {busy
+              ? '…'
+              : total === 0
+                ? tr('开桌（仅饮料）')
+                : `${tr('开桌')} ${total} ${tr('位')}`}
           </button>
         </div>
       </div>

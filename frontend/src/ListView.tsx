@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { getLang, locale, tr, paren } from './i18n'
 import { canManage, type Role } from './auth'
 import {
   loadCatalog,
@@ -100,7 +101,7 @@ export default function ListView({ role }: { role: Role }) {
       <div className="list-head">
         <div className="clock">
           <span className="time">
-            {now.toLocaleTimeString('zh-CN', { hour12: false })}
+            {now.toLocaleTimeString(locale(), { hour12: false })}
           </span>
           {/* 显示的是**营业日**，不是设备日期。日界不是 0 点时
               两者会差一段，而下面所有数字都是按营业日算的 */}
@@ -108,30 +109,30 @@ export default function ListView({ role }: { role: Role }) {
         </div>
 
         <div className="stats">
-          <Stat label="营业额" value={money(t.revenueCents)} big />
-          <Stat label="Buffet 人数" value={String(t.buffetGuests)} />
-          <Stat label="饮料份数" value={String(t.drinkCount)} />
-          <Stat label="未结 / 已结" value={`${t.openCount} / ${t.closedCount}`} />
+          <Stat label={tr('营业额')} value={money(t.revenueCents)} big />
+          <Stat label={tr('Buffet 人数')} value={String(t.buffetGuests)} />
+          <Stat label={tr('饮料份数')} value={String(t.drinkCount)} />
+          <Stat label={tr('未结 / 已结')} value={`${t.openCount} / ${t.closedCount}`} />
           {/* 「已结但没收齐」必须能一眼看到，不能只在卡片里。
               一天几十单，靠扫卡片找是找不出来的 */}
           {dueRows.length > 0 && (
             <Stat
-              label="待收"
-              value={`${dueRows.length} 单 · ${money(dueTotal)}`}
+              label={tr('待收')}
+              value={`${dueRows.length} · ${money(dueTotal)}`}
               bad
             />
           )}
           {t.serviceCents > 0 && (
-            <Stat label="大桌服务费" value={money(t.serviceCents)} />
+            <Stat label={tr('大桌服务费')} value={money(t.serviceCents)} />
           )}
           <Stat
-            label="现金 / 刷卡 / 其它"
+            label={tr('现金 / 刷卡 / 其它')}
             value={`${money(t.cashCents)} · ${money(t.cardCents)} · ${money(t.otherCents)}`}
           />
           {t.voidedCount > 0 && (
             <Stat
-              label="已作废"
-              value={`${t.voidedCount} 单 · ${money(t.voidedCents)}`}
+              label={tr('已作废')}
+              value={`${t.voidedCount} · ${money(t.voidedCents)}`}
               bad
             />
           )}
@@ -145,19 +146,15 @@ export default function ListView({ role }: { role: Role }) {
             className={filter === f.k ? 'on' : ''}
             onClick={() => setFilter(f.k)}
           >
-            {f.label}
+            {tr(f.label)}
             <span className="cnt">{rows.filter((r) => matches(r, f.k)).length}</span>
           </button>
         ))}
       </div>
 
-      <p className="hint">
-        只显示<b>当前营业日</b>的账单；更早的看月报。
-        金额为本地估算（按缓存价），权威数字以月报为准。
-        {!manage && ' · 你的账号无改单、作废权限'}
-      </p>
+      {!manage && <p className="hint">{tr('你的账号无改单、作废权限。')}</p>}
 
-      {shown.length === 0 && <p className="hint">没有符合条件的账单。</p>}
+      {shown.length === 0 && <p className="hint">{tr('没有符合条件的账单。')}</p>}
 
       <div className="cards">
         {shown.map((c) => {
@@ -174,22 +171,22 @@ export default function ListView({ role }: { role: Role }) {
               onClick={() => setPick(c)}
             >
               <div className="c-top">
-                <span className="c-table">{c.table_label}</span>
+                <span className="c-table">{tr(c.table_label)}</span>
                 <span
                   className={`tag ${c.status === 'open' ? 'warn' : c.status === 'voided' ? 'bad' : 'ok'}`}
                 >
-                  {STATUS_LABEL[c.status]}
+                  {tr(STATUS_LABEL[c.status])}
                 </span>
                 {/* 状态和收款是两件事：单确实已经关了（桌子空出来了），
                     但钱还没到齐。所以两个标签并存，不是互相替换。 */}
-                {due > 0 && <span className="tag warn">待收 {money(due)}</span>}
-                {due < 0 && <span className="tag bad">多收 {money(-due)}</span>}
+                {due > 0 && <span className="tag warn">{tr('待收')} {money(due)}</span>}
+                {due < 0 && <span className="tag bad">{tr('多收')} {money(-due)}</span>}
                 {pending.has(c.check_uuid) && (
-                  <span className="tag warn">未上传</span>
+                  <span className="tag warn">{tr('未上传')}</span>
                 )}
                 <span className="grow" />
                 <span className="c-time">
-                  {new Date(c.opened_at).toLocaleTimeString('zh-CN', {
+                  {new Date(c.opened_at).toLocaleTimeString(locale(), {
                     hour12: false,
                     hour: '2-digit',
                     minute: '2-digit',
@@ -200,7 +197,7 @@ export default function ListView({ role }: { role: Role }) {
               <div className="c-money">
                 {money(c.est_cents)}
                 {c.service_cents > 0 && (
-                  <span className="c-svc">含服务费 {money(c.service_cents)}</span>
+                  <span className="c-svc">{tr('含服务费')} {money(c.service_cents)}</span>
                 )}
               </div>
 
@@ -210,13 +207,13 @@ export default function ListView({ role }: { role: Role }) {
               </div>
 
               <div className="c-foot">
-                <span>{c.pay_method ? PAY_LABEL[c.pay_method] : '未记支付'}</span>
+                <span>{c.pay_method ? tr(PAY_LABEL[c.pay_method]) : tr('未记支付')}</span>
                 <span className="grow" />
                 <span>{operatorText(c)}</span>
               </div>
 
               {c.void_reason && <div className="c-note">{c.void_reason}</div>}
-              {c.merged_into && <div className="c-note">已并入其它单</div>}
+              {c.merged_into && <div className="c-note">{tr('已并入其它单')}</div>}
             </button>
           )
         })}
@@ -248,18 +245,21 @@ export default function ListView({ role }: { role: Role }) {
  */
 function guestText(c: LocalCheck): string {
   const total = c.adult + c.child + c.senior
+  // 中文「3人（成2童1）」；英文语序不同，拆成 "3 guests (2A 1C)"
+  const zh = getLang() === 'zh'
   const parts: string[] = []
-  if (c.adult) parts.push(`成${c.adult}`)
-  if (c.child) parts.push(`童${c.child}`)
-  if (c.senior) parts.push(`长${c.senior}`)
-  return parts.length > 1 ? `${total}人（${parts.join('')}）` : `${total}人`
+  if (c.adult) parts.push(zh ? `成${c.adult}` : `${c.adult}A`)
+  if (c.child) parts.push(zh ? `童${c.child}` : `${c.child}C`)
+  if (c.senior) parts.push(zh ? `长${c.senior}` : `${c.senior}S`)
+  const head = zh ? `${total}人` : `${total} ${tr('位')}`
+  return parts.length > 1 ? `${head}${paren(parts.join(zh ? '' : ' '))}` : head
 }
 
 function drinkText(c: LocalCheck): string {
   const total = c.drink_adult + c.drink_child
   return c.drink_adult && c.drink_child
-    ? `饮${total}（成${c.drink_adult}童${c.drink_child}）`
-    : `饮${total}`
+    ? `${tr('饮')}${total}${paren(`${c.drink_adult}/${c.drink_child}`)}`
+    : `${tr('饮')}${total}`
 }
 
 function Stat({

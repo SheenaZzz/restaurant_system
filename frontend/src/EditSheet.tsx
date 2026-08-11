@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { tr } from './i18n'
 import { estimateCents, money, type Drinks, type PriceRow } from './catalog'
 import type { Guests } from './checks'
 import type { LocalCheck } from './db'
@@ -44,7 +45,7 @@ export default function EditSheet({
 
   const Row = (p: { label: string; v: number; on: (d: number) => void }) => (
     <div className="stepper">
-      <span className="sl">{p.label}</span>
+      <span className="sl">{tr(p.label)}</span>
       <button onClick={() => p.on(-1)} disabled={p.v === 0}>
         −
       </button>
@@ -58,12 +59,12 @@ export default function EditSheet({
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <h2>改单 {check.table_label}</h2>
 
-        <Row label="成人" v={guests.adult} on={(d) => bumpG('adult', d)} />
-        <Row label="儿童" v={guests.child} on={(d) => bumpG('child', d)} />
-        <Row label="长者" v={guests.senior} on={(d) => bumpG('senior', d)} />
+        <Row label={tr('成人')} v={guests.adult} on={(d) => bumpG('adult', d)} />
+        <Row label={tr('儿童')} v={guests.child} on={(d) => bumpG('child', d)} />
+        <Row label={tr('长者')} v={guests.senior} on={(d) => bumpG('senior', d)} />
         <div className="divider" />
-        <Row label="成人饮料" v={drinks.adult} on={(d) => bumpD('adult', d)} />
-        <Row label="儿童饮料" v={drinks.child} on={(d) => bumpD('child', d)} />
+        <Row label={tr('成人饮料')} v={drinks.adult} on={(d) => bumpD('adult', d)} />
+        <Row label={tr('儿童饮料')} v={drinks.child} on={(d) => bumpD('child', d)} />
 
         <p className="total">
           {money(est)}
@@ -76,7 +77,7 @@ export default function EditSheet({
         </p>
 
         <div className="sheet-actions">
-          <button onClick={onCancel}>取消</button>
+          <button onClick={onCancel}>{tr('取消')}</button>
           <button
             className="primary"
             disabled={busy || (total === 0 && totalDrinks === 0)}

@@ -434,20 +434,23 @@ def day_checks(
 # 给设置页选的时区。不给全部 ~600 个 IANA 名字 ——
 # 在 iPad 上翻六百行找不到自己那条，反而更容易选错。
 # 店只可能在美国，列出这几个就够；真需要别的再加。
-TZ_CHOICES: list[tuple[str, str]] = [
-    ("America/Los_Angeles", "太平洋时间（加州 / 内华达 / 华盛顿州）"),
-    ("America/Denver", "山地时间（科罗拉多 / 犹他）"),
-    ("America/Phoenix", "亚利桑那（不实行夏令时）"),
-    ("America/Chicago", "中部时间（德州 / 伊利诺伊）"),
-    ("America/New_York", "东部时间（纽约 / 佛州）"),
-    ("America/Anchorage", "阿拉斯加"),
-    ("Pacific/Honolulu", "夏威夷（不实行夏令时）"),
+TZ_CHOICES: list[tuple[str, str, str]] = [
+    ("America/Los_Angeles", "太平洋时间（加州 / 内华达 / 华盛顿州）",
+     "Pacific (CA / NV / WA)"),
+    ("America/Denver", "山地时间（科罗拉多 / 犹他）", "Mountain (CO / UT)"),
+    ("America/Phoenix", "亚利桑那（不实行夏令时）", "Arizona (no DST)"),
+    ("America/Chicago", "中部时间（德州 / 伊利诺伊）", "Central (TX / IL)"),
+    ("America/New_York", "东部时间（纽约 / 佛州）", "Eastern (NY / FL)"),
+    ("America/Anchorage", "阿拉斯加", "Alaska"),
+    ("Pacific/Honolulu", "夏威夷（不实行夏令时）", "Hawaii (no DST)"),
 ]
 
 
 class TzChoice(BaseModel):
     tz: str
     label: str
+    # 英文名。和菜名、分类一样是数据，不进前端词表。
+    label_en: str
 
 
 class BusinessDayOut(BaseModel):
@@ -483,7 +486,9 @@ def _business_day_out(db: Session) -> BusinessDayOut:
         updated_by=updated_by,
         store_now=now_local,
         business_date=clock.business_date(now_local),
-        choices=[TzChoice(tz=t, label=l) for t, l in TZ_CHOICES],
+        choices=[
+            TzChoice(tz=t, label=zh, label_en=en) for t, zh, en in TZ_CHOICES
+        ],
     )
 
 
@@ -506,7 +511,7 @@ def set_business_day(body: BusinessDayIn, user: CurrentUser, db: Session = Depen
     这是个只有老板会点、一年点不到一次的设置，能选的越少越不会选错；
     真要加时区，改这里的常量比在生产上手输一个拼错的名字安全。
     """
-    if body.tz not in {t for t, _ in TZ_CHOICES}:
+    if body.tz not in {t for t, _, _ in TZ_CHOICES}:
         raise HTTPException(status_code=422, detail=f"不支持的时区：{body.tz}")
 
     row = db.get(StoreSetting, 1)

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { catLabel, tr, paren } from './i18n'
 import { authFetch } from './auth'
 import { money, refreshCatalog } from './catalog'
 
@@ -133,7 +134,7 @@ export default function AdminView() {
   }, [data, q])
 
   if (err && !data) return <p className="hint">{err}</p>
-  if (!data) return <p className="hint">载入中…</p>
+  if (!data) return <p className="hint">{tr('载入中…')}</p>
 
   const buffetDirty = data.buffet.some((b) => buffet[bkey(b)] !== b.price_cents)
     || effFrom !== data.buffet_effective_from
@@ -151,13 +152,13 @@ export default function AdminView() {
     <>
       <div className="tabs sub">
         <button className={tab === 'buffet' ? 'on' : ''} onClick={() => setTab('buffet')}>
-          自助餐 / 饮料{buffetDirty && <span className="cnt warn">改</span>}
+          {tr('自助餐 / 饮料')}{buffetDirty && <span className="cnt warn">{tr('改')}</span>}
         </button>
         <button className={tab === 'menu' ? 'on' : ''} onClick={() => setTab('menu')}>
-          菜单价{menuDirty && <span className="cnt warn">改</span>}
+          {tr('菜单价')}{menuDirty && <span className="cnt warn">{tr('改')}</span>}
         </button>
         <button className={tab === 'mods' ? 'on' : ''} onClick={() => setTab('mods')}>
-          常用要求{modsDirty && <span className="cnt warn">改</span>}
+          {tr('常用要求')}{modsDirty && <span className="cnt warn">{tr('改')}</span>}
         </button>
       </div>
 
@@ -167,32 +168,28 @@ export default function AdminView() {
       {tab === 'buffet' && (
         <>
           <p className="hint warnbox">
-            人头价<b>换一个生效日就是新增一版，旧价原样留着</b> ——
-            月报和对账要回查"当时卖多少钱"。
-            <br />
-            生效日填今天 = 从今天起按新价；填以前的日期会把那天之后的账重新算。
-            同一个生效日重复保存 = 改回来，不算调价。
+            {tr('换一个生效日 = 新增一版，旧价原样留着（月报和对账要回查当时卖多少钱）。同一个生效日重复保存 = 改回来，不算调价。')}
           </p>
 
           <label className="reason">
-            生效日期
+            {tr('生效日期')}
             <input type="date" value={effFrom} onChange={(e) => setEffFrom(e.target.value)} />
           </label>
           <p className="hint">
-            当前这版从 <b>{data.buffet_effective_from ?? '—'}</b> 起生效；
-            今天的营业日是 <b>{data.business_date}</b>。
+            {tr('当前这版生效于')} <b>{data.buffet_effective_from ?? '—'}</b>
+            {' · '}{tr('今天的营业日')} <b>{data.business_date}</b>
           </p>
 
           {(['lunch', 'dinner'] as const).map((p) => (
             <section key={p}>
-              <h3 className="zone">{PERIOD[p]}</h3>
+              <h3 className="zone">{tr(PERIOD[p])}</h3>
               <div className="price-grid">
                 {data.buffet
                   .filter((b) => b.period_kind === p)
                   .map((b) => (
                     <label key={bkey(b)} className="price-cell">
                       <span className="pc-label">
-                        {KIND[b.charge_kind]} · {GUEST[b.guest_type]}
+                        {tr(KIND[b.charge_kind])} · {tr(GUEST[b.guest_type])}
                       </span>
                       <Money
                         cents={buffet[bkey(b)] ?? 0}
@@ -208,7 +205,7 @@ export default function AdminView() {
           ))}
 
           <div className="sheet-actions">
-            <button onClick={load} disabled={busy}>撤销改动</button>
+            <button onClick={load} disabled={busy}>{tr('撤销改动')}</button>
             <button
               className="primary"
               disabled={busy || !buffetDirty || !effFrom}
@@ -228,7 +225,7 @@ export default function AdminView() {
                 )
               }
             >
-              {busy ? '保存中…' : buffetDirty ? '保存人头价' : '未改动'}
+              {busy ? tr('保存中…') : buffetDirty ? tr('保存人头价') : tr('未改动')}
             </button>
           </div>
         </>
@@ -237,14 +234,12 @@ export default function AdminView() {
       {tab === 'menu' && (
         <>
           <p className="hint">
-            改菜价<b>不影响已经开出去的单</b> —— 下单时存的是当时的价格快照。
-            下架的菜不会再出现在点菜页，但历史账单照常显示。
-          </p>
+            改菜价<b>{tr('不影响已经开出去的单')}</b>{tr('—— 下单时存的是当时的价格快照。 下架的菜不会再出现在点菜页，但历史账单照常显示。')}</p>
           <input
             className="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="搜菜名（中文或英文）"
+            placeholder={tr('搜菜名（中文或英文）')}
           />
 
           {cats.map((c) => {
@@ -252,7 +247,7 @@ export default function AdminView() {
             if (!items.length) return null
             return (
               <section key={c.key}>
-                <h3 className="zone">{c.label}（{items.length}）</h3>
+                <h3 className="zone">{catLabel(c)}{paren(String(items.length))}</h3>
                 <div className="price-grid wide">
                   {items.map((m) => {
                     const e = menuEdit[m.id]
@@ -265,7 +260,7 @@ export default function AdminView() {
                         </span>
                         {m.open_price ? (
                           // 按重量称的条目没有固定价，服务端也拒绝设死
-                          <span className="pc-open">现场输金额</span>
+                          <span className="pc-open">{tr('现场输金额')}</span>
                         ) : (
                           <Money
                             cents={e?.price ?? 0}
@@ -291,7 +286,7 @@ export default function AdminView() {
           })}
 
           <div className="sheet-actions">
-            <button onClick={load} disabled={busy}>撤销改动</button>
+            <button onClick={load} disabled={busy}>{tr('撤销改动')}</button>
             <button
               className="primary"
               disabled={busy || !menuDirty}
@@ -309,7 +304,7 @@ export default function AdminView() {
                 )
               }
             >
-              {busy ? '保存中…' : menuDirty ? '保存菜价' : '未改动'}
+              {busy ? tr('保存中…') : menuDirty ? tr('保存菜价') : tr('未改动')}
             </button>
           </div>
         </>
@@ -318,13 +313,9 @@ export default function AdminView() {
       {tab === 'mods' && (
         <>
           <p className="hint">
-            点菜时「定制」里的常用要求。<b>上下箭头调顺序</b>，顺序就是点菜页的显示顺序。
-            免费的填 0。
-          </p>
+            点菜时「定制」里的常用要求。<b>{tr('上下箭头调顺序')}</b>{tr('，顺序就是点菜页的显示顺序。 免费的填 0。')}</p>
           <p className="hint warnbox">
-            删掉一条是<b>停用，不是删除</b> —— 历史账单上加过这一项的记录必须留着。
-            停用后它不再出现在点菜页，已经开出去的单照常显示。
-          </p>
+            删掉一条是<b>{tr('停用，不是删除')}</b>{tr('—— 历史账单上加过这一项的记录必须留着。 停用后它不再出现在点菜页，已经开出去的单照常显示。')}</p>
 
           <div className="mod-edit-list">
             {mods.map((m, i) => (
@@ -335,9 +326,10 @@ export default function AdminView() {
                 </div>
                 <input
                   className="me-name"
+                  // 这里在**编辑中文名**，不是显示 —— 绑 name_zh，不跟界面语言走
                   value={m.name_zh}
                   onChange={(e) => setMods(patch(mods, i, { name_zh: e.target.value }))}
-                  placeholder="中文名，例如 加虾"
+                  placeholder={tr('中文名，例如 加虾')}
                 />
                 <input
                   className="me-en"
@@ -349,9 +341,7 @@ export default function AdminView() {
                   cents={m.price_cents}
                   onChange={(v) => setMods(patch(mods, i, { price_cents: v }))}
                 />
-                <button className="me-del" onClick={() => setMods(mods.filter((_, j) => j !== i))}>
-                  删除
-                </button>
+                <button className="me-del" onClick={() => setMods(mods.filter((_, j) => j !== i))}>{tr('删除')}</button>
               </div>
             ))}
           </div>
@@ -359,12 +349,10 @@ export default function AdminView() {
           <button
             className="linkbtn wide"
             onClick={() => setMods([...mods, { id: null, name_zh: '', name_en: '', price_cents: 0 }])}
-          >
-            ＋ 加一条
-          </button>
+          >{tr('＋ 加一条')}</button>
 
           <div className="sheet-actions">
-            <button onClick={load} disabled={busy}>撤销改动</button>
+            <button onClick={load} disabled={busy}>{tr('撤销改动')}</button>
             <button
               className="primary"
               disabled={busy || !modsDirty || mods.some((m) => !m.name_zh.trim())}
@@ -383,7 +371,7 @@ export default function AdminView() {
                 )
               }
             >
-              {busy ? '保存中…' : modsDirty ? '保存常用要求' : '未改动'}
+              {busy ? tr('保存中…') : modsDirty ? tr('保存常用要求') : tr('未改动')}
             </button>
           </div>
         </>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { getLang, initLang, setLang, tr, useLang } from './i18n'
 import {
   canManage,
   getIdentity,
@@ -37,6 +38,9 @@ const ROLE_LABEL: Record<Identity['role'], string> = {
 
 export default function App() {
   const [booting, setBooting] = useState(true)
+  // ⚠️ 只有 App 订阅语言就够：项目里没有任何 React.memo，
+  //    App 一重渲染，整棵树都会重新求值 tr()。不用把每个组件都包一遍。
+  const lang = useLang()
   const [identity, setIdentity] = useState<Identity | null>(null)
 
   const [pending, setPending] = useState(0)
@@ -57,6 +61,8 @@ export default function App() {
   // 身份从 IndexedDB 读，**不需要网络** ——
   // 离线冷启动时也能立刻渲染出正确的角色界面
   useEffect(() => {
+    // 语言和身份一起读 —— 先渲染再切会闪一下
+    void initLang()
     getIdentity()
       .then((id) => {
         setIdentity(id)
@@ -83,20 +89,20 @@ export default function App() {
       //    而看不懂的状态等于没有状态，出真问题时也不会有人多看一眼。
       //    人话留在主界面，原始数字挪进「未上传」那个详情里（iPad 上
       //    没有 devtools，真机排障还得靠它们）。
-      setLast(r.applied > 0 ? `已上传 ${r.applied} 条` : '数据都已上传')
+      setLast(r.applied > 0 ? `${tr('已上传')} ${r.applied}` : tr('数据都已上传'))
       setDetail(`applied ${r.applied} · dup ${r.duplicate} · cursor ${r.cursor}`)
       setTone('ok')
     } else if (f?.kind === 'offline') {
       // 关键：离线**不是错误**。说成"失败"会让员工重复操作。
-      setLast('离线，数据已排队，联网后自动补发')
+      setLast(tr('离线，数据已排队，联网后自动补发'))
       setTone('warn')
     } else if (f?.kind === 'auth') {
       // 会话没了，但**数据仍在排队**，这点必须说清楚
-      setLast('会话已失效，请重新登录（数据仍在排队）')
+      setLast(tr('会话已失效，请重新登录（数据仍在排队）'))
       setTone('bad')
       void getIdentity().then(setIdentity)
     } else {
-      setLast(`同步出错：${f?.message ?? '未知'}`)
+      setLast(`${tr('同步出错')}：${f?.message ?? tr('未知')}`)
       setTone('bad')
     }
     void refresh()
@@ -135,31 +141,42 @@ export default function App() {
     await refresh()
   }
 
-  if (booting) return <div className="wrap">载入中…</div>
+  if (booting) return <div className="wrap">{tr('载入中…')}</div>
   if (!identity) return <LoginPage onDone={setIdentity} />
 
   return (
     <div className="wrap">
       <header>
         <span className={online ? 'dot ok' : 'dot bad'} />
-        <strong>{online ? '在线' : '离线'}</strong>
+        <strong>{tr(online ? '在线' : '离线')}</strong>
         <span className="who">
-          {identity.display_name}
-          <span className={`role ${identity.role}`}>{ROLE_LABEL[identity.role]}</span>
+          {/* 显示名是数据，但种子账号叫「前台主管」这种角色名，词表里有。
+              真人姓名不在词表里，tr() 会原样返回 —— 和 operatorText 一个处理。 */}
+          {tr(identity.display_name)}
+          <span className={`role ${identity.role}`}>{tr(ROLE_LABEL[identity.role])}</span>
         </span>
         <span className="grow" />
         <button
           className={pending ? 'badge warn clickable' : 'badge clickable'}
           onClick={() => setShowSync(true)}
         >
-          未上传 {pending}
+          {tr('未上传')} {pending}
         </button>
         {dead > 0 && (
           <button className="badge bad clickable" onClick={() => setShowDead(true)}>
-            失败 {dead}
+            {tr('失败')} {dead}
           </button>
         )}
         <span className="badge build">build {__BUILD__}</span>
+        {/* 一键中英切换。放顶栏是因为它跟角色一样是"整个界面的状态"，
+            而不是某一页的设置 —— 藏进齿轮里，员工换班时找不到。 */}
+        <button
+          className="langbtn"
+          onClick={() => setLang(getLang() === 'zh' ? 'en' : 'zh')}
+          title={lang === 'zh' ? 'Switch to English' : '切换成中文'}
+        >
+          {lang === 'zh' ? 'EN' : '中'}
+        </button>
         {/* 设置一年也点不了几次，放个小齿轮就够，不占主界面 */}
         {canManage(identity.role) && (
           <button className="linkbtn" onClick={() => setShowSettings(true)}>
@@ -174,9 +191,7 @@ export default function App() {
             await logout()
             setIdentity(null)
           }}
-        >
-          登出
-        </button>
+        >{tr('登出')}</button>
       </header>
 
       {isFront(identity.role) && (
@@ -184,29 +199,21 @@ export default function App() {
           <button
             className={view === 'floor' ? 'on' : ''}
             onClick={() => setView('floor')}
-          >
-            楼面
-          </button>
+          >{tr('楼面')}</button>
           <button
             className={view === 'togo' ? 'on' : ''}
             onClick={() => setView('togo')}
-          >
-            自提
-          </button>
+          >{tr('自提')}</button>
           <button
             className={view === 'list' ? 'on' : ''}
             onClick={() => setView('list')}
-          >
-            账单清单
-          </button>
+          >{tr('账单清单')}</button>
           {/* 整月营业额只给主管和老板看 —— 最小权限 */}
           {canManage(identity.role) && (
             <button
               className={view === 'month' ? 'on' : ''}
               onClick={() => setView('month')}
-            >
-              月报
-            </button>
+            >{tr('月报')}</button>
           )}
           {/* 改价**只给老板**，比月报还严 —— 见 DESIGN.md 的权限矩阵。
               服务端 require_role("admin") 才是真正拦住的那道。 */}
@@ -214,9 +221,7 @@ export default function App() {
             <button
               className={view === 'admin' ? 'on' : ''}
               onClick={() => setView('admin')}
-            >
-              修改
-            </button>
+            >{tr('修改')}</button>
           )}
         </div>
       )}
@@ -229,10 +234,8 @@ export default function App() {
 
       {!isFront(identity.role) ? (
         <>
-          <p className="hint">后厨界面在 Step 5（订单队列 + 补菜记录）。</p>
-          <button className="big" onClick={tap}>
-            记录一次（骨架探针）
-          </button>
+          <p className="hint">{tr('后厨界面在 Step 5（订单队列 + 补菜记录）。')}</p>
+          <button className="big" onClick={tap}>{tr('记录一次（骨架探针）')}</button>
         </>
       ) : view === 'floor' ? (
         <FloorPlan role={identity.role} />
@@ -260,9 +263,7 @@ export default function App() {
                 ),
               )
           }}
-        >
-          立即同步
-        </button>
+        >{tr('立即同步')}</button>
         <code className={`status ${tone}`}>{last}</code>
       </div>
 
@@ -274,44 +275,40 @@ export default function App() {
       {showSync && (
         <div className="sheet-back" onClick={() => setShowSync(false)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <h2>未上传 {pending}</h2>
+            <h2>{tr('未上传')} {pending}</h2>
             <p className="hint">
-              这台 iPad 上有 <b>{pending}</b> 条操作还没传到店里的服务器。
-            </p>
+              这台 iPad 上有 <b>{pending}</b>{tr('条操作还没传到店里的服务器。')}</p>
             <table className="kv">
               <tbody>
                 <tr>
-                  <td className="dim">要我做什么吗</td>
-                  <td className="num">不用。联网后会自动补发。</td>
+                  <td className="dim">{tr('要我做什么吗')}</td>
+                  <td className="num">{tr('不用。联网后会自动补发。')}</td>
                 </tr>
                 <tr>
-                  <td className="dim">数据会丢吗</td>
-                  <td className="num">不会。已经存在这台 iPad 上了。</td>
+                  <td className="dim">{tr('数据会丢吗')}</td>
+                  <td className="num">{tr('不会。已经存在这台 iPad 上了。')}</td>
                 </tr>
                 <tr>
-                  <td className="dim">多久补发一次</td>
-                  <td className="num">有积压时每 4 秒重试一次</td>
+                  <td className="dim">{tr('多久补发一次')}</td>
+                  <td className="num">{tr('有积压时每 4 秒重试一次')}</td>
                 </tr>
                 <tr>
-                  <td className="dim">现在网络</td>
-                  <td className="num">{online ? '在线' : '离线'}</td>
+                  <td className="dim">{tr('现在网络')}</td>
+                  <td className="num">{tr(online ? '在线' : '离线')}</td>
                 </tr>
                 <tr>
-                  <td className="dim">上次同步</td>
+                  <td className="dim">{tr('上次同步')}</td>
                   <td className="num">{last}</td>
                 </tr>
                 <tr>
-                  <td className="dim">技术细节</td>
+                  <td className="dim">{tr('技术细节')}</td>
                   <td className="num"><code>{detail}</code></td>
                 </tr>
               </tbody>
             </table>
-            <p className="hint">
-              如果一直不归零，说明服务器连不上（检查店内 WiFi 和后台机器）。
-              红色的「失败 N」才是需要人处理的 —— 那是服务端明确拒绝的操作。
-            </p>
+            <p className="hint">{tr('如果一直不归零，说明服务器连不上（检查店内 WiFi 和后台机器）。 红色的「失败 N」才是需要人处理的 —— 那是服务端明确拒绝的操作。')}</p>
             <div className="sheet-actions">
-              <button onClick={() => setShowSync(false)}>知道了</button>
+              <button onClick={() => setShowSync(false)}>{tr('知道了')}</button>
               <button
                 className="primary"
                 onClick={() => {
@@ -320,37 +317,30 @@ export default function App() {
                     .catch(() => {})
                   setShowSync(false)
                 }}
-              >
-                立即重试
-              </button>
+              >{tr('立即重试')}</button>
             </div>
 
             {canManage(identity.role) && (
               <>
                 <div className="divider" />
                 <p className="hint">
-                  <b>重置本机数据</b>：清空这台设备缓存的账单，重新从服务器拉一遍。
-                  服务端的数据被清理过、而本机还留着旧单时才需要 ——
-                  服务端删数据不会通知客户端。
-                </p>
+                  <b>{tr('重置本机数据')}</b>{tr('：清空这台设备缓存的账单，重新从服务器拉一遍。 服务端的数据被清理过、而本机还留着旧单时才需要 —— 服务端删数据不会通知客户端。')}</p>
                 <button
                   className="linkbtn wide danger"
                   onClick={async () => {
                     const r = await resetLocalData()
                     if (!r.ok) {
-                      setLast(`还有 ${r.pending} 条未上传，先等它同步完再重置`)
+                      setLast(`${tr('还有未上传的操作，等它同步完再重置')}（${r.pending}）`)
                       setTone('bad')
                       return
                     }
                     await sync().catch(() => {})
                     await refresh()
                     setShowSync(false)
-                    setLast('本机数据已重置，正在重新拉取')
+                    setLast(tr('本机数据已重置，正在重新拉取'))
                     setTone('ok')
                   }}
-                >
-                  重置本机数据
-                </button>
+                >{tr('重置本机数据')}</button>
               </>
             )}
           </div>
@@ -362,10 +352,10 @@ export default function App() {
           {events.map((e) => (
             <li key={e.op_id}>
               <span className={e.synced ? 'tag ok' : 'tag warn'}>
-                {e.synced ? '已同步' : '待同步'}
+                {tr(e.synced ? '已同步' : '待同步')}
               </span>
-              {e.remote ? <span className="tag remote">其它设备</span> : null}
-              <span className="label">{e.label}</span>
+              {e.remote ? <span className="tag remote">{tr('其它设备')}</span> : null}
+              <span className="label">{tr(e.label)}</span>
               <code className="id">{e.op_id.slice(0, 8)}</code>
             </li>
           ))}

@@ -44,14 +44,24 @@ function buildLocalLine(
   const mi = menu.get(l.menu_item_id)
   const byId = new Map(modifiers.map((m) => [m.id, m]))
 
-  const picked: { label: string; price_cents: number }[] = (
+  const picked: {
+    label: string
+    label_en?: string
+    modifier_id?: number
+    price_cents: number
+  }[] = (
     (l.modifiers ?? []) as PickedModifier[]
   ).map((p) => {
     if (p.modifier_id !== undefined) {
       const m = byId.get(p.modifier_id)
       // 目录里查不到（缓存太旧）：先按 0 显示，落库以服务端为准。
       // 不能猜一个价 —— 猜错就是界面和账本对不上。
-      return { label: m?.name_zh ?? `#${p.modifier_id}`, price_cents: m?.price_cents ?? 0 }
+      return {
+        label: m?.name_zh ?? `#${p.modifier_id}`,
+        label_en: m?.name_en,
+        modifier_id: p.modifier_id,
+        price_cents: m?.price_cents ?? 0,
+      }
     }
     return { label: p.label, price_cents: p.price_cents }
   })
@@ -61,6 +71,7 @@ function buildLocalLine(
   return {
     menu_item_id: l.menu_item_id,
     name: mi?.name_zh ?? mi?.name_en ?? `#${l.menu_item_id}`,
+    name_en: mi?.name_en,
     qty: l.qty ?? 1,
     unit_price_cents: base + picked.reduce((a, m) => a + m.price_cents, 0),
     modifiers: picked.length ? picked : undefined,

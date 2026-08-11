@@ -1580,3 +1580,18 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   cursor: pointer;
 }
 .cnt.warn { background: color-mix(in srgb, var(--warn) 25%, transparent); color: var(--warn); }
+
+/* 中英切换。做成和 build 号同一档的小控件 —— 一天点不了一次，
+   但换班的人要能一眼找到，所以放顶栏而不是藏进设置里。 */
+.langbtn {
+  margin-left: 8px;
+  padding: 4px 10px;
+  min-width: 38px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+}
