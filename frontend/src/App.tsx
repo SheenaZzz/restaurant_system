@@ -13,8 +13,10 @@ import { CarriedOverBanner, ClockDriftBanner } from './CarriedOver'
 import db from './db'
 import DeadLetters from './DeadLetters'
 import FloorPlan from './FloorPlan'
+import KitchenView from './KitchenView'
 import ListView from './ListView'
 import MonthView from './MonthView'
+import RefillView from './RefillView'
 import SettingsSheet from './SettingsSheet'
 import ToGoView from './ToGoView'
 import LoginPage from './LoginPage'
@@ -22,7 +24,6 @@ import { cutoffHourOf } from './businessDay'
 import { loadCatalog } from './catalog'
 import { pruneLocalMirror, resetLocalData } from './checks'
 import {
-  enqueue,
   installSyncTriggers,
   sync,
   type SyncFailure,
@@ -53,7 +54,9 @@ export default function App() {
   const [detail, setDetail] = useState<string>('—')
   const [tone, setTone] = useState<'ok' | 'warn' | 'bad'>('ok')
   const [dead, setDead] = useState(0)
-  const [view, setView] = useState<'floor' | 'togo' | 'list' | 'month' | 'admin'>('floor')
+  const [view, setView] = useState<
+    'floor' | 'togo' | 'list' | 'month' | 'admin' | 'refill' | 'kitchen'
+  >('floor')
   const [showDead, setShowDead] = useState(false)
   const [showSync, setShowSync] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -108,6 +111,13 @@ export default function App() {
     void refresh()
   }
 
+  // 后厨没有楼面这些页。默认值是 'floor'，不纠正的话后厨一进来
+  // 两个 tab 都不高亮 —— 看不出自己在哪一页。
+  useEffect(() => {
+    if (identity?.role !== 'kitchen') return
+    setView((v) => (v === 'kitchen' || v === 'refill' ? v : 'kitchen'))
+  }, [identity?.role])
+
   useEffect(() => {
     if (!identity) return
 
@@ -135,11 +145,6 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [identity?.username])
-
-  async function tap() {
-    await enqueue('ping_event', { label: `tap @ ${new Date().toLocaleTimeString()}` })
-    await refresh()
-  }
 
   if (booting) return <div className="wrap">{tr('载入中…')}</div>
   if (!identity) return <LoginPage onDone={setIdentity} />
@@ -194,6 +199,19 @@ export default function App() {
         >{tr('登出')}</button>
       </header>
 
+      {identity.role === 'kitchen' && (
+        <div className="tabs">
+          <button
+            className={view === 'kitchen' ? 'on' : ''}
+            onClick={() => setView('kitchen')}
+          >{tr('订单')}</button>
+          <button
+            className={view === 'refill' ? 'on' : ''}
+            onClick={() => setView('refill')}
+          >{tr('补菜')}</button>
+        </div>
+      )}
+
       {isFront(identity.role) && (
         <div className="tabs">
           <button
@@ -208,6 +226,12 @@ export default function App() {
             className={view === 'list' ? 'on' : ''}
             onClick={() => setView('list')}
           >{tr('账单清单')}</button>
+          {/* 补菜前台也要能记：发现菜盘空了的往往是服务员，不是厨师。
+              只给后厨的话，"空了"这个最关键的事件会大量丢失。 */}
+          <button
+            className={view === 'refill' ? 'on' : ''}
+            onClick={() => setView('refill')}
+          >{tr('补菜')}</button>
           {/* 整月营业额只给主管和老板看 —— 最小权限 */}
           {canManage(identity.role) && (
             <button
@@ -232,11 +256,10 @@ export default function App() {
       <ClockDriftBanner />
       {isFront(identity.role) && <CarriedOverBanner role={identity.role} />}
 
-      {!isFront(identity.role) ? (
-        <>
-          <p className="hint">{tr('后厨界面在 Step 5（订单队列 + 补菜记录）。')}</p>
-          <button className="big" onClick={tap}>{tr('记录一次（骨架探针）')}</button>
-        </>
+      {identity.role === 'kitchen' ? (
+        view === 'refill' ? <RefillView /> : <KitchenView />
+      ) : view === 'refill' ? (
+        <RefillView />
       ) : view === 'floor' ? (
         <FloorPlan role={identity.role} />
       ) : view === 'togo' ? (

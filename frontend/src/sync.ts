@@ -1,5 +1,6 @@
 import { authFetch } from './auth'
 import { applyCheckOp } from './checks'
+import { applyTrayOp } from './trays'
 import db, {
   clientId,
   getMeta,
@@ -76,7 +77,7 @@ export async function enqueue(
   const op_id = opId ?? uuid()
   const client_ts = new Date().toISOString()
 
-  await db.transaction('rw', db.outbox, db.events, db.meta, async () => {
+  await db.transaction('rw', db.outbox, db.trays, db.meta, async () => {
     const seq = await nextClientSeq()
 
     const op: OutboxOp = {
@@ -88,11 +89,17 @@ export async function enqueue(
       payload,
     }
     await db.outbox.add(op)
-    if (entity === 'ping_event') {
-      await db.events.add({
+
+    // 补菜记录的本地镜像和 outbox 写在**同一个事务**里。
+    // 分开写的话会出现"记录发出去了但台前看不到"——而台前唯一的反馈
+    // 就是"上次补菜多久以前"，看不到就会重复点。
+    if (entity === 'tray_event') {
+      const back = Number(payload.minutes_ago ?? 0) || 0
+      await db.trays.add({
         op_id,
-        label: String(payload.label ?? ''),
-        created_at: client_ts,
+        dish_id: Number(payload.dish_id),
+        kind: String(payload.event_type) as 'refill' | 'half' | 'empty',
+        at: new Date(Date.parse(client_ts) - back * 60_000).toISOString(),
         synced: 0,
         remote: 0,
       })
@@ -166,9 +173,10 @@ async function takePending(): Promise<OutboxOp[]> {
  *    outbox 和死信队列一个字都不动。
  */
 async function resetMirror(): Promise<void> {
-  await db.transaction('rw', db.checks, db.events, db.meta, async () => {
+  await db.transaction('rw', db.checks, db.events, db.trays, db.meta, async () => {
     await db.checks.filter((c) => c.synced === 1).delete()
     await db.events.filter((e) => e.synced === 1).delete()
+    await db.trays.filter((t) => t.synced === 1).delete()
     await setMeta('cursor', 0)
     // 落库而不是放内存：重拉到一半刷新页面的话，下一次仍然要整份重来，
     // 否则镜像会缺掉服务端"只发给别人"的那部分。
@@ -250,13 +258,10 @@ async function doSync(): Promise<SyncResult | null> {
   let remoteChanges: RemoteChange[] = []
 
 
+  // 表多于 5 张时 Dexie 只接受数组形式的作用域
   await db.transaction(
     'rw',
-    db.outbox,
-    db.events,
-    db.meta,
-    db.deadletter,
-    db.checks,
+    [db.outbox, db.events, db.meta, db.deadletter, db.checks, db.trays],
     async () => {
       if (rejected.length) {
         const byId = new Map(ops.map((o) => [o.op_id, o]))
@@ -278,6 +283,7 @@ async function doSync(): Promise<SyncResult | null> {
         await Promise.all(settled.map((id) => db.events.update(id, { synced: 1 })))
         // 账单的 check_uuid 就是创建它那条 op 的 op_id
         await Promise.all(settled.map((id) => db.checks.update(id, { synced: 1 })))
+        await Promise.all(settled.map((id) => db.trays.update(id, { synced: 1 })))
       }
 
       // 其它设备的变更。要求重置时这一批一定是空的，
@@ -316,7 +322,13 @@ async function doSync(): Promise<SyncResult | null> {
   // 账单类变更在事务外应用 —— applyCheckOp 要读 catalog（也在 meta 表里），
   // 放进同一个事务会因为表作用域重叠而死锁
   for (const c of remoteChanges) {
-    if (c.entity === 'ping_event') {
+    if (c.entity === 'tray_event') {
+      await applyTrayOp(c.op_id, c.payload, c.client_ts, {
+        synced: 1,
+        remote: 1,
+        who: c.user_display ?? undefined,
+      })
+    } else if (c.entity === 'ping_event') {
       await db.events.put({
         op_id: c.op_id,
         label: String(c.payload.label ?? ''),

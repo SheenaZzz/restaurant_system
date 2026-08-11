@@ -32,6 +32,7 @@ from .services.checks import (
     void_check,
     void_order_line,
 )
+from .services.buffet import record_tray_event
 
 log = logging.getLogger(__name__)
 
@@ -59,8 +60,10 @@ _HANDLERS: dict[str, frozenset[str]] = {
     "modify_check": _FRONT_MANAGER,
     "void_check": _FRONT_MANAGER,
     "restore_check": _FRONT_MANAGER,
-    # 骨架探针，Step 5 删除
-    "ping_event": _FRONT | {"kitchen"},
+    # 补菜记录：**前台和后厨都能记**。厨师补菜时顺手点最自然，
+    # 但发现菜盘空了的往往是服务员 —— 只给后厨的话，最该被记下的
+    # "空了"事件会大量丢失，而那正是区间截尾的右端点。
+    "tray_event": _FRONT | {"kitchen"},
 }
 
 
@@ -103,19 +106,9 @@ def _apply_effect(db: Session, op: SyncOpIn, user) -> None:
     elif op.entity == "void_order_line":
         void_order_line(db, op.payload, op.client_ts)
 
-    elif op.entity == "ping_event":
-        label = op.payload.get("label")
-        if not isinstance(label, str) or not label:
-            raise ValueError("ping_event.label 必须是非空字符串")
-        db.execute(
-            text(
-                """
-                INSERT INTO ping_event (op_id, label, created_at)
-                VALUES (:op_id, :label, :created_at)
-                """
-            ),
-            {"op_id": str(op.op_id), "label": label, "created_at": op.client_ts},
-        )
+    elif op.entity == "tray_event":
+        record_tray_event(db, op.payload, op.client_ts, user.id if user else None)
+
     else:
         raise ValueError(f"未知实体: {op.entity}")
 

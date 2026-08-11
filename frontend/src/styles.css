@@ -1619,3 +1619,103 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 .ac-sess { margin-left: auto; font-size: 13px; color: var(--muted); }
 .acct .sheet-actions { margin-top: 10px; }
 .acct .linkbtn.wide { margin-top: 10px; }
+
+/* ---- 补菜台 ----
+   唯一的设计目标：**高峰期三秒点得完**，戴着一次性手套、隔一臂远也点得中。
+   所以按钮做得比界面其它任何地方都大，一页只放十格。 */
+.refill-top { display: flex; gap: 10px; align-items: center; margin: 10px 0 6px; }
+.seg { display: flex; gap: 4px; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.seg button {
+  padding: 10px 18px;
+  font-size: 16px; font-weight: 600;
+  color: var(--muted); background: transparent;
+  border: 0; border-radius: 8px; cursor: pointer;
+}
+.seg button.on { color: var(--text); background: var(--bg); box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.seg.pages { margin-left: auto; }
+.seg.pages button { min-width: 46px; }
+
+/* 回拨。**一次性**的，记完一条自己跳回"现在" —— 见 RefillView 的注释。 */
+.refill-back { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.rb-label { font-size: 13px; color: var(--muted); }
+.refill-back button {
+  padding: 6px 12px; font-size: 14px;
+  color: var(--muted); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
+}
+.refill-back button.on { color: var(--bg); background: var(--warn); border-color: var(--warn); font-weight: 700; }
+
+.tray-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 560px) { .tray-grid { grid-template-columns: minmax(0, 1fr); } }
+.tray {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+}
+.tray.empty { opacity: 0.35; align-items: center; justify-content: center; min-height: 92px; }
+.t-head { display: flex; align-items: baseline; gap: 8px; }
+.t-name { font-size: 19px; font-weight: 700; color: var(--text); }
+/* "上次多久以前"是台前唯一的反馈 —— 没有它，人不知道自己点上没有，
+   于是要么重复点、要么干脆不点 */
+.t-ago { margin-left: auto; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.t-btns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.t-btns button {
+  padding: 16px 4px;
+  font-size: 17px; font-weight: 700;
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.t-btns button:active { transform: scale(0.96); }
+.k-refill { border-color: color-mix(in srgb, var(--ok) 55%, transparent) !important; }
+.k-half { border-color: color-mix(in srgb, var(--warn) 55%, transparent) !important; }
+.k-empty { border-color: color-mix(in srgb, var(--bad) 55%, transparent) !important; }
+
+/* 记完给一句确认。没有撤销 —— append-only，误点了就再记一条对的。 */
+.tray-toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  z-index: 40;
+  padding: 12px 20px;
+  font-size: 16px; font-weight: 600;
+  color: var(--bg); background: var(--ok);
+  border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.35);
+}
+
+/* ---- 后厨订单队列 ----
+   字要大，隔一米看得清；等得久的整张卡变色。 */
+.kq { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 10px; }
+.kq-card { padding: 10px 12px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.kq-card.late { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--panel)); }
+.kq-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.kq-table { font-size: 22px; font-weight: 800; color: var(--text); }
+.kq-wait { margin-left: auto; font-size: 15px; color: var(--muted); }
+.kq-card.late .kq-wait { color: var(--warn); font-weight: 700; }
+.kq-lines { list-style: none; margin: 0; padding: 0; }
+.kq-lines li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.kq-lines li:last-child { border-bottom: 0; }
+.kq-lines li.done { opacity: 0.35; }
+.kl-qty { min-width: 30px; font-size: 20px; font-weight: 800; color: var(--text); }
+.kl-name { flex: 1; font-size: 18px; color: var(--text); }
+.kl-mods { display: block; font-size: 14px; font-style: normal; color: var(--warn); }
+.kl-done {
+  padding: 8px 12px; font-size: 14px;
+  color: var(--muted); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+}
+.big-hint { margin-top: 40px; font-size: 18px; text-align: center; }
+
+/* ---- 老板改台面 ---- */
+.board-edit { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.board-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center; gap: 8px;
+}
+.board-row .bp { font-size: 13px; color: var(--muted); text-align: right; }
+.board-row input {
+  min-width: 0; padding: 10px; font-size: 15px;
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.board-row.blank input { border-style: dashed; }
+@media (max-width: 700px) { .board-row { grid-template-columns: 30px minmax(0, 1fr) auto; } .board-row .be { display: none; } }

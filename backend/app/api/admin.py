@@ -24,6 +24,7 @@ from ..core.security import hash_password
 from ..db import get_db
 from ..menu_data import CATEGORIES
 from ..models import AppUser, AuthSession, BuffetPrice, MenuItem, MenuModifier
+from ..services.buffet import BuffetError, load_board, set_board
 from ..services.period import load_store_clock
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -413,3 +414,51 @@ def set_password(uid: int, body: PasswordIn, db: Session = Depends(get_db)):
 
     db.commit()
     return _users(db)
+
+
+# ---------------------------------------------------------------------------
+# 写：自助餐台的布局
+# ---------------------------------------------------------------------------
+
+class BoardDishIn(BaseModel):
+    # 没有 id = 新增的一道菜
+    id: int | None = None
+    page: int = Field(ge=1, le=3)
+    pos: int = Field(ge=1, le=10)
+    name_zh: str
+    name_en: str = ""
+
+
+class BoardIn(BaseModel):
+    """**一个时段的整块板按顺序发上来。** 午市和晚市分开保存。"""
+
+    period_kind: str
+    rows: list[BoardDishIn]
+
+
+class BoardOut(BaseModel):
+    board: dict[str, list[dict]]
+
+
+@router.get("/buffet-board", response_model=BoardOut, dependencies=[_ADMIN])
+def get_buffet_board(db: Session = Depends(get_db)):
+    return BoardOut(board=load_board(db))
+
+
+@router.put("/buffet-board", response_model=BoardOut, dependencies=[_ADMIN])
+def set_buffet_board(body: BoardIn, db: Session = Depends(get_db)):
+    """改自助餐台的菜和位置。
+
+    ⚠️ **原地改名 = 同一道菜，历史接得上；换成另一道菜必须删掉再加。**
+       这条规矩界面上也写着，因为它决定消耗模型看到的是一条连续的序列
+       还是两道菜被接成一条 —— 后者是静默的数据污染，事后查不出来。
+
+    删掉的是停用不是删除：tray_event 的外键指着它，
+    删了历史补菜记录就断链了。
+    """
+    try:
+        set_board(db, body.period_kind, [r.model_dump() for r in body.rows])
+    except BuffetError as e:
+        raise HTTPException(422, str(e)) from e
+    db.commit()
+    return BoardOut(board=load_board(db))

@@ -18,6 +18,7 @@ from ..core.deps import CurrentUser
 from ..db import get_db
 from ..menu_data import CATEGORIES
 from ..models import BuffetPrice, DiningTable, MenuItem, MenuModifier
+from ..services.buffet import load_board
 from ..services.period import load_store_clock
 
 router = APIRouter(prefix="/api", tags=["catalog"])
@@ -64,6 +65,14 @@ class ModifierOut(BaseModel):
     sort_order: int
 
 
+class BuffetDishOut(BaseModel):
+    id: int
+    page: int
+    pos: int
+    name_zh: str
+    name_en: str
+
+
 class CatalogOut(BaseModel):
     categories: list[CategoryOut]
     tables: list[TableOut]
@@ -72,6 +81,10 @@ class CatalogOut(BaseModel):
     # 而且客户端拿它做**显示估价**，落库金额仍由服务端按这张表重算。
     modifiers: list[ModifierOut]
     prices: list[PriceOut]
+    # 自助餐台的布局，按时段分组。跟菜单一起下发 ——
+    # 补菜页**必须离线可用**：断网时厨师照样在补菜，
+    # 那正是最不该丢记录的时候。
+    buffet_board: dict[str, list[BuffetDishOut]]
     # 客户端拿它决定用午市还是晚市的价格来**显示**金额。
     # 落库时服务端会自己再算一遍，不信这个值。
     current_period_kind: str
@@ -134,6 +147,9 @@ def catalog(user: CurrentUser, db: Session = Depends(get_db)):
             ModifierOut.model_validate(m, from_attributes=True) for m in modifiers
         ],
         prices=[PriceOut.model_validate(p, from_attributes=True) for p in prices],
+        buffet_board={
+            k: [BuffetDishOut(**d) for d in v] for k, v in load_board(db).items()
+        },
         current_period_kind=clock.period_kind(now_local),
         tax_rate=float(
             db.execute(

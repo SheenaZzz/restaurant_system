@@ -72,6 +72,11 @@ export interface Catalog {
   /** 老缓存里没有这个字段，读的时候一律 `?? []` */
   modifiers?: Modifier[]
   prices: PriceRow[]
+  /**
+   * 自助餐台的布局，按时段分组（lunch / dinner），每格带 page 和 pos。
+   * 老缓存里没有这个字段，读的时候一律给默认值。
+   */
+  buffet_board?: Record<string, { id: number; page: number; pos: number; name_zh: string; name_en: string }[]>
   current_period_kind: 'lunch' | 'dinner'
   /** 当前税率，例如 0.071 = 7.1% */
   tax_rate: number

@@ -343,20 +343,64 @@ class PickupOrder(Base):
 # ---------------------------------------------------------------------------
 
 
+class BuffetDish(Base):
+    """自助餐台上的一格。
+
+    **和 menu_item 是两回事**，别合并：
+    menu_item 是能点、有价、上账单的东西；自助台上的菜不单独收费，
+    它只有"位置"和"消耗速度"。而且台上的菜远多于菜单里那 12 道
+    `is_buffet_dish`，老板要能随时改。
+
+    位置就是身份的一部分：午市和晚市各一块板，各 3 页 × 10 格。
+    同一道菜午市晚市各占一行 —— 它们是两个不同的消耗过程
+    （客人构成、时长、补菜节奏都不一样），本来就该分开建模。
+
+    ⚠️ 改名 = 同一道菜换个写法，历史接得上；
+       **换成另一道菜要删掉这行再加一行**，否则消耗历史会接到新菜身上。
+       删除是停用（active=False）—— tray_event 指着它。
+    """
+
+    __tablename__ = "buffet_dish"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    period_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    # 第几页（1–3）和页内第几格（1–10）。顺序即布局。
+    page: Mapped[int] = mapped_column(Integer, nullable=False)
+    pos: Mapped[int] = mapped_column(Integer, nullable=False)
+    name_zh: Mapped[str] = mapped_column(Text, nullable=False)
+    name_en: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    __table_args__ = (
+        CheckConstraint("period_kind IN ('lunch','dinner')", name="ck_bd_period"),
+        CheckConstraint("page BETWEEN 1 AND 3", name="ck_bd_page"),
+        CheckConstraint("pos BETWEEN 1 AND 10", name="ck_bd_pos"),
+        Index("ix_bd_layout", "period_kind", "page", "pos"),
+    )
+
+
 class TrayEvent(Base):
     """补菜/见底事件。append-only。
 
     这张表是整个项目的技术内核：buffet 消耗量**不可直接观测**，
     只有 t1 补满、t2 发现空了 这样的**区间截尾事件**，
     而且"发现空了"本身还是延迟的。要从这些稀疏事件反推消耗速率。
+
+    ⚠️ `observed_at` 是**客户端报的观察时刻**，不是服务端收到的时刻。
+       离线补记、事后补记都会让这两个差很远，而模型要的是前者 ——
+       区间截尾的区间宽度直接由它决定，用"收到的时刻"等于把误差喂进模型。
     """
 
     __tablename__ = "tray_event"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    menu_item_id: Mapped[int] = mapped_column(ForeignKey("menu_item.id"), nullable=False)
+    buffet_dish_id: Mapped[int] = mapped_column(
+        ForeignKey("buffet_dish.id"), nullable=False
+    )
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    # 0.0–1.0，refill / discard 时记录
+    # 0.0–1.0，refill / discard 时记录。
+    # 现在一律留空：台前只有补/半/空三个按钮 —— 多一个滑块，高峰期就没人点了，
+    # 而"没记录"比"记录得不够精细"损失大得多。
     fill_level: Mapped[float | None] = mapped_column(Numeric(3, 2))
     observed_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
     recorded_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
@@ -369,7 +413,7 @@ class TrayEvent(Base):
             "fill_level IS NULL OR (fill_level >= 0 AND fill_level <= 1)",
             name="ck_tray_fill_range",
         ),
-        Index("ix_tray_item_time", "menu_item_id", "observed_at"),
+        Index("ix_tray_dish_time", "buffet_dish_id", "observed_at"),
     )
 
 

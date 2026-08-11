@@ -54,6 +54,15 @@ interface Pricing {
   business_date: string
 }
 
+/** 自助餐台上的一格。没有 id = 老板刚加的。 */
+interface BoardRow {
+  id: number | null
+  page: number
+  pos: number
+  name_zh: string
+  name_en: string
+}
+
 interface UserRow {
   id: number
   username: string
@@ -70,7 +79,7 @@ const PERIOD: Record<string, string> = { lunch: '午市', dinner: '晚市' }
 const KIND: Record<string, string> = { admission: '自助餐', drink: '饮料' }
 const GUEST: Record<string, string> = { adult: '成人', child: '儿童', senior: '长者' }
 
-type Tab = 'buffet' | 'menu' | 'mods' | 'users'
+type Tab = 'buffet' | 'menu' | 'mods' | 'users' | 'board'
 
 export default function AdminView() {
   const [data, setData] = useState<Pricing | null>(null)
@@ -91,6 +100,11 @@ export default function AdminView() {
   const [uEdit, setUEdit] = useState<Record<number, { username: string; display_name: string }>>({})
   const [pw, setPw] = useState<Record<number, string>>({})
   const [me, setMe] = useState<string | null>(null)
+
+  // 自助餐台。午市晚市各一块板，分开保存。
+  const [board, setBoard] = useState<Record<string, BoardRow[]> | null>(null)
+  const [bPeriod, setBPeriod] = useState<'lunch' | 'dinner'>('lunch')
+  const [bDraft, setBDraft] = useState<Record<string, BoardRow[]>>({})
 
   const load = useCallback(async () => {
     setErr(null)
@@ -140,6 +154,52 @@ export default function AdminView() {
   useEffect(() => {
     if (tab === 'users' && users === null) void loadUsers()
   }, [tab, users, loadUsers])
+
+  const takeBoard = useCallback((b: Record<string, BoardRow[]>) => {
+    setBoard(b)
+    setBDraft({ lunch: [...(b.lunch ?? [])], dinner: [...(b.dinner ?? [])] })
+  }, [])
+
+  const loadBoardRows = useCallback(async () => {
+    setErr(null)
+    try {
+      const res = await authFetch('/api/admin/buffet-board')
+      if (!res.ok) throw new Error(String(res.status))
+      takeBoard(((await res.json()) as { board: Record<string, BoardRow[]> }).board)
+    } catch {
+      setErr(tr('需要联网才能读取'))
+    }
+  }, [takeBoard])
+
+  useEffect(() => {
+    if (tab === 'board' && board === null) void loadBoardRows()
+  }, [tab, board, loadBoardRows])
+
+  /** 一块板保存后要刷 catalog —— 补菜页读的是缓存的那一份。 */
+  async function saveBoard() {
+    setBusy(true)
+    setErr(null)
+    setMsg(null)
+    try {
+      const rows = (bDraft[bPeriod] ?? []).filter((r) => r.name_zh.trim())
+      const res = await authFetch('/api/admin/buffet-board', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ period_kind: bPeriod, rows }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => null)
+        throw new Error(d?.detail ?? String(res.status))
+      }
+      takeBoard(((await res.json()) as { board: Record<string, BoardRow[]> }).board)
+      await refreshCatalog()
+      setMsg(tr('台面已保存，补菜页立刻就是新的。'))
+    } catch (e) {
+      setErr(String(e).replace(/^Error:\s*/, ''))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function save(path: string, body: unknown, what: string) {
     setBusy(true)
@@ -201,6 +261,28 @@ export default function AdminView() {
     }
   }
 
+  /** 改某一格。原来空着就新建一行（id=null → 服务端当新增）。 */
+  function setSlot(page: number, pos: number, patch: Partial<BoardRow>) {
+    setBDraft((s) => {
+      const rows = [...(s[bPeriod] ?? [])]
+      const i = rows.findIndex((r) => r.page === page && r.pos === pos)
+      if (i < 0) {
+        rows.push({ id: null, page, pos, name_zh: '', name_en: '', ...patch })
+      } else {
+        rows[i] = { ...rows[i], ...patch }
+      }
+      return { ...s, [bPeriod]: rows }
+    })
+  }
+
+  /** 清空一格。保存时它就不在列表里了 → 服务端停用（不是删除）。 */
+  function clearSlot(page: number, pos: number) {
+    setBDraft((s) => ({
+      ...s,
+      [bPeriod]: (s[bPeriod] ?? []).filter((r) => !(r.page === page && r.pos === pos)),
+    }))
+  }
+
   const cats = useMemo(() => data?.categories ?? [], [data])
   const shownMenu = useMemo(() => {
     if (!data) return []
@@ -238,6 +320,9 @@ export default function AdminView() {
         </button>
         <button className={tab === 'mods' ? 'on' : ''} onClick={() => setTab('mods')}>
           {tr('常用要求')}{modsDirty && <span className="cnt warn">{tr('改')}</span>}
+        </button>
+        <button className={tab === 'board' ? 'on' : ''} onClick={() => setTab('board')}>
+          {tr('补菜台')}
         </button>
         <button className={tab === 'users' ? 'on' : ''} onClick={() => setTab('users')}>
           {tr('账户')}
@@ -459,6 +544,75 @@ export default function AdminView() {
               {busy ? tr('保存中…') : modsDirty ? tr('保存常用要求') : tr('未改动')}
             </button>
           </div>
+        </>
+      )}
+
+      {tab === 'board' && (
+        <>
+          <p className="hint">
+            {tr('自助餐台上摆的菜。3 页 × 10 格，午市晚市各一块板，台前照这个顺序显示。')}
+          </p>
+          <p className="hint warnbox">
+            {tr('改名字 = 同一道菜换个写法，消耗记录接得上。换成另一道菜请清空这一格再填新的 —— 直接改名会让新菜继承旧菜的历史。')}
+          </p>
+
+          <div className="seg">
+            {(['lunch', 'dinner'] as const).map((p) => (
+              <button key={p} className={bPeriod === p ? 'on' : ''} onClick={() => setBPeriod(p)}>
+                {tr(p === 'lunch' ? '午市' : '晚市')}
+              </button>
+            ))}
+          </div>
+
+          {board === null ? (
+            <p className="hint">{tr('载入中…')}</p>
+          ) : (
+            <>
+              {[1, 2, 3].map((pg) => (
+                <section key={pg}>
+                  <h3 className="zone">{tr('第 N 页').replace('N', String(pg))}</h3>
+                  <div className="board-edit">
+                    {Array.from({ length: 10 }, (_, i) => i + 1).map((pos) => {
+                      const row = (bDraft[bPeriod] ?? []).find(
+                        (r) => r.page === pg && r.pos === pos,
+                      )
+                      return (
+                        <div key={pos} className={`board-row${row ? '' : ' blank'}`}>
+                          <span className="bp">{pos}</span>
+                          <input
+                            // 编辑的是**中文名**，不跟界面语言走
+                            value={row?.name_zh ?? ''}
+                            placeholder={tr('空格')}
+                            onChange={(e) => setSlot(pg, pos, { name_zh: e.target.value })}
+                          />
+                          <input
+                            className="be"
+                            value={row?.name_en ?? ''}
+                            placeholder="English"
+                            onChange={(e) => setSlot(pg, pos, { name_en: e.target.value })}
+                          />
+                          <button
+                            className="me-del"
+                            disabled={!row}
+                            onClick={() => clearSlot(pg, pos)}
+                          >
+                            {tr('清空')}
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </section>
+              ))}
+
+              <div className="sheet-actions">
+                <button onClick={loadBoardRows} disabled={busy}>{tr('撤销改动')}</button>
+                <button className="primary" disabled={busy} onClick={saveBoard}>
+                  {busy ? tr('保存中…') : tr('保存这块板')}
+                </button>
+              </div>
+            </>
+          )}
         </>
       )}
 

@@ -103,12 +103,31 @@ export interface LocalCheck {
   last_by?: string
 }
 
+/**
+ * 一条补菜记录的本地镜像。
+ *
+ * 存它只为了显示「上次补菜是多久以前」—— 那是台前唯一需要的反馈，
+ * 没有它，人不知道自己刚才点没点上，就会重复点或者干脆不点。
+ * 真正的事实在服务端 tray_event 里，这份是只读的副本。
+ */
+export interface LocalTray {
+  op_id: string
+  dish_id: number
+  kind: 'refill' | 'half' | 'empty'
+  /** 观察发生的时刻（已经把回拨算进去了） */
+  at: string
+  synced: 0 | 1
+  remote: 0 | 1
+  who?: string
+}
+
 const db = new Dexie('restaurant') as Dexie & {
   outbox: EntityTable<OutboxOp, 'op_id'>
   events: EntityTable<LocalEvent, 'op_id'>
   meta: EntityTable<Meta, 'key'>
   deadletter: EntityTable<DeadLetter, 'op_id'>
   checks: EntityTable<LocalCheck, 'check_uuid'>
+  trays: EntityTable<LocalTray, 'op_id'>
 }
 
 /** 服务端明确拒绝的操作。不能留在 outbox 里无限重试。 */
@@ -133,6 +152,11 @@ db.version(2).stores({
 
 db.version(3).stores({
   checks: 'check_uuid, table_label, status',
+})
+
+db.version(4).stores({
+  // dish_id 上建索引：补菜页每道菜都要问"上一条是什么时候"
+  trays: 'op_id, dish_id, at',
 })
 
 export default db
