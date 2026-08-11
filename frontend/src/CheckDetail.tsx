@@ -9,9 +9,12 @@ import {
 } from './catalog'
 import {
   addLines,
+  addPayment,
   closeWithPayment,
+  dueCents,
   mergeTables,
   modifyTable,
+  paidCents,
   restoreTable,
   transferTable,
   updatePayment,
@@ -74,11 +77,15 @@ export default function CheckDetail({
   onChanged: () => void | Promise<void>
 }) {
   const [sub, setSub] = useState<
-    'pay' | 'move' | 'edit' | 'void' | 'history' | 'addlines' | null
+    'pay' | 'topup' | 'move' | 'edit' | 'void' | 'history' | 'addlines' | null
   >(null)
   const [reason, setReason] = useState('')
   const manage = canManage(role)
   const c = check
+  // 结完账又加菜 → due > 0（还欠）；退了菜 → due < 0（多收了）。
+  // 月报里「支付与账单不符」抓的就是这个数不为 0 的单。
+  const paid = paidCents(c)
+  const due = dueCents(c)
 
   async function done() {
     setSub(null)
@@ -95,6 +102,24 @@ export default function CheckDetail({
         onConfirm={async (p: Payment) => {
           if (c.status === 'open') await closeWithPayment(c.check_uuid, p)
           else await updatePayment(c.check_uuid, p)
+          await done()
+        }}
+      />
+    )
+  }
+
+  // 补收差额：只录**还没收的那部分**，走 addPayment（累加）
+  // 而不是 updatePayment（替换）—— 替换会把之前收的那笔冲掉。
+  if (sub === 'topup') {
+    return (
+      <PaymentSheet
+        check={c}
+        title="补收差额"
+        amount={due}
+        collected={paid}
+        onCancel={() => setSub(null)}
+        onConfirm={async (p: Payment) => {
+          await addPayment(c.check_uuid, p)
           await done()
         }}
       />
@@ -254,6 +279,18 @@ export default function CheckDetail({
                 {c.pay_note && ` · ${c.pay_note}`}
               </td>
             </tr>
+            {/* 差额单独一行，且只在不为 0 时出现。
+                这是月报「支付与账单不符」在单张单上的样子 ——
+                在报表里看到一个计数，却不知道是哪一单差多少，等于没告诉你。 */}
+            {due !== 0 && (
+              <tr>
+                <td className="dim">{due > 0 ? '待收' : '多收（应退）'}</td>
+                <td className={`num ${due > 0 ? 'warnText' : 'badText'}`}>
+                  {money(Math.abs(due))}
+                  <span className="dim"> · 已收 {money(paid)}</span>
+                </td>
+              </tr>
+            )}
             {(c.customer_name || c.phone_last4) && (
               <tr>
                 <td className="dim">客人</td>
@@ -298,9 +335,19 @@ export default function CheckDetail({
 
         <p className="total">{money(c.est_cents)}</p>
 
+        {/* 退款方向不自动做。系统不碰钱，"实际退了多少"只有经手的人知道；
+            这里把差在哪说清楚，退钱和改数由人决定，别替他们写一笔。 */}
+        {due < 0 && (
+          <p className="hint warnbox">
+            已收 {money(paid)}，比现在的账单多 {money(-due)} ——
+            多半是结账后退了菜或改小了人数。
+            <b>请把多收的退给客人</b>，再用「改支付方式」把金额改成实收。
+          </p>
+        )}
+
         {pending && (
           <p className="hint">
-            这张单还有改动**只存在这台 iPad 上**，没传到服务器。
+            这张单还有改动<b>只存在这台 iPad 上</b>，没传到服务器。
             联网后会自动补发，不用做任何操作。
           </p>
         )}
@@ -346,7 +393,17 @@ export default function CheckDetail({
               </>
             )}
             {c.status === 'closed' && (
-              <button onClick={() => setSub('pay')}>改支付方式</button>
+              <>
+                {/* 结完账又加了菜 —— 差额要能当场补收，而且是**主操作**。
+                    藏在「改支付方式」后面的话，员工只会把整单金额重录一遍，
+                    结果不是漏收就是把之前那笔冲掉。 */}
+                {due > 0 && (
+                  <button className="primaryish" onClick={() => setSub('topup')}>
+                    补收 {money(due)}
+                  </button>
+                )}
+                <button onClick={() => setSub('pay')}>改支付方式</button>
+              </>
             )}
             {/* 已结账的单也能改和作废 —— 结完账才发现录错是常事 */}
             {manage && <button onClick={() => setSub('edit')}>改单</button>}

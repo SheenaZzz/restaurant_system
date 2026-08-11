@@ -1115,3 +1115,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   cursor: default;
 }
 .carry-banner.bad .cb-n { color: var(--bad); }
+
+/* ---- 待收 / 应退 ---- */
+.duebox { margin: 8px 0 4px; }
+.duebox .num.strong { font-size: 19px; font-weight: 700; color: var(--warn); }

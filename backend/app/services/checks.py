@@ -386,15 +386,7 @@ def void_check(db: Session, payload: dict, client_ts: datetime,
     if not isinstance(reason, str) or not reason.strip():
         raise BusinessError("作废必须填写原因")
 
-    head = db.scalar(
-        select(func.coalesce(func.sum(HeadCharge.qty * HeadCharge.unit_price_cents), 0))
-        .where(HeadCharge.check_id == chk.id)
-    ) or 0
-    lines_amt = db.scalar(
-        select(func.coalesce(func.sum(OrderLine.qty * OrderLine.unit_price_cents), 0))
-        .where(OrderLine.check_id == chk.id, OrderLine.status != "voided")
-    ) or 0
-    amount = int(head) + int(lines_amt) + chk.service_charge_cents + chk.tax_cents
+    amount = _check_total_cents(db, chk)
 
     # 记下作废前是什么状态，撤销时恢复成它。
     # **不动 closed_at** —— 那是结账时间，跟作废是两回事。
@@ -484,6 +476,32 @@ def restore_check(db: Session, payload: dict, client_ts: datetime,
 PAYMENT_METHODS = ("cash", "card", "mixed", "other")
 
 
+def _check_total_cents(db: Session, chk: DiningCheck) -> int:
+    """这张单当前的应收合计（人头费 + 单品 + 服务费 + 税）。
+
+    每次现算，不落一个 total 字段 —— 落了就要在加菜、改单、并桌、
+    改税率之后处处记得同步它，漏一处就是一个对不上的金额，
+    而且只有对账时才会发现。
+    """
+    head = db.scalar(
+        select(func.coalesce(func.sum(HeadCharge.qty * HeadCharge.unit_price_cents), 0))
+        .where(HeadCharge.check_id == chk.id)
+    ) or 0
+    lines_amt = db.scalar(
+        select(func.coalesce(func.sum(OrderLine.qty * OrderLine.unit_price_cents), 0))
+        .where(OrderLine.check_id == chk.id, OrderLine.status != "voided")
+    ) or 0
+    return int(head) + int(lines_amt) + chk.service_charge_cents + chk.tax_cents
+
+
+def _paid_cents(chk: DiningCheck) -> int:
+    return (
+        (chk.paid_cash_cents or 0)
+        + (chk.paid_card_cents or 0)
+        + (chk.paid_other_cents or 0)
+    )
+
+
 def _apply_payment(chk: DiningCheck, raw) -> None:
     """写入支付方式。
 
@@ -538,6 +556,79 @@ def set_payment(db: Session, payload: dict, client_ts: datetime) -> None:
     if chk.status == "voided":
         raise BusinessError("已作废的单不能改支付方式")
     _apply_payment(chk, payload.get("payment"))
+
+
+def add_payment(db: Session, payload: dict, client_ts: datetime) -> None:
+    """补收差额：在**已收金额之上累加**，不是替换。
+
+    为什么非要单独一个操作，不能复用 set_payment：
+    结完账又加了菜是常事（系统故意允许改已结的单）。这时账单从
+    $55.47 涨到 $62.46，但已收还停在 $55.47 —— 月报里那条
+    「支付与账单不符」抓的就是它。补收差额时如果走 set_payment，
+    录进去的 $6.99 会**冲掉**原来那笔 $55.47，不符反而更严重。
+
+    ⚠️ 加法必须在服务端做。客户端只说"这次收了多少"，
+       不说"总共收了多少" —— 它手上那份已收金额可能是过期的
+       （别的设备刚补收过），拿过期的总额去覆盖就是丢钱。
+
+    不建 payment_event 表：每次补收本身就是一条 sync_op，
+    带 client_ts 和操作人。「这单分两次收的」这段历史，
+    用现有的操作历史就能重放出来 —— 数据本来就在审计日志里。
+    """
+    chk = _load_check(db, payload)
+    if chk.status == "voided":
+        raise BusinessError("已作废的单不能补收")
+
+    raw = payload.get("payment")
+    if not isinstance(raw, dict):
+        raise BusinessError(f"payment 格式非法: {raw!r}")
+
+    def amt(key: str) -> int:
+        v = raw.get(key, 0)
+        if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+            raise BusinessError(f"金额非法: {key}={v!r}")
+        return v
+
+    add_cash, add_card, add_other = (
+        amt("cash_cents"),
+        amt("card_cents"),
+        amt("other_cents"),
+    )
+    added = add_cash + add_card + add_other
+    if added <= 0:
+        raise BusinessError("补收金额必须大于 0")
+
+    note = raw.get("note")
+    note = note.strip() if isinstance(note, str) and note.strip() else None
+    if add_other > 0 and not note:
+        raise BusinessError("补收里用「其它」方式时必须说明（例如 gift card）")
+
+    total = _check_total_cents(db, chk)
+    due = total - _paid_cents(chk)
+    if due <= 0:
+        raise BusinessError("这张单已经收齐，没有需要补收的差额")
+    if added > due:
+        raise BusinessError(
+            f"补收 {added / 100:.2f} 超过了待收的 {due / 100:.2f}。"
+            "多收的部分不该记在这张单上 —— 请核对金额。"
+        )
+
+    chk.paid_cash_cents = (chk.paid_cash_cents or 0) + add_cash
+    chk.paid_card_cents = (chk.paid_card_cents or 0) + add_card
+    chk.paid_other_cents = (chk.paid_other_cents or 0) + add_other
+
+    # 支付方式由三个桶**推导**，不接受客户端传的 method ——
+    # 一笔刷卡 + 一笔现金，合起来就是 mixed，这不该由客户端判断。
+    buckets = [chk.paid_cash_cents, chk.paid_card_cents, chk.paid_other_cents]
+    nonzero = [i for i, v in enumerate(buckets) if v]
+    if len(nonzero) > 1:
+        chk.payment_method = "mixed"
+    elif nonzero:
+        chk.payment_method = ("cash", "card", "other")[nonzero[0]]
+
+    if note:
+        # 补收的说明追加，不覆盖 —— 原来那笔的说明同样要留着
+        chk.payment_note = f"{chk.payment_note} / {note}" if chk.payment_note else note
 
 
 # ---------------------------------------------------------------------------

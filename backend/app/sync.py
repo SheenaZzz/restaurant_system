@@ -26,6 +26,7 @@ from .services.checks import (
     open_check,
     open_togo_check,
     restore_check,
+    add_payment,
     set_payment,
     transfer_check,
     void_check,
@@ -48,6 +49,9 @@ _HANDLERS: dict[str, frozenset[str]] = {
     "transfer_check": _FRONT,
     "merge_checks": _FRONT,
     "set_payment": _FRONT,
+    # 补收差额同样给普通员工：收到的钱当场就得记下，
+    # 要等主管来点一下，忙起来就永远不会记了
+    "add_payment": _FRONT,
     # 自提与加菜都是日常操作
     "open_togo_check": _FRONT,
     "add_order_lines": _FRONT,
@@ -85,6 +89,9 @@ def _apply_effect(db: Session, op: SyncOpIn, user) -> None:
 
     elif op.entity == "set_payment":
         set_payment(db, op.payload, op.client_ts)
+
+    elif op.entity == "add_payment":
+        add_payment(db, op.payload, op.client_ts)
 
     elif op.entity == "open_togo_check":
         open_togo_check(db, op.op_id, op.payload, op.client_ts,

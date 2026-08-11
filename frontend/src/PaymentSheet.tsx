@@ -25,16 +25,36 @@ const METHODS: { k: PayMethod; label: string }[] = [
 export default function PaymentSheet({
   check,
   title,
+  /**
+   * 这次要结的金额。不传 = 整张单的应收。
+   *
+   * 三种用法共用这一个弹层：
+   *   结账（首次）   amount 省略 → 整单金额
+   *   补收差额       amount = 待收    → **只录还没收的那部分**
+   *   改支付方式     amount 省略 → 整单金额（整体替换）
+   */
+  amount,
+  /** 补收模式下用来显示"应收 / 已收 / 待收"三行 */
+  collected,
   onCancel,
   onConfirm,
 }: {
   check: LocalCheck
   title: string
+  amount?: number
+  collected?: number
   onCancel: () => void
   onConfirm: (p: Payment) => void | Promise<void>
 }) {
-  const total = check.est_cents
-  const [method, setMethod] = useState<PayMethod>(check.pay_method ?? 'cash')
+  // 这次要收的钱。补收时它是**差额**，不是整单金额 ——
+  // 让员工对着 $62.46 去收那 $6.99，收错是迟早的事。
+  const total = amount ?? check.est_cents
+  const topUp = collected !== undefined && collected > 0
+  const [method, setMethod] = useState<PayMethod>(
+    // 补收时不预选上次的方式：上次刷卡不代表这次也刷卡，
+    // 预选反而容易一路点过去记成错的方式
+    topUp ? 'cash' : (check.pay_method ?? 'cash'),
+  )
 
   /**
    * 混合支付只让人输**一边**，另一边永远是余额。
@@ -45,7 +65,7 @@ export default function PaymentSheet({
    */
   const [entrySide, setEntrySide] = useState<'cash' | 'card'>('cash')
   const [entered, setEntered] = useState(
-    check.pay_method === 'mixed' ? (check.pay_cash ?? 0) : 0,
+    !topUp && check.pay_method === 'mixed' ? (check.pay_cash ?? 0) : 0,
   )
   const [note, setNote] = useState(check.pay_note ?? '')
   const [busy, setBusy] = useState(false)
@@ -81,8 +101,29 @@ export default function PaymentSheet({
   const left = (
     <div className="pay-left">
       <p className="total">{money(total)}</p>
-      {check.service_cents > 0 && (
-        <p className="hint">含大桌服务费 {money(check.service_cents)}（10%）</p>
+      {topUp ? (
+        // 补收时把三个数并排摆出来，员工才知道那个大数字是"还差多少"，
+        // 而不是"这单多少钱"
+        <table className="kv duebox">
+          <tbody>
+            <tr>
+              <td className="dim">账单应收</td>
+              <td className="num">{money(check.est_cents)}</td>
+            </tr>
+            <tr>
+              <td className="dim">之前已收</td>
+              <td className="num">{money(collected ?? 0)}</td>
+            </tr>
+            <tr>
+              <td className="dim">本次待收</td>
+              <td className="num strong">{money(total)}</td>
+            </tr>
+          </tbody>
+        </table>
+      ) : (
+        check.service_cents > 0 && (
+          <p className="hint">含大桌服务费 {money(check.service_cents)}（10%）</p>
+        )
       )}
 
       <div className="paygrid">
@@ -123,7 +164,7 @@ export default function PaymentSheet({
             </button>
           </div>
           <p className="hint">
-            点上面切换输入哪一边，**另一边自动等于余额** —— 加起来永远等于应收。
+            点上面切换输入哪一边，<b>另一边自动等于余额</b> —— 加起来永远等于{topUp ? '本次待收' : '应收'}。
           </p>
         </>
       )}

@@ -258,6 +258,31 @@ export async function applyCheckOp(
   } else if (entity === 'set_payment') {
     const row = await db.checks.get(String(payload.check_uuid ?? ''))
     if (row) await db.checks.put({ ...row, ...payFields(payload.payment), ...opts })
+  } else if (entity === 'add_payment') {
+    // 补收：**累加**，不是替换。必须和服务端 add_payment 同样的算法 ——
+    // 本地镜像算出来的待收金额如果和服务端不一致，员工会照着错的数收钱。
+    const row = await db.checks.get(String(payload.check_uuid ?? ''))
+    if (row) {
+      const p = (payload.payment ?? {}) as Partial<Payment>
+      const cash = (row.pay_cash ?? 0) + (p.cash_cents ?? 0)
+      const card = (row.pay_card ?? 0) + (p.card_cents ?? 0)
+      const other = (row.pay_other ?? 0) + (p.other_cents ?? 0)
+      // 方式由三个桶推导，不用 payload 里的 —— 一笔刷卡加一笔现金合起来是 mixed
+      const nonzero = [cash, card, other].filter((v) => v > 0).length
+      const method: PayMethod | undefined =
+        nonzero > 1 ? 'mixed' : cash > 0 ? 'cash' : card > 0 ? 'card' : other > 0 ? 'other' : undefined
+      const note = p.note?.trim()
+      await db.checks.put({
+        ...row,
+        pay_cash: cash,
+        pay_card: card,
+        pay_other: other,
+        pay_method: method ?? row.pay_method,
+        // 说明**追加**不覆盖：原来那笔的说明同样要留着
+        pay_note: note ? (row.pay_note ? `${row.pay_note} / ${note}` : note) : row.pay_note,
+        ...opts,
+      })
+    }
   } else if (entity === 'restore_check') {
     const cu = String(payload.check_uuid ?? '')
     const row = await db.checks.get(cu)
@@ -552,7 +577,7 @@ export async function closeWithPayment(
   })
 }
 
-/** 事后改支付方式。 */
+/** 事后改支付方式。**整体替换** —— 用于"方式录错了"。 */
 export async function updatePayment(
   checkUuid: string,
   payment: Payment,
@@ -563,6 +588,40 @@ export async function updatePayment(
   await applyCheckOp('set_payment', opId, payload, new Date().toISOString(), {
     synced: 0, remote: 0, who: (await getIdentity())?.display_name,
   })
+}
+
+/**
+ * 补收差额。**在已收金额上累加** —— 用于"结完账又加了菜"。
+ *
+ * 和 updatePayment 是两件事，不能合并：走替换的话，补收的 $6.99
+ * 会把原来那笔 $55.47 冲掉，「支付与账单不符」反而更严重。
+ */
+export async function addPayment(
+  checkUuid: string,
+  payment: Payment,
+): Promise<void> {
+  const payload = { check_uuid: checkUuid, payment }
+  const opId = uuid()
+  await enqueue('add_payment', payload, opId)
+  await applyCheckOp('add_payment', opId, payload, new Date().toISOString(), {
+    synced: 0, remote: 0, who: (await getIdentity())?.display_name,
+  })
+}
+
+/** 已收合计。 */
+export function paidCents(c: LocalCheck): number {
+  return (c.pay_cash ?? 0) + (c.pay_card ?? 0) + (c.pay_other ?? 0)
+}
+
+/**
+ * 待收差额（正数 = 还欠，负数 = 多收了该退）。
+ *
+ * 结完账又加菜就会出现正的差额；退了菜则是负的。
+ * 月报里那条「支付与账单不符」抓的就是这个数不为 0 的单。
+ */
+export function dueCents(c: LocalCheck): number {
+  if (!c.pay_method) return 0 // 还没记过支付，谈不上差额
+  return c.est_cents - paidCents(c)
 }
 
 
