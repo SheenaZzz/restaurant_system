@@ -348,7 +348,6 @@ const EN: Record<string, string> = {
   改: 'edited',
 
   // —— 补齐：被 <b> 拆开的句段和零散文案 ——
-  '&lt;账号&gt;-dev-pw': '&lt;account&gt;-dev-pw',
   '+服务费': '+fee',
   '—— 下单时存的是当时的价格快照。 下架的菜不会再出现在点菜页，但历史账单照常显示。': '— each check stores the price it was ordered at. Removing a dish hides it from ordering; past checks are unchanged.',
   '—— 历史账单上加过这一项的记录必须留着。 停用后它不再出现在点菜页，已经开出去的单照常显示。': '— past checks that used it must keep the record. It disappears from ordering; existing checks still show it.',
@@ -468,7 +467,6 @@ const EN: Record<string, string> = {
 
   '账号': 'Account',
   '密码': 'Password',
-  '开发账号：manager / front / kitchen / boss': 'Dev accounts: manager / front / kitchen / boss',
   '说明（必填）': 'Note (required)',
   '跳到某一天': 'Jump to a day',
 
@@ -513,4 +511,11 @@ const EN: Record<string, string> = {
   '已保存。前台会用新价，已经开出去的单不受影响。': 'saved. The floor will use the new prices; checks already open are unaffected.',
 
   '这个登录名已经有人用了': 'That username is already taken',
+
+  '登录中…': 'Signing in…',
+  '登录': 'Sign in',
+  '连不上服务器（检查店内 WiFi）': 'Cannot reach the server (check the store WiFi)',
+  '登录失败': 'Sign-in failed',
+  '用户名或密码错误': 'Wrong username or password',
+  '账号已停用': 'This account is disabled',
 }

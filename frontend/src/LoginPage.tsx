@@ -19,10 +19,10 @@ export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }
       // 否则员工会以为是自己密码记错了
       setErr(
         e instanceof Error && e.message.includes('Failed to fetch')
-          ? '连不上服务器（检查店内 WiFi）'
+          ? tr('连不上服务器（检查店内 WiFi）')
           : e instanceof Error
-            ? e.message
-            : '登录失败',
+            ? tr(e.message)
+            : tr('登录失败'),
       )
     } finally {
       setBusy(false)
@@ -59,15 +59,11 @@ export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }
 
         {err && <p className="err">{err}</p>}
 
+        {/* 这里原来印着开发账号和密码规则。上线的登录页不能写这个 ——
+            账号清单在 RUNBOOK.md 里，那是给开发看的，不是给站在店里的人看的。 */}
         <button type="submit" disabled={busy || !username || !password}>
-          {busy ? '登录中…' : '登录'}
+          {busy ? tr('登录中…') : tr('登录')}
         </button>
-
-        <p className="hint">
-          {tr('开发账号：manager / front / kitchen / boss')}
-          <br />
-          密码统一为 <code>{tr('&lt;账号&gt;-dev-pw')}</code>
-        </p>
       </form>
     </div>
   )
