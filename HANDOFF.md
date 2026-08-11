@@ -19,10 +19,10 @@
 
 | | |
 |---|---|
-| 提交 | 36 |
-| 文件 | 82 |
-| 数据库表 | 19 |
-| Alembic 迁移 | 11（head `b3d5c81a4e17`） |
+| 提交 | 37 |
+| 文件 | 85 |
+| 数据库表 | 21 |
+| Alembic 迁移 | 12（head `c4e91f27a8b3`） |
 | 菜单条目 | 143（真实菜单，照店里外卖单录的） |
 | 已完成 | Step 0–4 + 大量现场追加的业务需求 |
 | 未开始 | **Step 5：后厨界面 + 补菜记录** |
@@ -85,6 +85,14 @@ INSERT INTO sync_op (op_id, ...) ON CONFLICT (op_id) DO NOTHING RETURNING op_id
 
 **自提**（`ToGoView.tsx`）：Buffet To Go（按重量，数字键盘直接录金额）、
 电话点菜（菜单选择器 + 客人姓名/手机后四位）。
+
+**加料 / 特殊要求**（`ModifierSheet.tsx`）：菜品卡片角上「定制」进去，
+常用要求（加辣免费、加牛/鸡/虾 $2、加蔬菜 $1）+ 手写要求带小键盘定价。
+
+> ⚠️ **加料的钱折进 `order_line.unit_price_cents`**，`order_line_modifier`
+> 只存明细不参与算钱。这样所有金额计算仍是 `SUM(qty × unit_price_cents)`，
+> 一处都不用改、也不可能漏改。别再让加料单独参与合计。
+> 本地 `LocalLine.unit_price_cents` 同样已含加料 —— 别再加一次。
 
 **账单清单**（`ListView.tsx`）：卡片式，状态配色，过滤 tab，当日汇总。
 已关单但**钱没收齐**的单用虚线橙盖掉「已结」的绿色，并有「未收清」过滤 tab

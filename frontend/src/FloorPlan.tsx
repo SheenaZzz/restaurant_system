@@ -139,6 +139,7 @@ export default function FloorPlan({ role }: { role: Role }) {
           taxRate={cat.tax_rate}
           menu={cat.menu}
           categories={cat.categories}
+          modifiers={cat.modifiers ?? []}
           onCancel={() => setSheetFor(null)}
           onConfirm={async (label, guests, drinks, lines) => {
             await openTable(label, guests, drinks, lines)
@@ -185,6 +186,7 @@ export default function FloorPlan({ role }: { role: Role }) {
           openChecks={openList}
           menu={cat.menu}
           categories={cat.categories}
+          modifiers={cat.modifiers ?? []}
           pending={pending.has(detailFor.check_uuid)}
           onClose={() => setDetailFor(null)}
           onChanged={reload}

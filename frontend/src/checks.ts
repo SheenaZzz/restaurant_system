@@ -5,6 +5,9 @@ import {
   serviceCents,
   taxCents,
   type Drinks,
+  type MenuItem,
+  type Modifier,
+  type PickedModifier,
   type PriceRow,
 } from './catalog'
 import { getIdentity } from './auth'
@@ -20,6 +23,49 @@ export interface Guests {
   adult: number
   child: number
   senior: number
+}
+
+/**
+ * 把一条下单 payload 变成本地镜像里的一行。
+ *
+ * ⚠️ 加料的钱必须**折进 unit_price_cents**，和服务端 _add_lines 一模一样。
+ *    两边算法一旦有出入，界面上的金额就和落库金额对不上 ——
+ *    结完账那张单会永远挂在月报的「支付与账单不符」里。
+ *    （加菜的税率就这么错过一次，见 recalcEst 的注释。）
+ *
+ * 目录里的加料按**本地缓存的价格**估算显示；服务端落库时会按它自己那份
+ * 目录重算，所以缓存过期只影响显示，不影响记账。
+ */
+function buildLocalLine(
+  l: any,
+  menu: Map<number, MenuItem>,
+  modifiers: Modifier[],
+): LocalLine {
+  const mi = menu.get(l.menu_item_id)
+  const byId = new Map(modifiers.map((m) => [m.id, m]))
+
+  const picked: { label: string; price_cents: number }[] = (
+    (l.modifiers ?? []) as PickedModifier[]
+  ).map((p) => {
+    if (p.modifier_id !== undefined) {
+      const m = byId.get(p.modifier_id)
+      // 目录里查不到（缓存太旧）：先按 0 显示，落库以服务端为准。
+      // 不能猜一个价 —— 猜错就是界面和账本对不上。
+      return { label: m?.name_zh ?? `#${p.modifier_id}`, price_cents: m?.price_cents ?? 0 }
+    }
+    return { label: p.label, price_cents: p.price_cents }
+  })
+
+  const base = mi?.open_price ? (l.amount_cents ?? 0) : (mi?.price_cents ?? 0)
+
+  return {
+    menu_item_id: l.menu_item_id,
+    name: mi?.name_zh ?? mi?.name_en ?? `#${l.menu_item_id}`,
+    qty: l.qty ?? 1,
+    unit_price_cents: base + picked.reduce((a, m) => a + m.price_cents, 0),
+    modifiers: picked.length ? picked : undefined,
+    notes: l.notes,
+  }
 }
 
 /**
@@ -133,19 +179,10 @@ export async function applyCheckOp(
   } else if (entity === 'open_togo_check') {
     const cat = await loadCatalog()
     const menu = new Map((cat?.menu ?? []).map((m) => [m.id, m]))
-    const lines: LocalLine[] = ((payload.lines ?? []) as any[]).map((l) => {
-      const mi = menu.get(l.menu_item_id)
-      return {
-        menu_item_id: l.menu_item_id,
-        name: mi?.name_zh ?? mi?.name_en ?? `#${l.menu_item_id}`,
-        qty: l.qty ?? 1,
-        // 开放价条目的金额由前台输入；其余取菜单价
-        unit_price_cents: mi?.open_price
-          ? (l.amount_cents ?? 0)
-          : (mi?.price_cents ?? 0),
-        notes: l.notes,
-      }
-    })
+    // 电话点菜也要能加料 —— 走同一个构造函数，两条路不可能算出不同的价
+    const lines: LocalLine[] = ((payload.lines ?? []) as any[]).map((l) =>
+      buildLocalLine(l, menu, cat?.modifiers ?? []),
+    )
     await db.checks.put({
       check_uuid: opId,
       source: payload.source === 'buffet_togo' ? 'buffet_togo' : 'phone_order',
@@ -181,18 +218,9 @@ export async function applyCheckOp(
     if (row) {
       const cat = await loadCatalog()
       const menu = new Map((cat?.menu ?? []).map((m) => [m.id, m]))
-      const add: LocalLine[] = ((payload.lines ?? []) as any[]).map((l) => {
-        const mi = menu.get(l.menu_item_id)
-        return {
-          menu_item_id: l.menu_item_id,
-          name: mi?.name_zh ?? mi?.name_en ?? `#${l.menu_item_id}`,
-          qty: l.qty ?? 1,
-          unit_price_cents: mi?.open_price
-            ? (l.amount_cents ?? 0)
-            : (mi?.price_cents ?? 0),
-          notes: l.notes,
-        }
-      })
+      const add: LocalLine[] = ((payload.lines ?? []) as any[]).map((l) =>
+        buildLocalLine(l, menu, cat?.modifiers ?? []),
+      )
       const lines = [...(row.lines ?? []), ...add]
       await db.checks.put({
         ...row,
@@ -788,6 +816,12 @@ export interface NewLine {
   qty: number
   amount_cents?: number
   notes?: string
+  /**
+   * 加料 / 特殊要求。目录里的只传 modifier_id，**不传价格** ——
+   * 价格由服务端查目录，客户端传什么都不看。
+   * 手写的要求才带 label + price_cents（金额只存在于现场，同 open_price）。
+   */
+  modifiers?: PickedModifier[]
 }
 
 /** 开一张自提单（Buffet To Go 或 电话点菜）。 */

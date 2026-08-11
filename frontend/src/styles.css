@@ -1258,3 +1258,92 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   border-left-style: dashed;
   background: color-mix(in srgb, var(--warn) 12%, var(--panel));
 }
+
+/* ---- 加料 / 特殊要求 ---- */
+
+/* 菜品卡片上的「定制」入口。做小、放右上角 ——
+   点菜名直接加一份是最高频的动作，这个按钮不能挡它。 */
+.mi { position: relative; }
+.mi-cust {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.mi.on .mi-cust { border-color: var(--accent); color: var(--accent); }
+
+/* 购物车里带加料的那条要看得出来，否则和没加的长得一样、改都没法改 */
+.chip.has-mod { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.chip.has-mod small { font-size: 11px; color: var(--warn); }
+.chip-x {
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: 14px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+/* 定制弹层：左边选加料、右边手写 + 键盘。和结账弹层同一套分栏。 */
+.sheet.mod-sheet { max-width: 720px; max-height: 88vh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; overflow: hidden; }
+@supports (max-height: 1dvh) { .sheet.mod-sheet { max-height: 88dvh; } }
+.mod-split { display: grid; grid-template-columns: 1fr 300px; gap: 16px; min-height: 0; }
+@media (max-width: 700px) { .mod-split { grid-template-columns: 1fr; } }
+.mod-left { overflow-y: auto; min-height: 0; }
+.mod-right { display: flex; flex-direction: column; gap: 8px; }
+
+.mod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
+.mod-grid button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 10px;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.mod-grid button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, var(--panel)); }
+.m-name { font-size: 15px; font-weight: 600; }
+.m-price { font-size: 12px; color: var(--ok); font-variant-numeric: tabular-nums; }
+.m-price.free { color: var(--muted); }
+
+.mod-custom-list { display: flex; flex-direction: column; gap: 6px; }
+.mod-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: 8px;
+}
+.cc-label { flex: 1; font-size: 14px; }
+.cc-price { font-size: 13px; color: var(--ok); font-variant-numeric: tabular-nums; }
+.cc-del { padding: 0 6px; font-size: 18px; color: var(--muted); background: transparent; border: none; cursor: pointer; }
+
+.mod-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+}
+.mod-total strong { font-size: 22px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* 账单详情里，加料列在菜名底下 */
+.line-mods { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip.sm { font-size: 11px; padding: 1px 6px; }

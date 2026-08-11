@@ -220,6 +220,7 @@ function CarriedOverSheet({
           openChecks={rows}
           menu={cat.menu}
           categories={cat.categories}
+          modifiers={cat.modifiers ?? []}
           pending={pending.has(live.check_uuid)}
           onClose={() => setPick(null)}
           onChanged={onChanged}

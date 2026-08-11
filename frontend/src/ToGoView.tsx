@@ -144,6 +144,7 @@ export default function ToGoView({ role }: { role: Role }) {
         <MenuPicker
           menu={cat.menu}
           categories={cat.categories}
+          modifiers={cat.modifiers ?? []}
           title="电话点菜"
           onCancel={() => setSheet(null)}
           onConfirm={(lines) => {

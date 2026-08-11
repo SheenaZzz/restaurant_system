@@ -8,6 +8,7 @@ import {
   type Category,
   type Drinks,
   type MenuItem,
+  type Modifier,
   type PriceRow,
 } from './catalog'
 import type { NewLine } from './checks'
@@ -29,6 +30,7 @@ export default function OpenSheet({
   taxRate,
   menu,
   categories,
+  modifiers = [],
   onCancel,
   onConfirm,
 }: {
@@ -38,6 +40,8 @@ export default function OpenSheet({
   taxRate: number
   menu: MenuItem[]
   categories: Category[]
+  /** 加料目录，传给「直接点餐」里的点菜页 */
+  modifiers?: Modifier[]
   onCancel: () => void
   onConfirm: (
     label: string,
@@ -87,6 +91,7 @@ export default function OpenSheet({
       <MenuPicker
         menu={menu}
         categories={categories}
+        modifiers={modifiers}
         title={`${tableLabel} 直接点餐`}
         onCancel={() => setOrdering(false)}
         onConfirm={async (lines) => {

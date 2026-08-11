@@ -5,6 +5,7 @@ import {
   type Category,
   type Drinks,
   type MenuItem,
+  type Modifier,
   type PriceRow,
 } from './catalog'
 import {
@@ -58,6 +59,7 @@ export default function CheckDetail({
   openChecks,
   menu,
   categories,
+  modifiers = [],
   pending = false,
   onClose,
   onChanged,
@@ -71,6 +73,8 @@ export default function CheckDetail({
   /** 菜单，用于加菜。不传就不显示加菜按钮 */
   menu?: MenuItem[]
   categories?: Category[]
+  /** 加料目录，传给加菜里的点菜页 */
+  modifiers?: Modifier[]
   /** 这张单还有操作没上传到服务端 */
   pending?: boolean
   onClose: () => void
@@ -164,6 +168,7 @@ export default function CheckDetail({
       <MenuPicker
         menu={menu}
         categories={categories}
+        modifiers={modifiers}
         title={`${c.table_label} 加菜`}
         onCancel={() => setSub(null)}
         onConfirm={async (lines) => {
@@ -323,6 +328,19 @@ export default function CheckDetail({
                     <td>
                       {l.name}
                       {l.qty > 1 && <span className="dim"> ×{l.qty}</span>}
+                      {/* 加了什么必须列出来 —— 后厨要照着做，
+                          客人问"我加的虾收了钱吗"也得答得上来。
+                          金额已经折进单价了，这里只是拆给人看。 */}
+                      {(l.modifiers ?? []).length > 0 && (
+                        <div className="line-mods">
+                          {l.modifiers!.map((m, j) => (
+                            <span key={j} className="chip sm">
+                              {m.label}
+                              {m.price_cents > 0 && ` +${money(m.price_cents)}`}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       {l.notes && <div className="dim small">{l.notes}</div>}
                     </td>
                     <td className="num">{money(l.qty * l.unit_price_cents)}</td>

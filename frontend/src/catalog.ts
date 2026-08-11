@@ -39,10 +39,32 @@ export interface Category {
   label: string
 }
 
+/** 加料 / 特殊要求目录（加辣、加虾、加蔬菜…）。价格按**份**算。 */
+export interface Modifier {
+  id: number
+  name_zh: string
+  name_en: string
+  price_cents: number
+  sort_order: number
+}
+
+/**
+ * 一道菜上实际加的东西。
+ * 目录里的带 modifier_id（价格以服务端为准）；
+ * 前台手写的没有 id，label 和金额都是当场输的。
+ */
+export interface PickedModifier {
+  modifier_id?: number
+  label: string
+  price_cents: number
+}
+
 export interface Catalog {
   categories: Category[]
   tables: TableInfo[]
   menu: MenuItem[]
+  /** 老缓存里没有这个字段，读的时候一律 `?? []` */
+  modifiers?: Modifier[]
   prices: PriceRow[]
   current_period_kind: 'lunch' | 'dinner'
   /** 当前税率，例如 0.071 = 7.1% */

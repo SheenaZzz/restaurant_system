@@ -606,6 +606,62 @@ class TaxRate(Base):
     )
 
 
+class MenuModifier(Base):
+    """加料 / 特殊要求的目录（加辣、加牛、加虾、加蔬菜…）。
+
+    价格在这里，**不由客户端传** —— 和菜价一个道理：
+    信客户端传的金额，等于谁都能给自己打折。
+    唯一的例外是前台手写的那种要求（客人提的怪需求），
+    金额只能当场谈、当场输，和 Buffet To Go 按重量称是同一类例外。
+    """
+
+    __tablename__ = "menu_modifier"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name_zh: Mapped[str] = mapped_column(Text, nullable=False)
+    name_en: Mapped[str] = mapped_column(Text, nullable=False)
+    # 0 = 免费（比如加辣）。按**份**收 —— 点两份都加虾就是两份的钱。
+    price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    __table_args__ = (
+        CheckConstraint("price_cents >= 0", name="ck_modifier_price_nonneg"),
+    )
+
+
+class OrderLineModifier(Base):
+    """某一道菜上实际加了什么。
+
+    ⚠️ **加料的钱已经折进 order_line.unit_price_cents 了**，这张表不参与算钱。
+       这样做的理由：所有金额计算（应收合计、服务费基数、税基、月报）
+       都是 SUM(qty × unit_price_cents)，折进单价之后它们一行都不用改，
+       也不可能漏改其中一处 —— 漏改一处就是一个只有对账时才会发现的洞。
+
+       那这张表干什么用：① 账单和后厨要看到客人到底要了什么；
+       ② 将来能查"多少客人加虾"，这是折进单价之后会丢掉的信息。
+
+    label 和 price_cents 都是**快照** —— 和菜价、税率一个规矩，
+    改了目录不影响历史账单。
+    """
+
+    __tablename__ = "order_line_modifier"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    order_line_id: Mapped[int] = mapped_column(
+        ForeignKey("order_line.id", ondelete="CASCADE"), nullable=False
+    )
+    # NULL = 前台手写的要求，不在目录里
+    modifier_id: Mapped[int | None] = mapped_column(ForeignKey("menu_modifier.id"))
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("price_cents >= 0", name="ck_line_modifier_price_nonneg"),
+        Index("ix_line_modifier_line", "order_line_id"),
+    )
+
+
 class StoreSetting(Base):
     """店的时间口径：所在时区 + 营业日的分界。
 

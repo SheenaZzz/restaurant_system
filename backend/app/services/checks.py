@@ -20,7 +20,9 @@ from ..models import (
     DiningTable,
     HeadCharge,
     MenuItem,
+    MenuModifier,
     OrderLine,
+    OrderLineModifier,
     PickupOrder,
     ServicePeriod,
     TaxRate,
@@ -792,6 +794,53 @@ def togo_sale(db: Session, op_id: uuidlib.UUID, payload: dict,
 # ---------------------------------------------------------------------------
 
 
+def _resolve_modifiers(
+    db: Session, raw, dish: str
+) -> list[tuple[int | None, str, int]]:
+    """解析一道菜上的加料，返回 (modifier_id, 名称快照, 单价) 列表。
+
+    两种来源，价格的权威性完全不同：
+
+    · 目录里的（带 modifier_id）—— **价格一律服务端查**，
+      客户端传什么都不看。信客户端的金额等于谁都能给自己打折。
+
+    · 前台手写的（带 label + price_cents）—— 客人提的怪要求，
+      金额只能当场谈、当场输。这和 Buffet To Go 按重量称是同一类例外：
+      不是偷懒，是这个数**本来就只存在于现场**。
+      所以它必须归属到人（sync_op 里有 user_id），事后能查是谁定的价。
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise BusinessError(f"{dish} 的加料格式非法: {raw!r}")
+
+    out: list[tuple[int | None, str, int]] = []
+    for m in raw:
+        if not isinstance(m, dict):
+            raise BusinessError(f"{dish} 的加料格式非法: {m!r}")
+
+        mod_id = m.get("modifier_id")
+        if mod_id is not None:
+            if isinstance(mod_id, bool) or not isinstance(mod_id, int):
+                raise BusinessError(f"modifier_id 非法: {mod_id!r}")
+            row = db.get(MenuModifier, mod_id)
+            if row is None or not row.active:
+                raise BusinessError(f"加料不存在或已停用: {mod_id}")
+            out.append((row.id, row.name_zh, row.price_cents))
+            continue
+
+        # 手写的要求
+        label = m.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise BusinessError(f"{dish} 的自定义要求必须填写内容")
+        cents = m.get("price_cents", 0)
+        if isinstance(cents, bool) or not isinstance(cents, int) or cents < 0:
+            raise BusinessError(f"自定义要求的金额非法: {cents!r}")
+        out.append((None, label.strip(), cents))
+
+    return out
+
+
 def _add_lines(db: Session, chk: DiningCheck, raw, client_ts: datetime) -> None:
     """把菜品加到账单上。堂食和自提共用 —— 一桌里有人吃自助、有人点菜，
     跟自提点菜在数据上是同一件事。
@@ -831,18 +880,35 @@ def _add_lines(db: Session, chk: DiningCheck, raw, client_ts: datetime) -> None:
         notes = item.get("notes")
         notes = notes.strip() if isinstance(notes, str) and notes.strip() else None
 
-        db.add(
-            OrderLine(
-                check_id=chk.id,
-                menu_item_id=mi.id,
-                qty=qty,
-                # 价格快照 —— 改菜单不会改动历史账单
-                unit_price_cents=price,
-                notes=notes,
-                status="placed",
-                placed_at=client_ts,
-            )
+        mods = _resolve_modifiers(db, item.get("modifiers"), mi.name_zh)
+
+        line = OrderLine(
+            check_id=chk.id,
+            menu_item_id=mi.id,
+            qty=qty,
+            # 价格快照 —— 改菜单不会改动历史账单。
+            # ⚠️ 加料的钱**折进单价**：所有算钱的地方
+            #    （应收合计、服务费基数、税基、月报）都是
+            #    SUM(qty × unit_price_cents)，折进来之后它们一处都不用改，
+            #    也就不可能漏改其中一处。加了什么另存 order_line_modifier。
+            unit_price_cents=price + sum(m[2] for m in mods),
+            notes=notes,
+            status="placed",
+            placed_at=client_ts,
         )
+        db.add(line)
+
+        if mods:
+            db.flush()  # 拿 line.id
+            for modifier_id, label, cents in mods:
+                db.add(
+                    OrderLineModifier(
+                        order_line_id=line.id,
+                        modifier_id=modifier_id,
+                        label=label,
+                        price_cents=cents,
+                    )
+                )
 
 
 def open_togo_check(db: Session, op_id: uuidlib.UUID, payload: dict,
@@ -874,6 +940,16 @@ def open_togo_check(db: Session, op_id: uuidlib.UUID, payload: dict,
     db.flush()
 
     _add_lines(db, chk, payload.get("lines"), client_ts)
+    # ⚠️ 这一行以前漏了，**自提单从来没收过税**。
+    #
+    #    服务费确实不该收（那是按堂食人头算的，_party_size 对自提是 0，
+    #    所以这个函数自己会算出 0）—— 但税照收，自提的熟食一样应税。
+    #
+    #    漏掉的后果不只是少收税：客户端估价是**加税**的，员工照着屏幕
+    #    收钱，服务端记的却是不含税总额 → 这张单立刻变成"多收"，
+    #    月报里一直挂着「支付与账单不符」。加菜那条路（add_order_lines）
+    #    本来就调了重算，等于同一种单两条路的税还不一样。
+    _recalc_service_charge(db, chk)
 
     name = payload.get("customer_name")
     phone = payload.get("phone_last4")

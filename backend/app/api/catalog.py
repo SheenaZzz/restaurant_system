@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from ..core.deps import CurrentUser
 from ..db import get_db
 from ..menu_data import CATEGORIES
-from ..models import BuffetPrice, DiningTable, MenuItem
+from ..models import BuffetPrice, DiningTable, MenuItem, MenuModifier
 from ..services.period import load_store_clock
 
 router = APIRouter(prefix="/api", tags=["catalog"])
@@ -54,10 +54,21 @@ class CategoryOut(BaseModel):
     label: str
 
 
+class ModifierOut(BaseModel):
+    id: int
+    name_zh: str
+    name_en: str
+    price_cents: int
+    sort_order: int
+
+
 class CatalogOut(BaseModel):
     categories: list[CategoryOut]
     tables: list[TableOut]
     menu: list[MenuItemOut]
+    # 加料目录。跟菜单一起下发 —— 点菜页离线也要能选加辣、加虾，
+    # 而且客户端拿它做**显示估价**，落库金额仍由服务端按这张表重算。
+    modifiers: list[ModifierOut]
     prices: list[PriceOut]
     # 客户端拿它决定用午市还是晚市的价格来**显示**金额。
     # 落库时服务端会自己再算一遍，不信这个值。
@@ -100,6 +111,11 @@ def catalog(user: CurrentUser, db: Session = Depends(get_db)):
     prices = db.scalars(
         select(BuffetPrice).order_by(BuffetPrice.effective_from)
     ).all()
+    modifiers = db.scalars(
+        select(MenuModifier)
+        .where(MenuModifier.active.is_(True))
+        .order_by(MenuModifier.sort_order)
+    ).all()
 
     # 取一次时刻算出所有跟时间有关的字段 —— 分别取 now 的话，
     # 恰好跨过 0 点或 15:00 的那一次请求会拿到自相矛盾的组合
@@ -110,6 +126,9 @@ def catalog(user: CurrentUser, db: Session = Depends(get_db)):
         categories=[CategoryOut(key=k, label=v) for k, v in CATEGORIES],
         tables=[TableOut.model_validate(t, from_attributes=True) for t in tables],
         menu=[MenuItemOut.model_validate(m, from_attributes=True) for m in menu],
+        modifiers=[
+            ModifierOut.model_validate(m, from_attributes=True) for m in modifiers
+        ],
         prices=[PriceOut.model_validate(p, from_attributes=True) for p in prices],
         current_period_kind=clock.period_kind(now_local),
         tax_rate=float(

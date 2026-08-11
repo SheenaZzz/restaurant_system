@@ -5,6 +5,7 @@ import {
   money,
   type Category,
   type MenuItem,
+  type Modifier,
   type PriceRow,
 } from './catalog'
 import {
@@ -40,6 +41,7 @@ export default function ListView({ role }: { role: Role }) {
   const [prices, setPrices] = useState<PriceRow[]>([])
   const [menu, setMenu] = useState<MenuItem[]>([])
   const [cats, setCats] = useState<Category[]>([])
+  const [mods, setMods] = useState<Modifier[]>([])
   const [period, setPeriod] = useState<'lunch' | 'dinner'>('dinner')
   const [now, setNow] = useState(new Date())
   const [bdate, setBdate] = useState('')
@@ -71,6 +73,7 @@ export default function ListView({ role }: { role: Role }) {
         setPrices(c.prices)
         setMenu(c.menu)
         setCats(c.categories)
+        setMods(c.modifiers ?? [])
         setPeriod(c.current_period_kind)
       }
     })
@@ -228,6 +231,7 @@ export default function ListView({ role }: { role: Role }) {
           openChecks={openChecks}
           menu={menu}
           categories={cats}
+          modifiers={mods}
           pending={pending.has(pick.check_uuid)}
           onClose={() => setPick(null)}
           onChanged={reload}

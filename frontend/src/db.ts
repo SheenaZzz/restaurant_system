@@ -34,7 +34,14 @@ export interface LocalLine {
   menu_item_id: number
   name: string
   qty: number
+  /**
+   * ⚠️ **已经含加料的钱**（菜价 + Σ 加料单价），和服务端
+   * order_line.unit_price_cents 一个口径。所有算金额的地方都乘这个数，
+   * 不要再去加 modifiers —— 会重复计一次。
+   */
   unit_price_cents: number
+  /** 加了什么，仅供显示。金额已折进 unit_price_cents。 */
+  modifiers?: { label: string; price_cents: number }[]
   notes?: string
   voided?: boolean
 }
