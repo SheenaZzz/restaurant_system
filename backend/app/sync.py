@@ -200,10 +200,41 @@ def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn], user=None):
     return applied, duplicate, rejected
 
 
-def fetch_changes(db: Session, since_cursor: int, client_id: str, limit: int = 500):
+def log_truncated(db: Session, since_cursor: int) -> bool:
+    """客户端已消费到 since_cursor，但日志里 **seq ≤ 它的记录一条都不剩了**。
+
+    正常运转时这不可能：游标是 N 就说明 1..N 曾经存在过，其中总有一条还在。
+    只有日志被整段删掉（清测试数据、按保留期归档）才会出现。
+
+    这时不能只发增量 —— 客户端的本地镜像里存着服务端已经没有的账单，
+    而同步是**只追加**的，没有任何后续变更会去删掉它们。设备会永远显示
+    已经不存在的单。所以要让它整份重来。
+
+    ⚠️ 判据不能写成 `since_cursor > MAX(seq)`：seq 是 bigserial，
+       DELETE 不会把它退回去。清空之后别的设备写一条就是 seq 80，
+       游标停在 79 的那台反而"看起来正常"，然后一辈子对不上。
+    """
+    if since_cursor <= 0:
+        return False
+    hit = db.execute(
+        text("SELECT 1 FROM sync_op WHERE seq <= :n LIMIT 1"), {"n": since_cursor}
+    ).first()
+    return hit is None
+
+
+def fetch_changes(
+    db: Session,
+    since_cursor: int,
+    client_id: str,
+    limit: int = 500,
+    resync: bool = False,
+):
     """拉取 since_cursor 之后、由**其它设备**产生的已生效变更。
 
     过滤掉自己产生的，避免客户端把刚写的东西再应用一遍。
+
+    `resync=True` 时**不过滤**：客户端刚把本地镜像清空了，
+    自己写过的那些单也得由服务端重新发一遍，否则就凭空少了一截。
     """
     rows = db.execute(
         text(
@@ -214,12 +245,17 @@ def fetch_changes(db: Session, since_cursor: int, client_id: str, limit: int = 5
               LEFT JOIN app_user u ON u.id = s.user_id
              WHERE s.seq > :since
                AND s.applied_at IS NOT NULL
-               AND s.client_id <> :client_id
+               AND (:resync OR s.client_id <> :client_id)
              ORDER BY s.seq
              LIMIT :limit
             """
         ),
-        {"since": since_cursor, "client_id": client_id, "limit": limit},
+        {
+            "since": since_cursor,
+            "client_id": client_id,
+            "limit": limit,
+            "resync": resync,
+        },
     ).mappings().all()
 
     # 游标只推进到本次真正返回的最后一条 ——

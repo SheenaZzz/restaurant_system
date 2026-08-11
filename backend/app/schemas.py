@@ -25,6 +25,9 @@ class SyncRequest(BaseModel):
     since_cursor: int = Field(default=0, ge=0)
     # 上限防止一次请求过大；客户端超出就分批
     ops: list[SyncOpIn] = Field(default_factory=list, max_length=500)
+    # 客户端刚清空本地镜像，要求整份重发（含它自己写过的）。
+    # 只在服务端上一轮回了 reset=True 之后才会是 True。
+    resync: bool = False
 
 
 class RejectedOp(BaseModel):
@@ -58,3 +61,6 @@ class SyncResponse(BaseModel):
     cursor: int
     # 其它设备产生的变更
     changes: list[ChangeOut]
+    # 服务端日志里已经没有这个游标之前的记录了 ——
+    # 客户端应清空本地镜像、游标归零、带 resync 重来一次。见 sync.log_truncated。
+    reset: bool = False

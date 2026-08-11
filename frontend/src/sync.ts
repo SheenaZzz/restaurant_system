@@ -154,13 +154,42 @@ async function takePending(): Promise<OutboxOp[]> {
     .slice(0, BATCH)
 }
 
+/**
+ * 服务端说它的日志里已经没有我们这个游标之前的记录了（`reset`）。
+ *
+ * 同步是**只追加**的：服务端删掉的东西不会以"变更"的形式传下来，
+ * 所以本地镜像里那些单会永远留着，界面显示的是已经不存在的账单。
+ * 唯一正确的做法是把镜像整份丢掉、游标归零、从头拉一遍。
+ *
+ * ⚠️ **只清 synced=1 的**。synced=0 意味着它还在 outbox 里没发出去 ——
+ *    那是店里刚录的、服务端根本没见过的单，清掉就是真丢数据。
+ *    outbox 和死信队列一个字都不动。
+ */
+async function resetMirror(): Promise<void> {
+  await db.transaction('rw', db.checks, db.events, db.meta, async () => {
+    await db.checks.filter((c) => c.synced === 1).delete()
+    await db.events.filter((e) => e.synced === 1).delete()
+    await setMeta('cursor', 0)
+    // 落库而不是放内存：重拉到一半刷新页面的话，下一次仍然要整份重来，
+    // 否则镜像会缺掉服务端"只发给别人"的那部分。
+    await setMeta('resync', 1)
+  })
+  console.warn('[sync] 服务端日志已被截断，本地镜像重建')
+}
+
 async function doSync(): Promise<SyncResult | null> {
   const ops = await takePending()
   const since = await getMeta<number>('cursor', 0)
   const cid = await clientId()
+  const resync = (await getMeta<number>('resync', 0)) === 1
 
   // outbox 空也要发一次：这是拉取其它设备变更的唯一时机
-  const body = JSON.stringify({ client_id: cid, since_cursor: since, ops })
+  const body = JSON.stringify({
+    client_id: cid,
+    since_cursor: since,
+    ops,
+    resync,
+  })
 
   let res: Response
   const ctrl = new AbortController()
@@ -220,6 +249,7 @@ async function doSync(): Promise<SyncResult | null> {
   const rejected = (data.rejected ?? []) as { op_id: string; reason: string }[]
   let remoteChanges: RemoteChange[] = []
 
+
   await db.transaction(
     'rw',
     db.outbox,
@@ -250,13 +280,38 @@ async function doSync(): Promise<SyncResult | null> {
         await Promise.all(settled.map((id) => db.checks.update(id, { synced: 1 })))
       }
 
-      // 其它设备的变更
-      remoteChanges = data.changes as RemoteChange[]
+      // 其它设备的变更。要求重置时这一批一定是空的，
+      // 而且下面马上要清空镜像 —— 不应用。
+      remoteChanges = data.reset ? [] : (data.changes as RemoteChange[])
 
-      // 游标最后才推进：中途崩了就重来一次，宁可重复也不能跳过
-      await setMeta('cursor', data.cursor)
+      if (!data.reset) {
+        // 游标最后才推进：中途崩了就重来一次，宁可重复也不能跳过
+        await setMeta('cursor', data.cursor)
+
+        // 整份重拉要拉到**空响应**才算完。这一批还满着说明后面还有
+        // （服务端一次最多发 500 条），此时清掉 resync 的话，下一页
+        // 就会重新过滤掉本设备自己写的那些 op —— 镜像会缺一截。
+        if (resync && data.changes.length === 0) await setMeta('resync', 0)
+      }
     },
   )
+
+  if (data.reset) {
+    // 注意顺序：上面那个事务已经把这批 op 从 outbox 结清、并把对应的本地
+    // 账单标成 synced=1 了。必须先标再清 —— 否则它们会以 synced=0 留在
+    // 镜像里，而 outbox 里已经没有对应的 op，变成永远同步不掉的幽灵单。
+    await resetMirror()
+    // 立刻再来一次，把服务端现在真正拥有的整份拉回来。
+    // 不等下一次心跳（最长 20 秒）—— 这中间界面上是空的。
+    setTimeout(() => void sync(), 0)
+    return {
+      applied: data.applied.length,
+      duplicate: data.duplicate.length,
+      rejected: data.rejected,
+      changes: 0,
+      cursor: 0,
+    }
+  }
 
   // 账单类变更在事务外应用 —— applyCheckOp 要读 catalog（也在 meta 表里），
   // 放进同一个事务会因为表作用域重叠而死锁

@@ -766,6 +766,10 @@ export async function resetLocalData(): Promise<{ ok: boolean; pending: number }
     // 游标归零 —— 下次同步会把服务端现有的变更全部重新拉一遍，
     // 本地镜像由此重建。这是事件溯源的直接好处：不需要"导入数据"。
     await setMeta('cursor', 0)
+    // ⚠️ 光归零不够。/api/sync 平时会**过滤掉本设备自己产生的 op**
+    //（避免把刚写的东西再应用一遍），所以从 0 重拉只会拿回别人写的单 ——
+    // 这台 iPad 自己开的单会永远缺席。resync 让服务端这一轮不过滤。
+    await setMeta('resync', 1)
   })
   return { ok: true, pending: 0 }
 }

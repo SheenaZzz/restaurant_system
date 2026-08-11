@@ -13,7 +13,7 @@ from .api import reports as reports_api
 from .core.deps import CurrentUser, require_role
 from .db import get_db
 from .schemas import SyncRequest, SyncResponse
-from .sync import apply_ops, fetch_changes
+from .sync import apply_ops, fetch_changes, log_truncated
 
 app = FastAPI(title="Restaurant System API", version="0.5.0")
 
@@ -54,8 +54,28 @@ def sync(req: SyncRequest, user: CurrentUser, db: Session = Depends(get_db)):
     角色只从服务端验过的 access token 里取。前端把 role 改成 admin
     也没用，写入路径看的是这里的 `user`。
     """
+    # ⚠️ 截断判定必须在 apply_ops **之前**：这一批 op 会写进日志、把
+    #    MAX(seq) 顶上去，先写再判就永远判不出来。
+    truncated = log_truncated(db, req.since_cursor)
+
+    # 即使要求客户端重来，也照样先收下它带来的 op ——
+    # outbox 里可能是断网期间真实录的单，那是店里的钱，不能因为重置丢掉。
     applied, duplicate, rejected = apply_ops(db, req.client_id, req.ops, user)
-    changes, cursor = fetch_changes(db, req.since_cursor, req.client_id)
+
+    if truncated:
+        return SyncResponse(
+            applied=applied,
+            duplicate=duplicate,
+            rejected=rejected,
+            # 游标归零，客户端清空镜像后带 resync=True 整份重拉
+            cursor=0,
+            changes=[],
+            reset=True,
+        )
+
+    changes, cursor = fetch_changes(
+        db, req.since_cursor, req.client_id, resync=req.resync
+    )
     return SyncResponse(
         applied=applied,
         duplicate=duplicate,
