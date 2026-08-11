@@ -163,6 +163,19 @@ export default function ModifierSheet({
                 加进
               </button>
             </div>
+
+            {/* 金额和「清空」并成一行。
+                NumPad 自带的显示条(37px) + 清空行(42px) 是两条独立的行，
+                加起来 80px 全是从按键那儿抢的 —— 横屏上按键因此被压到 34px，
+                看着就像显示不全。这两样合并成 40px 一行，按键就回得来。
+                NumPad 是三个页面共用的，所以不改它，只在这一栏里隐藏它自带的两行。 */}
+            <div className="cust-amt">
+              <span className="ca-val">{money(draftCents)}</span>
+              <button className="ca-clear" onClick={() => setDraftCents(0)}>
+                清空
+              </button>
+            </div>
+
             <NumPad value={draftCents} onChange={setDraftCents} />
           </div>
         </div>

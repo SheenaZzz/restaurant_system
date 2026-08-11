@@ -1319,16 +1319,50 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
  */
 .mod-right {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  /* 输入行 / 金额行 / 按键（吃掉剩下的） */
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
   overflow: hidden;
 }
+/* NumPad 是结账、小费、这里三处共用的，不去动它的结构。
+   在这一栏里把它自带的显示条和快捷行藏掉 —— 那两行 80px
+   由上面的 .cust-amt 用 40px 一行代替，省下来的全给按键。 */
+.mod-right .np-display,
+.mod-right .np-quick { display: none; }
 .mod-right .numpad {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   margin: 0;
+}
+
+/* 金额 + 清空一行 */
+.cust-amt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.ca-val {
+  flex: 1;
+  text-align: right;
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ca-clear {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
 }
 /* minmax(0, 56px)：**上限 56、可以往下压**。
    空间够就是原来的 56px；不够就整体等比缩，而不是把最后一排挤出去。 */
@@ -1351,13 +1385,10 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   .mod-right .reason input { padding: 10px; }
   .mod-right .numpad { margin: 0; }
   .mod-right .np-display { padding: 4px 12px; margin-bottom: 4px; font-size: 18px; }
-  /* 横屏矮屏：键高上限降到 44px（Apple 的手指目标下限）。
-     仍然是 minmax，空间再紧也只会等比缩，不会把最后一排挤出去。 */
-  .mod-right .np-grid {
-    gap: 5px;
-    grid-template-rows: repeat(4, minmax(0, 44px));
-  }
-  .mod-right .np-grid button { font-size: 20px; }
+  /* 横屏只收紧间距，**不再压键高上限**。
+     上限仍是 56px：省下的固定开销（金额行合并）已经把空间还回来了，
+     够就用 56，不够 minmax 会自己等比缩。写死 44 反而是白丢高度。 */
+  .mod-right .np-grid { gap: 5px; }
   .mod-right .np-quick { margin-top: 5px; }
   .mod-right .np-quick button { padding: 4px; font-size: 12px; }
   .mod-right .linkbtn.wide { padding: 8px; }
