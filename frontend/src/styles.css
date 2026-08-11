@@ -1307,13 +1307,37 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
  * 物理上不可能压到下面。下面的媒体查询再把键盘压紧，
  * 让它在横屏上连滚都不用滚。
  */
+/* 键盘这一栏**钉死不动**。
+ *
+ * 之前是 flex + overflow-y:auto：能防住溢出，但代价是这一栏可以滚 ——
+ * 手指在数字键上稍微一划就把整栏滚走了，盲按直接按错。
+ * 收银键盘的位置必须是固定的，这是它比系统键盘强的全部理由。
+ *
+ * 现在：输入行按内容取高，键盘吃掉剩下的全部高度并**按比例缩放键高**
+ * （见 .np-grid 的 minmax）。高度永远刚好，所以既不用滚、也不会移位。
+ * overflow:hidden 只是兜底，正常情况下没有东西会溢出。
+ */
 .mod-right {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
+.mod-right .numpad {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  margin: 0;
+}
+/* minmax(0, 56px)：**上限 56、可以往下压**。
+   空间够就是原来的 56px；不够就整体等比缩，而不是把最后一排挤出去。 */
+.mod-right .np-grid {
+  grid-template-rows: repeat(4, minmax(0, 56px));
+  min-height: 0;
+  align-content: start;
+}
+.mod-right .np-grid button { height: 100%; min-height: 0; }
 
 /* 矮横屏（iPad 横屏可视高约 650–690）：把键盘压紧到能整个放进那一栏。
    44px 是 Apple 的手指目标下限，不再往下压 —— 点不准比多滚一下更糟。 */
@@ -1327,10 +1351,13 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   .mod-right .reason input { padding: 10px; }
   .mod-right .numpad { margin: 0; }
   .mod-right .np-display { padding: 4px 12px; margin-bottom: 4px; font-size: 18px; }
-  .mod-right .np-grid { gap: 5px; }
-  /* 44px 是 Apple 的手指目标下限。压到这里为止 ——
-     再小就会误触，而在餐馆里误触一个数字比多滚一下严重得多。 */
-  .mod-right .np-grid button { height: 44px; font-size: 20px; }
+  /* 横屏矮屏：键高上限降到 44px（Apple 的手指目标下限）。
+     仍然是 minmax，空间再紧也只会等比缩，不会把最后一排挤出去。 */
+  .mod-right .np-grid {
+    gap: 5px;
+    grid-template-rows: repeat(4, minmax(0, 44px));
+  }
+  .mod-right .np-grid button { font-size: 20px; }
   .mod-right .np-quick { margin-top: 5px; }
   .mod-right .np-quick button { padding: 4px; font-size: 12px; }
   .mod-right .linkbtn.wide { padding: 8px; }
