@@ -1595,3 +1595,27 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   border-radius: 8px;
   cursor: pointer;
 }
+
+/* ---- 账户 ----
+   一人一卡片。每张卡自己保存 —— 改名和改密码是两个不同的写入，
+   合成一个"全部保存"会让人以为不填密码就等于把密码清空了。 */
+.acct-list { display: flex; flex-direction: column; gap: 12px; margin: 12px 0; }
+.acct {
+  padding: 12px 14px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.ac-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.ac-role { font-size: 16px; font-weight: 600; color: var(--text); }
+/* 还有几处登录 —— 靠右，改密码前该看见的数字 */
+.ac-sess { margin-left: auto; font-size: 13px; color: var(--muted); }
+.acct .sheet-actions { margin-top: 10px; }
+.acct .linkbtn.wide { margin-top: 10px; }

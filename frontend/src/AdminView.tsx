@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { catLabel, tr, paren } from './i18n'
-import { authFetch } from './auth'
+import { authFetch, getIdentity, refreshIdentity } from './auth'
 import { money, refreshCatalog } from './catalog'
 
 /**
- * 老板改价页。人头价 / 菜价 / 加料目录。
+ * 老板后台。人头价 / 菜价 / 加料目录 / 账户。
  *
  * ⚠️ 只给 admin。DESIGN.md 的权限矩阵里「改菜单/价格」只有老板打勾 ——
  *    改价能让每一单的钱都变，和录小费、设税率不是一个量级。
@@ -14,6 +14,10 @@ import { money, refreshCatalog } from './catalog'
  *   · 人头价：换生效日 = 新增一版，旧价原样留着（月报要回查）
  *   · 菜价  ：直接改，因为账单落的是 unit_price_cents 快照
  *   · 加料  ：整份替换，顺序就是列表顺序；删掉的是停用不是删除
+ *
+ * 账户页只做「看名字、改名字、重设密码」。**看不到原密码** ——
+ * 库里是 argon2 哈希，不可逆。界面上必须把这句话说出来，
+ * 否则老板会以为是自己没找到。
  */
 
 interface BuffetRow {
@@ -50,11 +54,23 @@ interface Pricing {
   business_date: string
 }
 
+interface UserRow {
+  id: number
+  username: string
+  display_name: string
+  role: string
+  role_label: string
+  role_label_en: string
+  active: boolean
+  /** 这个账号现在有几个没过期、没登出的会话 */
+  sessions: number
+}
+
 const PERIOD: Record<string, string> = { lunch: '午市', dinner: '晚市' }
 const KIND: Record<string, string> = { admission: '自助餐', drink: '饮料' }
 const GUEST: Record<string, string> = { adult: '成人', child: '儿童', senior: '长者' }
 
-type Tab = 'buffet' | 'menu' | 'mods'
+type Tab = 'buffet' | 'menu' | 'mods' | 'users'
 
 export default function AdminView() {
   const [data, setData] = useState<Pricing | null>(null)
@@ -69,6 +85,12 @@ export default function AdminView() {
   const [menuEdit, setMenuEdit] = useState<Record<number, { price: number | null; active: boolean }>>({})
   const [mods, setMods] = useState<ModRow[]>([])
   const [q, setQ] = useState('')
+
+  // 账户。单独拉 —— 改价页天天开，账户一年动不了两次，没必要每次都查。
+  const [users, setUsers] = useState<UserRow[] | null>(null)
+  const [uEdit, setUEdit] = useState<Record<number, { username: string; display_name: string }>>({})
+  const [pw, setPw] = useState<Record<number, string>>({})
+  const [me, setMe] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setErr(null)
@@ -85,13 +107,39 @@ export default function AdminView() {
       )
       setMods(d.modifiers.filter((m) => m.active).map((m) => ({ ...m })))
     } catch (e) {
-      setErr(String(e).includes('403') ? '只有老板账号能改价' : '需要联网才能读取')
+      setErr(tr(String(e).includes('403') ? '只有老板账号能改价' : '需要联网才能读取'))
     }
   }, [])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  const takeUsers = useCallback((list: UserRow[]) => {
+    setUsers(list)
+    setUEdit(
+      Object.fromEntries(
+        list.map((u) => [u.id, { username: u.username, display_name: u.display_name }]),
+      ),
+    )
+    setPw({})
+  }, [])
+
+  const loadUsers = useCallback(async () => {
+    setErr(null)
+    try {
+      const res = await authFetch('/api/admin/users')
+      if (!res.ok) throw new Error(String(res.status))
+      takeUsers(((await res.json()) as { users: UserRow[] }).users)
+      setMe((await getIdentity())?.username ?? null)
+    } catch {
+      setErr(tr('需要联网才能读取'))
+    }
+  }, [takeUsers])
+
+  useEffect(() => {
+    if (tab === 'users' && users === null) void loadUsers()
+  }, [tab, users, loadUsers])
 
   async function save(path: string, body: unknown, what: string) {
     setBusy(true)
@@ -114,9 +162,40 @@ export default function AdminView() {
       // 前台缓存的菜单/价格/加料都从 catalog 来 —— 不刷新的话
       // iPad 上还会用旧价显示，直到下次冷启动
       await refreshCatalog()
-      setMsg(`${what}已保存。前台会用新价，已经开出去的单不受影响。`)
+      setMsg(`${what} · ${tr('已保存。前台会用新价，已经开出去的单不受影响。')}`)
     } catch {
-      setErr('保存失败，检查网络后重试')
+      setErr(tr('保存失败，检查网络后重试'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 账户的写入。三个入口都回整份列表，直接换掉本地状态。 */
+  async function saveUser(path: string, body: unknown, ok: string) {
+    setBusy(true)
+    setErr(null)
+    setMsg(null)
+    try {
+      const res = await authFetch(`/api/admin/${path}`, {
+        method: path.endsWith('/password') ? 'POST' : 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        // 登录名重复是唯一一个老板真会撞上的错误，值得一句翻过的人话。
+        // 其它的照搬服务端 detail —— 那些是不该发生的情况，
+        // 原样显示比翻译成一句糊话更有助于排查。
+        if (res.status === 409) throw new Error(tr('这个登录名已经有人用了'))
+        const d = await res.json().catch(() => null)
+        throw new Error(d?.detail ?? String(res.status))
+      }
+      takeUsers(((await res.json()) as { users: UserRow[] }).users)
+      // 改的是自己的名字时，本地缓存的身份会过期（顶栏还显示旧名字）
+      await refreshIdentity().catch(() => null)
+      setMe((await getIdentity())?.username ?? null)
+      setMsg(ok)
+    } catch (e) {
+      setErr(String(e).replace(/^Error:\s*/, ''))
     } finally {
       setBusy(false)
     }
@@ -160,6 +239,9 @@ export default function AdminView() {
         <button className={tab === 'mods' ? 'on' : ''} onClick={() => setTab('mods')}>
           {tr('常用要求')}{modsDirty && <span className="cnt warn">{tr('改')}</span>}
         </button>
+        <button className={tab === 'users' ? 'on' : ''} onClick={() => setTab('users')}>
+          {tr('账户')}
+        </button>
       </div>
 
       {err && <p className="err">{err}</p>}
@@ -196,7 +278,7 @@ export default function AdminView() {
                         onChange={(v) => setBuffet((s) => ({ ...s, [bkey(b)]: v }))}
                       />
                       {buffet[bkey(b)] !== b.price_cents && (
-                        <span className="pc-was">原 {money(b.price_cents)}</span>
+                        <span className="pc-was">{tr('原')} {money(b.price_cents)}</span>
                       )}
                     </label>
                   ))}
@@ -221,7 +303,7 @@ export default function AdminView() {
                       price_cents: buffet[bkey(b)] ?? b.price_cents,
                     })),
                   },
-                  '人头价',
+                  tr('人头价'),
                 )
               }
             >
@@ -234,7 +316,8 @@ export default function AdminView() {
       {tab === 'menu' && (
         <>
           <p className="hint">
-            改菜价<b>{tr('不影响已经开出去的单')}</b>{tr('—— 下单时存的是当时的价格快照。 下架的菜不会再出现在点菜页，但历史账单照常显示。')}</p>
+            {tr('改菜价不影响已经开出去的单 —— 下单时存的是当时的价格快照。下架的菜不再出现在点菜页，历史账单照常显示。')}
+          </p>
           <input
             className="search"
             value={q}
@@ -275,7 +358,7 @@ export default function AdminView() {
                             setMenuEdit((s) => ({ ...s, [m.id]: { ...s[m.id], active: !s[m.id].active } }))
                           }
                         >
-                          {e?.active ? '在售' : '已下架'}
+                          {e?.active ? tr('在售') : tr('已下架')}
                         </button>
                       </div>
                     )
@@ -300,7 +383,7 @@ export default function AdminView() {
                       active: menuEdit[m.id]?.active ?? m.active,
                     })),
                   },
-                  '菜价',
+                  tr('菜价'),
                 )
               }
             >
@@ -313,9 +396,11 @@ export default function AdminView() {
       {tab === 'mods' && (
         <>
           <p className="hint">
-            点菜时「定制」里的常用要求。<b>{tr('上下箭头调顺序')}</b>{tr('，顺序就是点菜页的显示顺序。 免费的填 0。')}</p>
+            {tr('点菜「定制」里的常用要求。上下箭头调顺序，顺序就是点菜页的显示顺序。免费的填 0。')}
+          </p>
           <p className="hint warnbox">
-            删掉一条是<b>{tr('停用，不是删除')}</b>{tr('—— 历史账单上加过这一项的记录必须留着。 停用后它不再出现在点菜页，已经开出去的单照常显示。')}</p>
+            {tr('删掉一条是停用，不是删除 —— 历史账单上加过这一项的记录必须留着。停用后它不再出现在点菜页，已经开出去的单照常显示。')}
+          </p>
 
           <div className="mod-edit-list">
             {mods.map((m, i) => (
@@ -367,13 +452,138 @@ export default function AdminView() {
                       price_cents: m.price_cents,
                     })),
                   },
-                  '常用要求',
+                  tr('常用要求'),
                 )
               }
             >
               {busy ? tr('保存中…') : modsDirty ? tr('保存常用要求') : tr('未改动')}
             </button>
           </div>
+        </>
+      )}
+
+      {tab === 'users' && (
+        <>
+          <p className="hint">
+            {tr('每个人一个账号，账单上「谁操作的」就是这里的名字。')}
+          </p>
+          <p className="hint warnbox">
+            {tr('密码在库里是不可逆的哈希，看不到原文 —— 只能重设一个新的。重设会把这个账号在所有设备上的登录踢掉（最多 15 分钟内生效）。')}
+          </p>
+
+          {users === null ? (
+            <p className="hint">{tr('载入中…')}</p>
+          ) : (
+            <div className="acct-list">
+              {users.map((u) => {
+                const e = uEdit[u.id]
+                const dirty =
+                  !!e && (e.username !== u.username || e.display_name !== u.display_name)
+                const isMe = u.username === me
+                return (
+                  <section key={u.id} className="acct">
+                    <div className="ac-top">
+                      <span className="ac-role">
+                        {catLabel({ label: u.role_label, label_en: u.role_label_en })}
+                      </span>
+                      {isMe && <span className="cnt">{tr('当前登录')}</span>}
+                      <span className="ac-sess">
+                        {u.sessions > 0
+                          ? `${u.sessions} ${tr('处登录')}`
+                          : tr('没有设备登录')}
+                      </span>
+                    </div>
+
+                    <label className="reason">
+                      {tr('显示名')}
+                      <input
+                        // 显示名是**数据**（账单上要看到它），跟着界面语言走没有意义
+                        value={e?.display_name ?? ''}
+                        onChange={(ev) =>
+                          setUEdit((s) => ({
+                            ...s,
+                            [u.id]: { ...s[u.id], display_name: ev.target.value },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="reason">
+                      {tr('登录名')}
+                      <input
+                        value={e?.username ?? ''}
+                        autoCapitalize="off"
+                        autoCorrect="off"
+                        onChange={(ev) =>
+                          setUEdit((s) => ({
+                            ...s,
+                            [u.id]: { ...s[u.id], username: ev.target.value },
+                          }))
+                        }
+                      />
+                    </label>
+
+                    <div className="sheet-actions">
+                      <button
+                        disabled={busy || !dirty}
+                        onClick={() =>
+                          setUEdit((s) => ({
+                            ...s,
+                            [u.id]: { username: u.username, display_name: u.display_name },
+                          }))
+                        }
+                      >
+                        {tr('撤销改动')}
+                      </button>
+                      <button
+                        className="primary"
+                        disabled={busy || !dirty || !e.username.trim() || !e.display_name.trim()}
+                        onClick={() =>
+                          saveUser(
+                            `users/${u.id}`,
+                            {
+                              username: e.username.trim(),
+                              display_name: e.display_name.trim(),
+                            },
+                            tr('名字已保存'),
+                          )
+                        }
+                      >
+                        {busy ? tr('保存中…') : dirty ? tr('保存') : tr('未改动')}
+                      </button>
+                    </div>
+
+                    <label className="reason">
+                      {tr('新密码')}
+                      <input
+                        // 刻意**不遮码**：老板设完要念给员工听，遮起来只会让他
+                        // 打错了也不知道。这不是在输入自己的密码。
+                        value={pw[u.id] ?? ''}
+                        placeholder={tr('至少 4 位')}
+                        autoCapitalize="off"
+                        autoCorrect="off"
+                        onChange={(ev) => setPw((s) => ({ ...s, [u.id]: ev.target.value }))}
+                      />
+                    </label>
+                    <button
+                      className="linkbtn wide danger"
+                      disabled={busy || (pw[u.id]?.trim().length ?? 0) < 4}
+                      onClick={() =>
+                        saveUser(
+                          `users/${u.id}/password`,
+                          { password: pw[u.id].trim() },
+                          `${tr(u.display_name)} · ${tr('新密码已生效，原有登录已全部失效')}${
+                            isMe ? ` · ${tr('你自己也要用新密码重新登录')}` : ''
+                          }`,
+                        )
+                      }
+                    >
+                      {tr('重设密码')}
+                    </button>
+                  </section>
+                )
+              })}
+            </div>
+          )}
         </>
       )}
     </>
