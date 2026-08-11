@@ -7,6 +7,7 @@ import {
   refreshIdentity,
   type Identity,
 } from './auth'
+import AdminView from './AdminView'
 import { CarriedOverBanner, ClockDriftBanner } from './CarriedOver'
 import db from './db'
 import DeadLetters from './DeadLetters'
@@ -48,7 +49,7 @@ export default function App() {
   const [detail, setDetail] = useState<string>('—')
   const [tone, setTone] = useState<'ok' | 'warn' | 'bad'>('ok')
   const [dead, setDead] = useState(0)
-  const [view, setView] = useState<'floor' | 'togo' | 'list' | 'month'>('floor')
+  const [view, setView] = useState<'floor' | 'togo' | 'list' | 'month' | 'admin'>('floor')
   const [showDead, setShowDead] = useState(false)
   const [showSync, setShowSync] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -207,6 +208,16 @@ export default function App() {
               月报
             </button>
           )}
+          {/* 改价**只给老板**，比月报还严 —— 见 DESIGN.md 的权限矩阵。
+              服务端 require_role("admin") 才是真正拦住的那道。 */}
+          {identity.role === 'admin' && (
+            <button
+              className={view === 'admin' ? 'on' : ''}
+              onClick={() => setView('admin')}
+            >
+              修改
+            </button>
+          )}
         </div>
       )}
 
@@ -229,6 +240,8 @@ export default function App() {
         <ToGoView role={identity.role} />
       ) : view === 'month' ? (
         <MonthView />
+      ) : view === 'admin' ? (
+        <AdminView />
       ) : (
         <ListView role={identity.role} />
       )}
