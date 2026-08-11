@@ -297,6 +297,137 @@ def set_tax(body: TaxIn, user: CurrentUser, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# 对账告警的下钻：这几单到底是哪几单
+# ---------------------------------------------------------------------------
+
+class DayCheckOut(BaseModel):
+    check_uuid: str | None
+    table_label: str | None
+    source: str
+    status: str
+    opened_at: datetime
+    closed_at: datetime | None
+    total_cents: int
+    paid_cents: int
+    payment_method: str | None
+    customer_name: str | None
+    operator: str | None
+    # 作废才有：原因和记录人
+    void_reason: str | None
+    voided_by: str | None
+
+
+# 单张账单的应收 / 已收。
+#
+# ⚠️ 这两个表达式必须和上面 _SQL 里算 mismatch_count 用的**完全一致**。
+#    一个说"有 3 单不符"、点进去列出 2 单，比不给下钻更糟 ——
+#    那会让人开始怀疑所有数字。所以两处共用同一段定义。
+_PER_CHECK = """
+    SELECT c.id,
+           c.client_uuid::text AS check_uuid,
+           t.label             AS table_label,
+           c.source, c.status, c.opened_at, c.closed_at,
+           c.payment_method,
+           -- 客人姓名在 pickup_order 上，不在账单上（PII 原则：能不收就不收，
+           -- 只有自提单才需要姓名核对身份）
+           po.customer_name,
+           u.display_name      AS operator,
+             COALESCE((SELECT SUM(h.qty * h.unit_price_cents) FROM head_charge h
+                        WHERE h.check_id = c.id), 0)
+           + COALESCE((SELECT SUM(o.qty * o.unit_price_cents) FROM order_line o
+                        WHERE o.check_id = c.id AND o.status <> 'voided'), 0)
+           + c.service_charge_cents + c.tax_cents AS total_cents,
+             COALESCE(c.paid_cash_cents, 0)
+           + COALESCE(c.paid_card_cents, 0)
+           + COALESCE(c.paid_other_cents, 0) AS paid_cents
+      FROM dining_check c
+      JOIN service_period p ON p.id = c.period_id
+      LEFT JOIN dining_table t ON t.id = c.table_id
+      LEFT JOIN app_user u ON u.id = c.opened_by
+      LEFT JOIN pickup_order po ON po.check_id = c.id
+     WHERE p.business_date = :d
+"""
+
+_KIND_WHERE = {
+    # 作废：金额本身不进营业额，但"作废了多少钱"正是老板要看的
+    "voided": "status = 'voided'",
+    # 已结但没选支付方式 —— 关单时漏录
+    "unpaid": "status = 'closed' AND payment_method IS NULL",
+    # 记了方式但金额对不上 —— 最常见是结账后又改了单
+    "mismatch": (
+        "status = 'closed' AND payment_method IS NOT NULL"
+        " AND paid_cents <> total_cents"
+    ),
+}
+
+
+@router.get("/day-checks", response_model=list[DayCheckOut], dependencies=[_GUARD])
+def day_checks(
+    d: date = Query(alias="date"),
+    kind: str = Query(),
+    db: Session = Depends(get_db),
+):
+    """某个营业日里，某一类对账告警具体是哪几单。
+
+    月报上只给一个「3 单」的计数，人是没法处理的 ——
+    得知道是哪三单、差多少，才谈得上去改。
+    """
+    where = _KIND_WHERE.get(kind)
+    if where is None:
+        raise HTTPException(
+            status_code=422, detail=f"未知的类别：{kind}（voided/unpaid/mismatch）"
+        )
+
+    rows = db.execute(
+        text(
+            f"WITH per_check AS ({_PER_CHECK})"
+            f" SELECT * FROM per_check WHERE {where} ORDER BY opened_at"
+        ),
+        {"d": d},
+    ).mappings().all()
+
+    # 作废原因在 check_exception 里，且**撤销过的不算** ——
+    # 撤销记录绝不删除，所以要按 reverted_at IS NULL 过滤
+    reasons: dict[int, tuple[str | None, str | None]] = {}
+    if kind == "voided" and rows:
+        for r in db.execute(
+            text(
+                """
+                SELECT e.check_id, e.reason, u.display_name AS by
+                  FROM check_exception e
+                  LEFT JOIN app_user u ON u.id = e.recorded_by
+                 WHERE e.kind = 'void' AND e.reverted_at IS NULL
+                   AND e.check_id = ANY(:ids)
+                """
+            ),
+            {"ids": [r["id"] for r in rows]},
+        ).mappings():
+            reasons[r["check_id"]] = (r["reason"], r["by"])
+
+    out = []
+    for r in rows:
+        reason, by = reasons.get(r["id"], (None, None))
+        out.append(
+            DayCheckOut(
+                check_uuid=r["check_uuid"],
+                table_label=r["table_label"],
+                source=r["source"],
+                status=r["status"],
+                opened_at=r["opened_at"],
+                closed_at=r["closed_at"],
+                total_cents=int(r["total_cents"]),
+                paid_cents=int(r["paid_cents"]),
+                payment_method=r["payment_method"],
+                customer_name=r["customer_name"],
+                operator=r["operator"],
+                void_reason=reason,
+                voided_by=by,
+            )
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 营业日设置：时区 + 日界
 # ---------------------------------------------------------------------------
 

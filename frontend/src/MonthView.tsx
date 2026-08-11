@@ -24,6 +24,32 @@ export interface DayRow {
   tips_updated_by: string | null
 }
 
+/** 对账告警的三类。和服务端 _KIND_WHERE 的键一一对应。 */
+export type DrillKind = 'voided' | 'unpaid' | 'mismatch'
+
+/** 下钻列表里的一张账单。 */
+export interface DayCheck {
+  check_uuid: string | null
+  table_label: string | null
+  source: string
+  status: string
+  opened_at: string
+  closed_at: string | null
+  total_cents: number
+  paid_cents: number
+  payment_method: string | null
+  customer_name: string | null
+  operator: string | null
+  void_reason: string | null
+  voided_by: string | null
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  dine_in: '堂食',
+  buffet_togo: '自助打包',
+  phone_order: '电话单',
+}
+
 const WEEK = ['一', '二', '三', '四', '五', '六', '日']
 
 /** 缓存最近一次拉到的月报，离线时至少能看到上次的数字。 */
@@ -40,6 +66,8 @@ export default function MonthView() {
   const [savingTip, setSavingTip] = useState(false)
   const [tipErr, setTipErr] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
+  /** 正在下钻看哪一类告警的明细 */
+  const [drill, setDrill] = useState<DrillKind | null>(null)
   // 从「跳到某一天」进来时，加载完自动打开那天的明细
   const [pendingDay, setPendingDay] = useState<string | null>(null)
 
@@ -78,6 +106,39 @@ export default function MonthView() {
     }
     setPendingDay(null)
   }, [pendingDay, rows, state])
+
+  // 换一天（或关掉日详情）时把下钻也收起来，
+  // 否则下次点开另一天会直接弹出上一天的明细
+  useEffect(() => {
+    setDrill(null)
+  }, [pick?.business_date])
+
+  async function saveTip() {
+    if (!pick) return
+    setSavingTip(true)
+    setTipErr(null)
+    try {
+      const res = await authFetch('/api/reports/tips', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_date: pick.business_date,
+          tips_total_cents: tipCents,
+        }),
+      })
+      if (!res.ok) throw new Error(String(res.status))
+      const updated: DayRow = await res.json()
+      setPick(updated)
+      setRows((rs) =>
+        rs.map((x) => (x.business_date === updated.business_date ? updated : x)),
+      )
+    } catch {
+      // 月报是在线专用的，录不上就明说，不要假装成功
+      setTipErr('保存失败，检查网络后重试')
+    } finally {
+      setSavingTip(false)
+    }
+  }
 
   function shift(delta: number) {
     const d = new Date(year, month - 1 + delta, 1)
@@ -244,105 +305,233 @@ export default function MonthView() {
 
       {pick && (
         <div className="sheet-back" onClick={() => setPick(null)}>
-          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+          {/* 左右分栏：左边数字、右边小费键盘。
+              竖着排的话，键盘把弹层撑满整屏，「保存小费」被挤到屏幕外，
+              每次录小费都要先滚一下 —— 和结账弹层当初一个毛病，用同一个解法。 */}
+          <div className="sheet pay-wide day-sheet" onClick={(e) => e.stopPropagation()}>
             <h2>{pick.business_date}</h2>
-            <p className="total">{money(pick.revenue_cents)}</p>
-            <table className="kv">
-              <tbody>
-                <Row k="单数" v={String(pick.check_count)} />
-                <Row k="Buffet 客流" v={String(pick.guests)} />
-                <Row k="饮料份数" v={String(pick.drinks)} />
-                <Row k="大桌服务费" v={money(pick.service_cents)} />
-                <Row k="税" v={money(pick.tax_cents)} />
-                <Row k="现金" v={money(pick.cash_cents)} />
-                <Row k="刷卡" v={money(pick.card_cents)} />
-                <Row k="其它" v={money(pick.other_cents)} />
-                <Row
-                  k="小费"
-                  v={
-                    pick.tips_total_cents > 0 && pick.revenue_cents > 0
-                      ? `${money(pick.tips_total_cents)}（${((pick.tips_total_cents / pick.revenue_cents) * 100).toFixed(1)}%）`
-                      : money(pick.tips_total_cents)
-                  }
-                />
-                {pick.voided_count > 0 && (
-                  <Row
-                    k="作废"
-                    v={`${pick.voided_count} 单 · ${money(pick.voided_cents)}`}
-                    bad
-                  />
-                )}
-                {pick.unpaid_count > 0 && (
-                  <Row k="未记支付方式" v={`${pick.unpaid_count} 单`} bad />
-                )}
-                {pick.mismatch_count > 0 && (
-                  <Row k="支付与账单不符" v={`${pick.mismatch_count} 单`} bad />
-                )}
-              </tbody>
-            </table>
-            <div className="tipbox">
-              <div className="tiplabel">当日小费总额</div>
-              <NumPad value={tipCents} onChange={setTipCents} />
-              <p className="hint">
-                一天录一个总数即可 —— 卡机小费和桌上现金加一起。
-                {pick.tips_updated_by && ` 上次由 ${pick.tips_updated_by} 录入。`}
-              </p>
-              {tipErr && <p className="err">{tipErr}</p>}
-              <button
-                className="linkbtn wide"
-                disabled={savingTip}
-                onClick={async () => {
-                  const cents = tipCents
-                  setSavingTip(true)
-                  setTipErr(null)
-                  try {
-                    const res = await authFetch('/api/reports/tips', {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        business_date: pick.business_date,
-                        tips_total_cents: cents,
-                      }),
-                    })
-                    if (!res.ok) throw new Error(String(res.status))
-                    const updated: DayRow = await res.json()
-                    setPick(updated)
-                    setRows((rs) =>
-                      rs.map((x) =>
-                        x.business_date === updated.business_date ? updated : x,
-                      ),
-                    )
-                  } catch {
-                    // 月报是在线专用的，录不上就明说，不要假装成功
-                    setTipErr('保存失败，检查网络后重试')
-                  } finally {
-                    setSavingTip(false)
-                  }
-                }}
-              >
+            <div className="pay-split">
+              <div className="pay-left">
+                <p className="total">{money(pick.revenue_cents)}</p>
+                <table className="kv">
+                  <tbody>
+                    <Row k="单数" v={String(pick.check_count)} />
+                    <Row k="Buffet 客流" v={String(pick.guests)} />
+                    <Row k="饮料份数" v={String(pick.drinks)} />
+                    <Row k="大桌服务费" v={money(pick.service_cents)} />
+                    <Row k="税" v={money(pick.tax_cents)} />
+                    <Row k="现金" v={money(pick.cash_cents)} />
+                    <Row k="刷卡" v={money(pick.card_cents)} />
+                    <Row k="其它" v={money(pick.other_cents)} />
+                    <Row
+                      k="小费"
+                      v={
+                        pick.tips_total_cents > 0 && pick.revenue_cents > 0
+                          ? `${money(pick.tips_total_cents)}（${((pick.tips_total_cents / pick.revenue_cents) * 100).toFixed(1)}%）`
+                          : money(pick.tips_total_cents)
+                      }
+                    />
+                    {/* 这三行都可以点开看是哪几单。
+                        只给一个「3 单」的计数，人是没法处理的 ——
+                        得知道是哪三单、差多少，才谈得上去改。 */}
+                    {pick.voided_count > 0 && (
+                      <Row
+                        k="作废"
+                        v={`${pick.voided_count} 单 · ${money(pick.voided_cents)}`}
+                        bad
+                        onOpen={() => setDrill('voided')}
+                      />
+                    )}
+                    {pick.unpaid_count > 0 && (
+                      <Row
+                        k="未记支付方式"
+                        v={`${pick.unpaid_count} 单`}
+                        bad
+                        onOpen={() => setDrill('unpaid')}
+                      />
+                    )}
+                    {pick.mismatch_count > 0 && (
+                      <Row
+                        k="支付与账单不符"
+                        v={`${pick.mismatch_count} 单`}
+                        bad
+                        onOpen={() => setDrill('mismatch')}
+                      />
+                    )}
+                  </tbody>
+                </table>
+
+                {/* 脚注放左栏底部，不占竖向堆叠的高度。
+                    分界时间是设置项，这里不写死具体几点 —— 以前这句写着
+                    「凌晨 2 点前的单算前一天」，改成 0 点后就成了假的。
+                    过时的说明比没有说明更糟。 */}
+                <p className="hint">
+                  数字来自服务端，按<b>营业日</b>归集（分界时间见 ⚙︎ 设置）。
+                </p>
+              </div>
+
+              <div className="pay-right">
+                <div className="tipbox">
+                  <div className="tiplabel">当日小费总额</div>
+                  <NumPad value={tipCents} onChange={setTipCents} />
+                  <p className="hint">
+                    一天录一个总数 —— 卡机小费和桌上现金加一起。
+                    {pick.tips_updated_by && ` 上次由 ${pick.tips_updated_by} 录入。`}
+                  </p>
+                  {tipErr && <p className="err">{tipErr}</p>}
+                </div>
+              </div>
+            </div>
+
+            {/* 「保存小费」是这一屏的主操作，放底部固定的动作条。
+                以前它是小费框里一个 linkbtn，而底部只有「关闭」——
+                和设置页当初一样的毛病：显眼的按钮不是你要按的那个，
+                而且键盘一高就把它挤到屏幕外，每次都得先滚一下。 */}
+            <div className="sheet-actions">
+              <button onClick={() => setPick(null)}>关闭</button>
+              <button className="primary" disabled={savingTip} onClick={saveTip}>
                 {savingTip ? '保存中…' : '保存小费'}
               </button>
             </div>
-
-            <p className="hint">
-              数字来自服务端，按**营业日**归集（凌晨 2 点前的单算前一天）。
-            </p>
-            <div className="sheet-actions">
-              <button onClick={() => setPick(null)}>关闭</button>
-            </div>
           </div>
+
+          {drill && (
+            <DayCheckList
+              date={pick.business_date}
+              kind={drill}
+              onClose={() => setDrill(null)}
+            />
+          )}
         </div>
       )}
     </>
   )
 }
 
-function Row({ k, v, bad }: { k: string; v: string; bad?: boolean }) {
+function Row({
+  k,
+  v,
+  bad,
+  /** 传了就变成可点的行 —— 点开看这个数字是由哪几单构成的 */
+  onOpen,
+}: {
+  k: string
+  v: string
+  bad?: boolean
+  onOpen?: () => void
+}) {
   return (
-    <tr>
+    <tr className={onOpen ? 'tappable-row' : ''}>
       <td className="dim">{k}</td>
-      <td className={`num${bad ? ' badText' : ''}`}>{v}</td>
+      <td className={`num${bad ? ' badText' : ''}`}>
+        {onOpen ? (
+          <button className="drill" onClick={onOpen}>
+            {v} <span className="cb-go">›</span>
+          </button>
+        ) : (
+          v
+        )}
+      </td>
     </tr>
+  )
+}
+
+const DRILL_TITLE: Record<DrillKind, string> = {
+  voided: '作废的账单',
+  unpaid: '未记支付方式',
+  mismatch: '支付与账单不符',
+}
+
+const DRILL_HINT: Record<DrillKind, string> = {
+  voided: '作废的金额不计入营业额，但「作废了多少钱」正是要盯的数。',
+  unpaid: '已经关单、但没选支付方式。日结对不上时先补这些。',
+  mismatch:
+    '记了支付方式，但收的钱和账单金额对不上。最常见的成因是结账之后又改了单 —— 到账单详情里「补收差额」即可。',
+}
+
+/**
+ * 某一类对账告警具体是哪几单。
+ *
+ * 服务端用**和聚合计数完全同一段谓词**筛出来 ——
+ * 报表说 3 单、点进去只列 2 单的话，人会开始怀疑所有数字。
+ */
+function DayCheckList({
+  date,
+  kind,
+  onClose,
+}: {
+  date: string
+  kind: DrillKind
+  onClose: () => void
+}) {
+  const [rows, setRows] = useState<DayCheck[] | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    authFetch(`/api/reports/day-checks?date=${date}&kind=${kind}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then(setRows)
+      // 月报是在线专用的 —— 拿不到就明说，不要显示一个空列表
+      // 让人以为"没有问题单"
+      .catch(() => setErr('需要联网才能查看明细'))
+  }, [date, kind])
+
+  return (
+    <div className="sheet-back" onClick={onClose}>
+      <div className="sheet wide" onClick={(e) => e.stopPropagation()}>
+        <h2>
+          {DRILL_TITLE[kind]}
+          <span className="period-tag">{date}</span>
+        </h2>
+        <p className="hint">{DRILL_HINT[kind]}</p>
+
+        {err && <p className="err">{err}</p>}
+        {!rows && !err && <p className="hint">载入中…</p>}
+        {rows?.length === 0 && <p className="hint">这一天没有这类账单。</p>}
+
+        <div className="carry-list">
+          {rows?.map((r) => {
+            const due = r.total_cents - r.paid_cents
+            return (
+              <div key={r.check_uuid ?? `${r.opened_at}`} className="carry-row static">
+                <span className="cr-day">
+                  {new Date(r.opened_at).toLocaleTimeString('zh-CN', {
+                    hour12: false,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </span>
+                <span className="cr-table">
+                  {r.table_label ?? r.customer_name ?? SOURCE_LABEL[r.source] ?? '自提'}
+                </span>
+                <span className="cr-money">
+                  {money(r.total_cents)}
+                  {kind !== 'voided' && (
+                    <span className="dim"> · 已收 {money(r.paid_cents)}</span>
+                  )}
+                </span>
+                {kind === 'mismatch' && (
+                  <span className={due > 0 ? 'warnText' : 'badText'}>
+                    {due > 0 ? `待收 ${money(due)}` : `多收 ${money(-due)}`}
+                  </span>
+                )}
+                <span className="cr-who">{r.operator ?? '—'}</span>
+                {r.void_reason && (
+                  <span className="cr-reason">
+                    {r.void_reason}
+                    {r.voided_by && ` · ${r.voided_by}`}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="sheet-actions">
+          <button onClick={onClose}>关闭</button>
+        </div>
+      </div>
+    </div>
   )
 }
 

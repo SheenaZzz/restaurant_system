@@ -1119,3 +1119,42 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 /* ---- 待收 / 应退 ---- */
 .duebox { margin: 8px 0 4px; }
 .duebox .num.strong { font-size: 19px; font-weight: 700; color: var(--warn); }
+
+/* ---- 月报：对账告警下钻 ---- */
+
+/* 可点的统计行。整行给 hover 提示，但只有右侧数字是可点区域 —— 
+   左边标签也可点的话，误触率会明显上升 */
+.tappable-row td.num { padding: 2px 0; }
+.drill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.drill .cb-go { font-size: 16px; }
+
+/* 下钻列表里的行是只读的，不该看起来能点 */
+.carry-row.static { cursor: default; border-left-color: var(--line); }
+.carry-row.static .cr-money { flex: 1; }
+.cr-reason {
+  flex-basis: 100%;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 日详情的分栏：左边数字列表要能滚，右边键盘固定 */
+.pay-split > .pay-left > .kv { width: 100%; }
+
+/* 日详情：h2 和底部动作条固定，只有中间分栏可滚。
+   「保存小费」必须永远够得着 —— 这一屏就是为了录它。 */
+.sheet.pay-wide.day-sheet { display: flex; flex-direction: column; }
+.day-sheet .pay-split { flex: 1; min-height: 0; }
+.day-sheet .pay-left { overflow-y: auto; min-height: 0; }
+.day-sheet .sheet-actions { flex: none; }
