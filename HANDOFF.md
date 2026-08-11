@@ -19,7 +19,7 @@
 
 | | |
 |---|---|
-| 提交 | 48 |
+| 提交 | 51 |
 | 文件 | 87 |
 | 数据库表 | 21 |
 | Alembic 迁移 | 12（head `c4e91f27a8b3`） |
@@ -62,6 +62,13 @@ INSERT INTO sync_op (op_id, ...) ON CONFLICT (op_id) DO NOTHING RETURNING op_id
 **`sync_op` 记录和业务副作用必须在同一个事务里。**
 崩在中间会留下"记了但没生效"的洞，而重放又被幂等判断跳过 —— 静默丢数据。
 
+**推论：服务端删数据不会传到设备上。** 同步只追加，删除不产生 op，
+所以每台 iPad 的镜像里会一直留着已经不存在的单（楼面还会按它判断桌子占没占）。
+`/api/sync` 因此带了一条自愈：客户端游标是 N、而日志里 **seq ≤ N 一条不剩**
+就说明日志被截断过，回 `reset=True` 让它清空镜像重拉。
+判据不能写成 `cursor > MAX(seq)` —— `seq` 是 bigserial，DELETE 不退序列。
+细节和实测见 JOURNAL。
+
 ### 3. 授权在服务端 sync 时执行，不在前端
 
 `backend/app/sync.py` 里的 `_HANDLERS` 是唯一的权限表。
@@ -103,15 +110,20 @@ INSERT INTO sync_op (op_id, ...) ON CONFLICT (op_id) DO NOTHING RETURNING op_id
 
 **设置**（`SettingsSheet.tsx`，仅 manager/admin）：销售税率、**店所在时区 + 营业日分界**。
 
-**改价页**（`AdminView.tsx`，**仅 admin**，比设置页严）：人头价/饮料价、
-143 个菜品的价格与上下架、加料目录的内容与顺序。后端 `api/admin.py`，
-`require_role("admin")`。三块的改价语义**故意不同**：
+**老板后台**（`AdminView.tsx`，**仅 admin**，比设置页严）：人头价/饮料价、
+143 个菜品的价格与上下架、加料目录的内容与顺序、**账户**。
+后端 `api/admin.py`，`require_role("admin")`。三块的改价语义**故意不同**：
 
 | | 语义 | 为什么 |
 |---|---|---|
 | 人头价 | 换生效日=新增一版 | 月报/对账要回查"当时卖多少" |
 | 菜价 | 直接改 | 账单落的是 `unit_price_cents` 快照，动不了历史 |
 | 加料 | 整份替换，删=**停用** | `order_line_modifier` 外键指着它，删了历史断链 |
+
+账户页能改显示名/登录名、重设密码。**密码看不到**（argon2 哈希，不可逆），
+只能重设。重设会**吊销该账号所有 session** —— 老板改员工密码的场景就是
+这人离职了，不吊销的话他那台 iPad 的 refresh token 还能续 30 天。
+已发出的 access token 撤不回（JWT 不落库），所以最长还有 15 分钟窗口。
 
 **营业日**（`businessDay.ts`）：楼面/清单/汇总一律只显示**当前营业日**，
 过日界自动翻篇（不用刷新页面）。跨天没结的单**不隐藏** ——
