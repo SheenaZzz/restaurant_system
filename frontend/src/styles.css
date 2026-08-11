@@ -931,24 +931,26 @@ ol.timeline li:last-child { border-left-color: transparent; }
    标题、搜索框、购物车、确认按钮都固定，不用为了点「确认」先滚回底部。
    原来菜品区是写死的 46vh：屏幕再高也只给那么一条，
    而 143 个菜里搜出来的结果经常比它长得多。 */
+/* 点菜弹层：用**网格的显式行**给每一块划地盘，不靠 flex 收缩。
+ *
+ * 子元素顺序：h2 / 搜索框 / 菜品区 / 购物车(可能没有) / 动作条
+ * 行分配：    auto   auto     1fr      auto            auto
+ *
+ * 关键性质：网格里 auto 行**先按内容拿够高度**，1fr 才吃剩下的。
+ * 所以动作条永远有自己的一栏，既不会被挤出去，也**不会盖在菜上**。
+ *
+ * ⚠️ 两条弯路都别再走：
+ *   · flex + min-height:0 + overflow:hidden —— iOS 横屏上 WebKit 收缩
+ *     失败，溢出被裁，取消/确认整个消失。
+ *   · position: sticky 的动作条 —— 按钮是保住了，但它**盖在**滚动内容上，
+ *     菜单最底下那排菜点不到。为了能点按钮而让菜点不到，不划算。
+ */
 .sheet.menu-sheet {
   max-width: 760px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   max-height: 88vh;
-  /* ⚠️ 这里曾经是 overflow: hidden。别改回去。
-   *
-   * 那样写的前提是"内部 flex/grid 一定会正确收缩"。桌面 Chrome 上成立，
-   * **iOS 横屏上不成立** —— WebKit 对 flex→grid→可滚子元素这一串的
-   * min-height:0 处理和 Blink 不一致，收缩失败时内容溢出，
-   * 而 hidden 会把溢出的部分连同底部的取消/确认一起裁掉，
-   * 看上去就是按钮被菜品框压住、点不到。
-   *
-   * 改成 auto：万一内部还是没收缩好，最坏结果是"要滚一下"，
-   * 而不是"按钮消失"。再加上下面的 sticky 动作条兜底，
-   * 无论 iOS 怎么算，取消/确认永远在。
-   */
-  overflow-y: auto;
+  overflow: hidden;
 }
 @supports (max-height: 1dvh) {
   /* iOS 上 100vh 是地址栏收起时的高度，比可见区域大。
@@ -956,16 +958,11 @@ ol.timeline li:last-child { border-left-color: transparent; }
   .sheet.menu-sheet { max-height: 88dvh; }
 }
 
-/* 动作条钉在弹层底部。
-   这是**不依赖任何布局收缩计算**的兜底：哪怕上面的高度全算错了，
-   取消/确认也一定可见、可点。高峰期点不到"确认"等于这单录不进去。 */
+/* 动作条自己一栏，跟菜品区之间留一道分隔线，视觉上也说清"这是另一块" */
 .menu-sheet .sheet-actions {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
   margin-top: 12px;
-  padding-bottom: 2px;
-  background: var(--bg);
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 
 /* 购物车是这一屏里唯一会无限长高的东西（22 项就换行成 141px）。
