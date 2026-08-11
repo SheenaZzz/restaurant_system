@@ -44,6 +44,8 @@ export default function App() {
   >([])
   const [online, setOnline] = useState(navigator.onLine)
   const [last, setLast] = useState<string>('—')
+  /** 同步的原始计数，只在「未上传」详情里给排障用 */
+  const [detail, setDetail] = useState<string>('—')
   const [tone, setTone] = useState<'ok' | 'warn' | 'bad'>('ok')
   const [dead, setDead] = useState(0)
   const [view, setView] = useState<'floor' | 'togo' | 'list' | 'month'>('floor')
@@ -75,7 +77,13 @@ export default function App() {
   // 否则手点的那次不会刷新状态栏，会留下上一次的失败信息（误导性很强）
   function report(r: SyncResult | null, f?: SyncFailure) {
     if (r) {
-      setLast(`已同步 · applied ${r.applied} · dup ${r.duplicate} · cursor ${r.cursor}`)
+      // ⚠️ 这里原本直接显示 `applied N · dup N · cursor N`。
+      //    那是调试用的原始数字，店里没人知道 dup 和 cursor 是什么 ——
+      //    而看不懂的状态等于没有状态，出真问题时也不会有人多看一眼。
+      //    人话留在主界面，原始数字挪进「未上传」那个详情里（iPad 上
+      //    没有 devtools，真机排障还得靠它们）。
+      setLast(r.applied > 0 ? `已上传 ${r.applied} 条` : '数据都已上传')
+      setDetail(`applied ${r.applied} · dup ${r.duplicate} · cursor ${r.cursor}`)
       setTone('ok')
     } else if (f?.kind === 'offline') {
       // 关键：离线**不是错误**。说成"失败"会让员工重复操作。
@@ -278,6 +286,10 @@ export default function App() {
                 <tr>
                   <td className="dim">上次同步</td>
                   <td className="num">{last}</td>
+                </tr>
+                <tr>
+                  <td className="dim">技术细节</td>
+                  <td className="num"><code>{detail}</code></td>
                 </tr>
               </tbody>
             </table>

@@ -39,7 +39,10 @@ const CUTOFF_CHOICES: { h: number; label: string }[] = [
 export default function SettingsSheet({ onClose }: { onClose: () => void }) {
   const [cur, setCur] = useState<TaxRow | null>(null)
   const [percent, setPercent] = useState('')
-  const [from, setFrom] = useState(() => new Date().toISOString().slice(0, 10))
+  // ⚠️ 不要用 new Date().toISOString().slice(0,10) —— 那是 **UTC 日期**。
+  //    店在 UTC-7，晚上 17:00 之后 UTC 就已经是第二天了，默认生效日
+  //    会悄悄跑到明天。改用服务端下发的营业日（GET 回来之后填）。
+  const [from, setFrom] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -48,8 +51,6 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
   const [bd, setBd] = useState<BusinessDayRow | null>(null)
   const [tz, setTz] = useState('')
   const [cutoff, setCutoff] = useState(0)
-  const [bdBusy, setBdBusy] = useState(false)
-  const [bdMsg, setBdMsg] = useState<string | null>(null)
 
   useEffect(() => {
     authFetch('/api/reports/tax')
@@ -57,7 +58,8 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
       .then((d: TaxRow | null) => {
         setCur(d)
         if (d) {
-          setPercent((d.rate * 100).toFixed(3).replace(/0+$/, '').replace(/\.$/, ''))
+          setPercent(taxPercentText(d.rate))
+          setFrom(d.effective_from)
           setNote(d.note ?? '')
         }
       })
@@ -70,12 +72,27 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
         setBd(d)
         setTz(d.tz)
         setCutoff(d.business_day_cutoff_hour)
+        // 税率的生效日默认取**店里的营业日**，不是设备日期也不是 UTC 日期
+        setFrom((f) => f || d.business_date)
       })
       .catch(() => setErr('需要联网才能读取设置'))
   }, [])
 
-  const dirty =
+  const bdDirty =
     bd !== null && (tz !== bd.tz || cutoff !== bd.business_day_cutoff_hour)
+
+  // 税率只有在真的改过时才提交。
+  // ⚠️ 这里曾经出过一次真实事故：界面上有两个保存按钮，显眼的那个
+  //    只存税率。用户改了时区、点了底部的「保存」—— 时区没存上，
+  //    却凭空多出一条生效日是明天的税率记录（税率还没变）。
+  //    现在只有一个保存按钮，且逐节判断有没有改动。
+  const taxDirty = cur
+    ? percent.trim() !== taxPercentText(cur.rate) ||
+      from !== cur.effective_from ||
+      note.trim() !== (cur.note ?? '')
+    : percent.trim() !== ''
+
+  const dirty = bdDirty || taxDirty
 
   return (
     <div className="sheet-back" onClick={onClose}>
@@ -135,42 +152,6 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
               直接后果：<b>月报里靠近日界的账单可能会换一天。</b>
             </p>
 
-            {bdMsg && <p className="hint">{bdMsg}</p>}
-
-            <button
-              className="linkbtn wide"
-              disabled={bdBusy || !dirty}
-              onClick={async () => {
-                setBdBusy(true)
-                setErr(null)
-                setBdMsg(null)
-                try {
-                  const res = await authFetch('/api/reports/business-day', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      tz,
-                      business_day_cutoff_hour: cutoff,
-                    }),
-                  })
-                  if (!res.ok) throw new Error(String(res.status))
-                  const d: BusinessDayRow = await res.json()
-                  setBd(d)
-                  setTz(d.tz)
-                  setCutoff(d.business_day_cutoff_hour)
-                  // 前端的营业日口径是从 catalog 拿的 —— 不刷新的话
-                  // 清单页还会按旧的分界切，和月报对不上
-                  await refreshCatalog()
-                  setBdMsg(`已保存。店内此刻 ${storeClockText(d.store_now)}。`)
-                } catch {
-                  setErr('保存失败，检查网络后重试')
-                } finally {
-                  setBdBusy(false)
-                }
-              }}
-            >
-              {bdBusy ? '保存中…' : dirty ? '保存营业日设置' : '未改动'}
-            </button>
           </>
         ) : (
           <p className="hint">需要联网才能读取营业日设置。</p>
@@ -182,8 +163,7 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
 
         {cur ? (
           <p className="hint">
-            当前：<b>{(cur.rate * 100).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}%</b>
-            ，自 {cur.effective_from} 起
+            当前：<b>{taxPercentText(cur.rate)}%</b>，自 {cur.effective_from} 起
             {cur.updated_by && ` · 由 ${cur.updated_by} 设定`}
             {cur.note && ` · ${cur.note}`}
           </p>
@@ -227,33 +207,61 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
 
         <div className="sheet-actions">
           <button onClick={onClose}>关闭</button>
+          {/* **只有一个保存按钮**，管这一页所有改动。
+              两个按钮那版出过事：改了时区、点了这里，结果存的是税率。 */}
           <button
             className="primary"
-            disabled={busy || !percent.trim()}
+            disabled={busy || !dirty}
             onClick={async () => {
+              setErr(null)
+              setMsg(null)
+
               const v = Number(percent)
-              if (!Number.isFinite(v) || v < 0 || v >= 100) {
+              if (taxDirty && (!percent.trim() || !Number.isFinite(v) || v < 0 || v >= 100)) {
                 setErr('税率不合法')
                 return
               }
+              if (taxDirty && !from) {
+                setErr('请选择税率的生效日期')
+                return
+              }
+
               setBusy(true)
-              setErr(null)
-              setMsg(null)
+              const done: string[] = []
               try {
-                const res = await authFetch('/api/reports/tax', {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    rate_percent: v,
-                    effective_from: from,
-                    note: note.trim() || null,
-                  }),
-                })
-                if (!res.ok) throw new Error(String(res.status))
-                setCur(await res.json())
-                // 让本地估算立刻用上新税率
+                if (bdDirty) {
+                  const res = await authFetch('/api/reports/business-day', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tz, business_day_cutoff_hour: cutoff }),
+                  })
+                  if (!res.ok) throw new Error(String(res.status))
+                  const d: BusinessDayRow = await res.json()
+                  setBd(d)
+                  setTz(d.tz)
+                  setCutoff(d.business_day_cutoff_hour)
+                  done.push(`时区与营业日（店内此刻 ${storeClockText(d.store_now)}）`)
+                }
+
+                if (taxDirty) {
+                  const res = await authFetch('/api/reports/tax', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      rate_percent: v,
+                      effective_from: from,
+                      note: note.trim() || null,
+                    }),
+                  })
+                  if (!res.ok) throw new Error(String(res.status))
+                  setCur(await res.json())
+                  done.push('销售税率（新开的账单起生效）')
+                }
+
+                // 营业日口径和税率都由 catalog 下发给前端 —— 不刷新的话
+                // 清单页还按旧的分界切、本地估价还用旧税率，和月报对不上
                 await refreshCatalog()
-                setMsg('已保存。新开的账单会用新税率。')
+                setMsg(`已保存：${done.join('；')}`)
               } catch {
                 setErr('保存失败，检查网络后重试')
               } finally {
@@ -261,12 +269,17 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
               }
             }}
           >
-            {busy ? '保存中…' : '保存'}
+            {busy ? '保存中…' : dirty ? '保存' : '未改动'}
           </button>
         </div>
       </div>
     </div>
   )
+}
+
+/** 0.071 → '7.1'。去掉尾零，别让设置页显示 '7.100%'。 */
+function taxPercentText(rate: number): string {
+  return (rate * 100).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
 }
 
 /**
