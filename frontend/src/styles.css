@@ -936,10 +936,54 @@ ol.timeline li:last-child { border-left-color: transparent; }
   display: flex;
   flex-direction: column;
   max-height: 88vh;
-  overflow: hidden;
+  /* ⚠️ 这里曾经是 overflow: hidden。别改回去。
+   *
+   * 那样写的前提是"内部 flex/grid 一定会正确收缩"。桌面 Chrome 上成立，
+   * **iOS 横屏上不成立** —— WebKit 对 flex→grid→可滚子元素这一串的
+   * min-height:0 处理和 Blink 不一致，收缩失败时内容溢出，
+   * 而 hidden 会把溢出的部分连同底部的取消/确认一起裁掉，
+   * 看上去就是按钮被菜品框压住、点不到。
+   *
+   * 改成 auto：万一内部还是没收缩好，最坏结果是"要滚一下"，
+   * 而不是"按钮消失"。再加上下面的 sticky 动作条兜底，
+   * 无论 iOS 怎么算，取消/确认永远在。
+   */
+  overflow-y: auto;
 }
 @supports (max-height: 1dvh) {
+  /* iOS 上 100vh 是地址栏收起时的高度，比可见区域大。
+     横屏可见高度本来就小，这个溢出占比更大 —— 所以竖屏没事、横屏出问题。 */
   .sheet.menu-sheet { max-height: 88dvh; }
+}
+
+/* 动作条钉在弹层底部。
+   这是**不依赖任何布局收缩计算**的兜底：哪怕上面的高度全算错了，
+   取消/确认也一定可见、可点。高峰期点不到"确认"等于这单录不进去。 */
+.menu-sheet .sheet-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: 12px;
+  padding-bottom: 2px;
+  background: var(--bg);
+}
+
+/* 购物车是这一屏里唯一会无限长高的东西（22 项就换行成 141px）。
+   给它自己的滚动条，别让它把菜品区和按钮一起挤出去。 */
+.menu-sheet .cart { max-height: 22vh; overflow-y: auto; }
+
+/* 横屏矮屏（iPad 横屏可视高度约 650–690）：把固定开销压到最小 */
+@media (orientation: landscape) and (max-height: 720px) {
+  .sheet-back { padding: 10px; }
+  .sheet.menu-sheet { max-height: 94vh; padding: 16px; }
+  .menu-sheet h2 { margin-bottom: 10px; }
+  .menu-sheet .search { margin-bottom: 8px; }
+  .menu-sheet .cart { max-height: 15vh; }
+}
+@supports (max-height: 1dvh) {
+  @media (orientation: landscape) and (max-height: 720px) {
+    .sheet.menu-sheet { max-height: 94dvh; }
+  }
 }
 /* grid 的行默认是 auto，会被内容撑开 —— 撑开之后弹层是 overflow:hidden，
    底部的购物车和确认按钮就被顶出去裁掉了。minmax(0,1fr) 把行钉死，
