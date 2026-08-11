@@ -475,7 +475,8 @@ button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 4
 .delta.down { color: var(--ok); }
 
 .reason { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; font-size: 14px; color: var(--muted); }
-.reason input {
+.reason input,
+.reason select {
   padding: 14px;
   font-size: 17px;
   color: var(--text);
@@ -1034,3 +1035,83 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   cursor: pointer;
 }
 .quickbtn:active { transform: scale(0.99); }
+
+/* ---- 营业日：日期标记 / 跨天未结账单 ---- */
+
+/* 楼面头部的营业日。旁边的在座人数、开台数都是"这一天"的数字，
+   不写清是哪一天，跨零点之后员工没法判断该不该信。 */
+.bday {
+  font-size: 14px;
+  color: var(--muted);
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+/* 跨天未结账单的横幅。
+   用 warn 而不是 bad：这不是故障，是一件待办的事 ——
+   把它染成红色，员工看两天就学会无视了，真出故障时也不会再看。 */
+.carry-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  text-align: left;
+  color: var(--text);
+  background: color-mix(in srgb, var(--warn) 12%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+  border-radius: 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.cb-n {
+  flex: none;
+  min-width: 40px;
+  padding: 4px 0;
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--warn);
+}
+.cb-txt { flex: 1; font-size: 15px; }
+.cb-txt small { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); }
+.cb-go { flex: none; font-size: 22px; color: var(--muted); }
+
+.carry-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.carry-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--warn);
+  border-radius: 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.cr-day { flex: none; font-size: 13px; color: var(--muted); min-width: 92px; }
+.cr-table { flex: none; font-size: 17px; font-weight: 600; min-width: 64px; }
+.cr-money { flex: 1; font-size: 17px; font-variant-numeric: tabular-nums; }
+.cr-who { flex: none; font-size: 12px; color: var(--muted); }
+
+/* 设置页里"改了会影响历史"的警告。比普通 hint 重，但不是错误。 */
+.hint.warnbox {
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border-left: 3px solid var(--warn);
+  border-radius: 0 8px 8px 0;
+}
+
+/* 时区不一致是**故障**（数据会归错日），不是待办事项 —— 用 bad 配色 */
+.carry-banner.bad {
+  background: color-mix(in srgb, var(--bad) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
+  cursor: default;
+}
+.carry-banner.bad .cb-n { color: var(--bad); }

@@ -47,6 +47,16 @@ export interface Catalog {
   current_period_kind: 'lunch' | 'dinner'
   /** 当前税率，例如 0.071 = 7.1% */
   tax_rate: number
+  /**
+   * 营业日的分界（店内本地时间，整点）。0 = 过午夜即新的一天。
+   * 由服务端下发，前端不写死 —— 见 businessDay.ts 的说明。
+   * 老缓存里没有这个字段，一律走 cutoffHourOf() 读取。
+   */
+  business_day_cutoff_hour?: number
+  /** 服务端此刻认定的营业日 'YYYY-MM-DD'，用于核对设备时钟有没有偏 */
+  business_date?: string
+  /** 店里此刻的 UTC 偏移（分钟，东正西负）。老缓存里没有，用可选。 */
+  store_utc_offset_minutes?: number
   fetched_at: string
 }
 

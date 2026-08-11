@@ -31,6 +31,11 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       CORS_ORIGINS: ${CORS_ORIGINS}
       JWT_SECRET: ${JWT_SECRET}
+      # 容器全链路跑 UTC（见 db），但**营业日和午/晚市要按店里的钟点切**，
+      # 所以这里单独给出店所在时区。写成 IANA 名而不是固定偏移，夏令时才不会错。
+      STORE_TZ: ${STORE_TZ:-America/Los_Angeles}
+      # 营业日的分界（店内本地时间，整点）。0 = 过午夜即新的一天。
+      BUSINESS_DAY_CUTOFF_HOUR: ${BUSINESS_DAY_CUTOFF_HOUR:-0}
     depends_on:
       db:
         # 等 healthcheck 通过再启动，而不是等容器"起来"

@@ -604,3 +604,49 @@ class TaxRate(Base):
         CheckConstraint("rate >= 0 AND rate < 1", name="ck_tax_rate_range"),
         UniqueConstraint("effective_from", name="uq_tax_rate_effective"),
     )
+
+
+class StoreSetting(Base):
+    """店的时间口径：所在时区 + 营业日的分界。
+
+    **单行表**（id 恒为 1）。约束写在数据库上而不是靠应用层自觉 ——
+    多出来的第二行会让"店在哪个时区"变成一个有两个答案的问题。
+
+    ⚠️ 和 TaxRate 相反：**这里没有 effective_from，改了就是全局改。**
+
+    看着不一致，其实是两种东西：
+      · 税率、菜价是**事实** —— 那天就是按 7.1% 收的，历史账单必须冻住，
+        所以要留生效日、要保快照。
+      · 时区、营业日分界是**解释规则** —— 它回答"这个时间戳属于哪一天"。
+        规则一旦发现设错了（比如原来写死 UTC-5，而店在太平洋时区），
+        正确的做法是**连同过去的账一起重新归属**，而不是把错误冻在历史里。
+        留生效日反而会让错误永久留存，且再也说不清哪段是对的。
+
+    代价是：改时区会让月报里某些账单换一天。所以 UI 上必须明确警告。
+    """
+
+    __tablename__ = "store_setting"
+
+    # autoincrement=False：这是固定的 1，不要序列。
+    # 留着序列的话，第二次 INSERT 会拿到 id=2 撞上 CHECK，
+    # 报出来的是约束违反而不是"你不该插第二行"。
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=False, default=1
+    )
+    # IANA 时区名，如 'America/Los_Angeles'。
+    # 不存固定偏移 —— 偏移在夏令时切换那两天是错的。
+    tz: Mapped[str] = mapped_column(Text, nullable=False)
+    # 营业日的分界（店内本地时间，整点）。0 = 过午夜即新的一天。
+    business_day_cutoff_hour: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    updated_at: Mapped[datetime] = mapped_column(
+        TZDateTime, nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_store_setting_singleton"),
+        CheckConstraint(
+            "business_day_cutoff_hour >= 0 AND business_day_cutoff_hour < 24",
+            name="ck_store_setting_cutoff_range",
+        ),
+    )

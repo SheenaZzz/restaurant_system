@@ -7,7 +7,7 @@
 分成三个端点只会多两次往返，没有任何好处。
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -18,7 +18,7 @@ from ..core.deps import CurrentUser
 from ..db import get_db
 from ..menu_data import CATEGORIES
 from ..models import BuffetPrice, DiningTable, MenuItem
-from ..services.period import period_kind_of, store_now
+from ..services.period import load_store_clock
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 
@@ -65,6 +65,26 @@ class CatalogOut(BaseModel):
     # 当前税率，供客户端**估算显示**用；落库金额一律服务端重算
     tax_rate: float
     server_time: datetime
+    # 营业日的分界（店内本地时间，整点）。
+    #
+    # 下发而不是让前端自己写一份常量：营业日口径定义在
+    # services/period.py，是唯一的一处。前端硬编码第二份的话，
+    # 哪天把分界从 0 点调回 2 点，清单页和月报就会各按各的口径切 ——
+    # 而这套系统唯一的交叉验证手段就是这两个数字能对上。
+    business_day_cutoff_hour: int
+    # 服务端此刻认定的营业日。前端离线时按设备时钟自己算，
+    # 在线时可以拿这个值核对有没有偏（比如 iPad 时区被人改过）。
+    business_date: date
+    # 店里此刻的 UTC 偏移，**分钟，东正西负**（太平洋夏令时 = -420）。
+    #
+    # 前端拿它和设备自己的偏移比：不一致就说明这台设备的时区不是店里的，
+    # 那么每天总有一段时间它会把账单归到错误的营业日 ——
+    # 而且是静默归错。只比营业日不够，两者相同的时段里问题看不出来，
+    # 等看出来时已经错了几个小时。
+    #
+    # ⚠️ 注意符号：JS 的 getTimezoneOffset() 是**反的**（UTC-7 返回 +420）。
+    #    这里用标准写法，前端取负号，别在两边各自猜。
+    store_utc_offset_minutes: int
 
 
 @router.get("/catalog", response_model=CatalogOut)
@@ -81,12 +101,17 @@ def catalog(user: CurrentUser, db: Session = Depends(get_db)):
         select(BuffetPrice).order_by(BuffetPrice.effective_from)
     ).all()
 
+    # 取一次时刻算出所有跟时间有关的字段 —— 分别取 now 的话，
+    # 恰好跨过 0 点或 15:00 的那一次请求会拿到自相矛盾的组合
+    clock = load_store_clock(db)
+    now_local = clock.now()
+
     return CatalogOut(
         categories=[CategoryOut(key=k, label=v) for k, v in CATEGORIES],
         tables=[TableOut.model_validate(t, from_attributes=True) for t in tables],
         menu=[MenuItemOut.model_validate(m, from_attributes=True) for m in menu],
         prices=[PriceOut.model_validate(p, from_attributes=True) for p in prices],
-        current_period_kind=period_kind_of(store_now()),
+        current_period_kind=clock.period_kind(now_local),
         tax_rate=float(
             db.execute(
                 text(
@@ -97,6 +122,11 @@ def catalog(user: CurrentUser, db: Session = Depends(get_db)):
             or 0
         ),
         server_time=datetime.now(timezone.utc),
+        business_day_cutoff_hour=clock.cutoff_hour,
+        business_date=clock.business_date(now_local),
+        store_utc_offset_minutes=int(
+            (now_local.utcoffset().total_seconds() // 60) if now_local.utcoffset() else 0
+        ),
     )
 
 

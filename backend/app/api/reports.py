@@ -7,14 +7,15 @@
 
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..core.deps import CurrentUser, require_role
 from ..db import get_db
-from ..models import DailyBatch, TaxRate
+from ..models import DailyBatch, StoreSetting, TaxRate
+from ..services.period import load_store_clock
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -293,3 +294,98 @@ def set_tax(body: TaxIn, user: CurrentUser, db: Session = Depends(get_db)):
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     return get_tax(db)
+
+
+# ---------------------------------------------------------------------------
+# 营业日设置：时区 + 日界
+# ---------------------------------------------------------------------------
+
+# 给设置页选的时区。不给全部 ~600 个 IANA 名字 ——
+# 在 iPad 上翻六百行找不到自己那条，反而更容易选错。
+# 店只可能在美国，列出这几个就够；真需要别的再加。
+TZ_CHOICES: list[tuple[str, str]] = [
+    ("America/Los_Angeles", "太平洋时间（加州 / 内华达 / 华盛顿州）"),
+    ("America/Denver", "山地时间（科罗拉多 / 犹他）"),
+    ("America/Phoenix", "亚利桑那（不实行夏令时）"),
+    ("America/Chicago", "中部时间（德州 / 伊利诺伊）"),
+    ("America/New_York", "东部时间（纽约 / 佛州）"),
+    ("America/Anchorage", "阿拉斯加"),
+    ("Pacific/Honolulu", "夏威夷（不实行夏令时）"),
+]
+
+
+class TzChoice(BaseModel):
+    tz: str
+    label: str
+
+
+class BusinessDayOut(BaseModel):
+    tz: str
+    business_day_cutoff_hour: int
+    updated_by: str | None
+    # 按当前设置算出来的店内此刻时间和营业日。
+    # 设置页把它显示出来 —— 时区选错了，这两个数一眼就不对，
+    # 比任何校验都直观。
+    store_now: datetime
+    business_date: date
+    choices: list[TzChoice]
+
+
+class BusinessDayIn(BaseModel):
+    tz: str
+    business_day_cutoff_hour: int = Field(ge=0, le=23)
+
+
+def _business_day_out(db: Session) -> BusinessDayOut:
+    row = db.get(StoreSetting, 1)
+    clock = load_store_clock(db)
+    now_local = clock.now()
+    updated_by = None
+    if row is not None and row.updated_by is not None:
+        updated_by = db.scalar(
+            text("SELECT display_name FROM app_user WHERE id = :i"),
+            {"i": row.updated_by},
+        )
+    return BusinessDayOut(
+        tz=row.tz if row else str(clock.tz),
+        business_day_cutoff_hour=clock.cutoff_hour,
+        updated_by=updated_by,
+        store_now=now_local,
+        business_date=clock.business_date(now_local),
+        choices=[TzChoice(tz=t, label=l) for t, l in TZ_CHOICES],
+    )
+
+
+@router.get("/business-day", response_model=BusinessDayOut, dependencies=[_GUARD])
+def get_business_day(db: Session = Depends(get_db)):
+    return _business_day_out(db)
+
+
+@router.put("/business-day", response_model=BusinessDayOut, dependencies=[_GUARD])
+def set_business_day(body: BusinessDayIn, user: CurrentUser, db: Session = Depends(get_db)):
+    """设定店的时区与营业日分界。
+
+    ⚠️ **没有生效日，改了就是全局改**，和税率相反。理由见 models.StoreSetting：
+    税率是事实（历史账单必须冻住），时区是解释规则（设错了就该连
+    过去的账一起重新归属，否则等于把错误永久冻在历史里）。
+
+    直接后果：改时区会让月报里靠近日界的账单换一天。UI 上要说清楚。
+
+    只接受 TZ_CHOICES 里的名字。不接受任意 IANA 名 ——
+    这是个只有老板会点、一年点不到一次的设置，能选的越少越不会选错；
+    真要加时区，改这里的常量比在生产上手输一个拼错的名字安全。
+    """
+    if body.tz not in {t for t, _ in TZ_CHOICES}:
+        raise HTTPException(status_code=422, detail=f"不支持的时区：{body.tz}")
+
+    row = db.get(StoreSetting, 1)
+    if row is None:
+        # 迁移已经插了这一行，正常到不了这里。留着是为了万一。
+        row = StoreSetting(id=1)
+        db.add(row)
+    row.tz = body.tz
+    row.business_day_cutoff_hour = body.business_day_cutoff_hour
+    row.updated_by = user.id
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return _business_day_out(db)
