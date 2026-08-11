@@ -7,7 +7,12 @@ import {
   type MenuItem,
   type PriceRow,
 } from './catalog'
-import { allChecks, pendingCheckUuids, totalsOf } from './checks'
+import {
+  businessDateLabel,
+  currentBusinessDate,
+  cutoffHourOf,
+} from './businessDay'
+import { checksOfDay, pendingCheckUuids, totalsOf } from './checks'
 import CheckDetail, { operatorText, PAY_LABEL, STATUS_LABEL } from './CheckDetail'
 import type { LocalCheck } from './db'
 
@@ -27,12 +32,21 @@ export default function ListView({ role }: { role: Role }) {
   const [cats, setCats] = useState<Category[]>([])
   const [period, setPeriod] = useState<'lunch' | 'dinner'>('dinner')
   const [now, setNow] = useState(new Date())
+  const [bdate, setBdate] = useState('')
   const [pick, setPick] = useState<LocalCheck | null>(null)
   const [filter, setFilter] = useState<Filter>('all')
   const [pending, setPending] = useState<Set<string>>(new Set())
 
   const reload = useCallback(async () => {
-    const all = await allChecks()
+    // ⚠️ 只取**当前营业日**的单。原来这里是 allChecks() ——
+    //    头部时钟显示今天，下面的「营业额」却是开业至今的累计。
+    //    那个组合比没有汇总更危险：它看起来完全正常。
+    const c = await loadCatalog()
+    const cutoff = cutoffHourOf(c)
+    // 每次重算，不缓存 —— 页面可能整夜没重新加载过
+    const today = currentBusinessDate(cutoff)
+    setBdate(today)
+    const all = await checksOfDay(today, cutoff)
     setRows(all)
     setPending(await pendingCheckUuids())
     // 详情开着时底下可能被别的设备改了 —— 跟着刷新，
@@ -71,13 +85,9 @@ export default function ListView({ role }: { role: Role }) {
           <span className="time">
             {now.toLocaleTimeString('zh-CN', { hour12: false })}
           </span>
-          <span className="date">
-            {now.toLocaleDateString('zh-CN', {
-              month: 'long',
-              day: 'numeric',
-              weekday: 'short',
-            })}
-          </span>
+          {/* 显示的是**营业日**，不是设备日期。日界不是 0 点时
+              两者会差一段，而下面所有数字都是按营业日算的 */}
+          <span className="date">{bdate ? businessDateLabel(bdate) : '—'}</span>
         </div>
 
         <div className="stats">
@@ -118,6 +128,7 @@ export default function ListView({ role }: { role: Role }) {
       </div>
 
       <p className="hint">
+        只显示<b>当前营业日</b>的账单；更早的看月报。
         金额为本地估算（按缓存价），权威数字以月报为准。
         {!manage && ' · 你的账号无改单、作废权限'}
       </p>

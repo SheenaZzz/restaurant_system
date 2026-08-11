@@ -8,6 +8,11 @@ import {
   type PriceRow,
 } from './catalog'
 import { getIdentity } from './auth'
+import {
+  businessDateOf,
+  currentBusinessDate,
+  shiftBusinessDate,
+} from './businessDay'
 import db, { setMeta, uuid, type LocalCheck, type LocalLine } from './db'
 import { enqueue } from './sync'
 
@@ -307,10 +312,55 @@ export async function voidTable(checkUuid: string, reason: string): Promise<void
   })
 }
 
-/** 全部账单（含已结、已作废），按开台时间倒序。 */
+/** 全部账单（含已结、已作废），按开台时间倒序。**不分营业日** —— 只给需要跨天看的地方用。 */
 export async function allChecks(): Promise<LocalCheck[]> {
   const rows = await db.checks.toArray()
   return rows.sort((a, b) => b.opened_at.localeCompare(a.opened_at))
+}
+
+/** 这张单属于哪个营业日。 */
+export function checkBusinessDate(c: LocalCheck, cutoffHour: number): string {
+  return businessDateOf(c.opened_at, cutoffHour)
+}
+
+/**
+ * 某个营业日的全部账单，按开台时间倒序。
+ *
+ * 清单页和「当日汇总」都必须走这个，不能用 allChecks() ——
+ * 原来头部时钟显示今天、下面的营业额却是开业至今累计。
+ * 那个组合比没有汇总更危险：它看起来是对的。
+ */
+export async function checksOfDay(
+  bdate: string,
+  cutoffHour: number,
+): Promise<LocalCheck[]> {
+  const rows = await db.checks.toArray()
+  return rows
+    .filter((c) => checkBusinessDate(c, cutoffHour) === bdate)
+    .sort((a, b) => b.opened_at.localeCompare(a.opened_at))
+}
+
+/**
+ * 跨天未结的账单 —— 不属于当前营业日、但还没结账的单。
+ *
+ * ⚠️ 这些单**绝不能只是从楼面消失**。开了桌、有应收、没结账，
+ *    就是钱还没收到。楼面清干净但没人知道它们的存在 = 静默丢单，
+ *    而这套系统是店里唯一的主记录，丢了就真没了。
+ *
+ * 包含自提单：电话订单没人来取、也没作废，同样是没结的账。
+ */
+export async function carriedOverChecks(
+  bdate: string,
+  cutoffHour: number,
+): Promise<LocalCheck[]> {
+  // ⚠️ 故意用全表扫描而不是 where('status')。索引查询会**静默排除**
+  //    索引键无效的记录（outbox 那次 NaN 的坑就是这么来的）——
+  //    而这个函数存在的全部意义就是"任何未结的单都不许藏起来"。
+  //    一天几百条，扫一遍的代价可以忽略。
+  const rows = await db.checks.toArray()
+  return rows
+    .filter((c) => c.status === 'open' && checkBusinessDate(c, cutoffHour) !== bdate)
+    .sort((a, b) => a.opened_at.localeCompare(b.opened_at))
 }
 
 export interface Totals {
@@ -389,12 +439,47 @@ export async function closeTable(checkUuid: string): Promise<void> {
   })
 }
 
-/** 楼面：桌号 → 未结账单。 */
-export async function openChecksByTable(): Promise<Map<string, LocalCheck>> {
-  const rows = await db.checks.where('status').equals('open').toArray()
+/**
+ * 楼面：桌号 → **当前营业日**的未结账单。
+ *
+ * 跨天的未结单不在这里 —— 楼面每天从干净的开始。它们由
+ * carriedOverChecks() 单独列出来处理，见 CarriedOver.tsx。
+ */
+export async function openChecksByTable(
+  bdate: string,
+  cutoffHour: number,
+): Promise<Map<string, LocalCheck>> {
+  const rows = await db.checks.toArray()
   const m = new Map<string, LocalCheck>()
   // ⚠️ 只认堂食。自提单没有桌位，混进楼面会占掉一个格子。
   //    `source` 缺失的是加这个字段之前的老数据 —— 那时只有堂食，所以当堂食处理。
+  for (const r of rows) {
+    if (r.status !== 'open') continue
+    if (!isDineIn(r)) continue
+    if (checkBusinessDate(r, cutoffHour) !== bdate) continue
+    m.set(r.table_label, r)
+  }
+  return m
+}
+
+/**
+ * 桌号 → 跨天未结的堂食单。楼面开桌前要拿它挡一道。
+ *
+ * 为什么必须挡：服务端有唯一偏索引 uq_check_open_per_table
+ * （一张桌同时只能有一张未结账单）。昨天那张单还在服务端占着位，
+ * 今天在同一张桌开新单**会被服务端拒绝**、掉进死信队列。
+ * 楼面上那张桌看起来是空的，员工点了却没反应 —— 这正是高峰期
+ * 最让人放弃使用系统的那种失败。
+ *
+ * 所以在这里提前拦住并给出能自己解决的提示。约束负责保证正确性，
+ * 错误信息负责让人知道下一步做什么 —— 和 restore_check 那次一个道理。
+ */
+export async function carriedOverByTable(
+  bdate: string,
+  cutoffHour: number,
+): Promise<Map<string, LocalCheck>> {
+  const rows = await carriedOverChecks(bdate, cutoffHour)
+  const m = new Map<string, LocalCheck>()
   for (const r of rows) if (isDineIn(r)) m.set(r.table_label, r)
   return m
 }
@@ -511,6 +596,50 @@ export async function pendingCheckUuids(): Promise<Set<string>> {
     if (Array.isArray(srcs)) for (const x of srcs) if (typeof x === 'string') out.add(x)
   }
   return out
+}
+
+/** 本地镜像保留多少个营业日。够查「昨天那单怎么回事」，又不会无限长。 */
+export const LOCAL_KEEP_DAYS = 7
+
+/**
+ * 归档：把很久以前、已经结清且已上传的账单从**本地镜像**删掉。
+ *
+ * 只删本机缓存，**服务端一条不动** —— 月报读的是服务端，历史照样查得到。
+ *
+ * 为什么需要：本地镜像原本只增不减，而楼面和清单每 2 秒轮询一次、
+ * 每次都要全表扫一遍算营业日。一年下来几万条，iPad 上会肉眼可见地卡。
+ * 本地镜像的用途是"断网时当天照样能干活"，不是当档案库。
+ *
+ * 三条都满足才删，任何一条不满足就留着：
+ *   · 已结账/已作废/已并单 —— 未结的单永远留着，那是还没收到的钱
+ *   · 已经上传成功     —— 没确认的绝不删，删了就是丢单
+ *   · 早于保留窗口
+ */
+export async function pruneLocalMirror(
+  cutoffHour: number,
+  keepDays: number = LOCAL_KEEP_DAYS,
+): Promise<number> {
+  const today = currentBusinessDate(cutoffHour)
+  if (!today) return 0
+  const oldest = shiftBusinessDate(today, -keepDays)
+  const pending = await pendingCheckUuids()
+
+  const rows = await db.checks.toArray()
+  const doomed = rows
+    .filter((c) => {
+      if (c.status === 'open') return false
+      // outbox 里还有引用它的 op —— 那条 op 重放时要能找到这张单
+      if (pending.has(c.check_uuid)) return false
+      const bd = checkBusinessDate(c, cutoffHour)
+      // 空串 = 时间戳坏了。算不出营业日的单一律留着让人能看见，
+      // 不能因为算不出来就删掉。
+      if (!bd) return false
+      return bd < oldest
+    })
+    .map((c) => c.check_uuid)
+
+  if (doomed.length) await db.checks.bulkDelete(doomed)
+  return doomed.length
 }
 
 

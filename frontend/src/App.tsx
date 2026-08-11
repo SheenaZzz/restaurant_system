@@ -7,6 +7,7 @@ import {
   refreshIdentity,
   type Identity,
 } from './auth'
+import { CarriedOverBanner, ClockDriftBanner } from './CarriedOver'
 import db from './db'
 import DeadLetters from './DeadLetters'
 import FloorPlan from './FloorPlan'
@@ -15,7 +16,9 @@ import MonthView from './MonthView'
 import SettingsSheet from './SettingsSheet'
 import ToGoView from './ToGoView'
 import LoginPage from './LoginPage'
-import { resetLocalData } from './checks'
+import { cutoffHourOf } from './businessDay'
+import { loadCatalog } from './catalog'
+import { pruneLocalMirror, resetLocalData } from './checks'
 import {
   enqueue,
   installSyncTriggers,
@@ -100,6 +103,15 @@ export default function App() {
 
     const uninstall = installSyncTriggers(report)
     void refresh()
+
+    // 归档：本地镜像只保留最近几个营业日。
+    // 只删本机缓存里"已结清 + 已上传 + 早于保留窗口"的单，服务端一条不动，
+    // 月报照样查得到。不做的话本地镜像只增不减，而楼面/清单每 2 秒
+    // 要全表扫一遍算营业日 —— 一年下来 iPad 上会明显变卡。
+    void loadCatalog()
+      .then((c) => pruneLocalMirror(cutoffHourOf(c)))
+      .then((n) => n > 0 && console.info(`[archive] 本地清理了 ${n} 张旧账单`))
+      .catch(() => {})
 
     return () => {
       window.removeEventListener('online', on)
@@ -189,6 +201,12 @@ export default function App() {
           )}
         </div>
       )}
+
+      {/* 跨天未结账单的提醒。放在这里而不是楼面里面 ——
+          切到清单页、自提页也要看得见，那笔钱不会因为换了个 tab 就不存在了。
+          没有未结单时这个组件什么都不渲染。 */}
+      <ClockDriftBanner />
+      {isFront(identity.role) && <CarriedOverBanner role={identity.role} />}
 
       {!isFront(identity.role) ? (
         <>

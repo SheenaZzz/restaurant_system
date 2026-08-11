@@ -19,10 +19,10 @@
 
 | | |
 |---|---|
-| 提交 | 36 |
-| 文件 | 78 |
-| 数据库表 | 18 |
-| Alembic 迁移 | 10（head `f816387a2ece`） |
+| 提交 | 27 |
+| 文件 | 82 |
+| 数据库表 | 19 |
+| Alembic 迁移 | 11（head `b3d5c81a4e17`） |
 | 菜单条目 | 143（真实菜单，照店里外卖单录的） |
 | 已完成 | Step 0–4 + 大量现场追加的业务需求 |
 | 未开始 | **Step 5：后厨界面 + 补菜记录** |
@@ -85,7 +85,11 @@ INSERT INTO sync_op (op_id, ...) ON CONFLICT (op_id) DO NOTHING RETURNING op_id
 **月报**（`MonthView.tsx`，仅 manager/admin）：日历式营业额、年月日快速选择、
 每日小费录入、支付方式分布、**未记支付/支付不符**两个对账告警。
 
-**设置**（`SettingsSheet.tsx`，仅 manager/admin）：销售税率。
+**设置**（`SettingsSheet.tsx`，仅 manager/admin）：销售税率、**店所在时区 + 营业日分界**。
+
+**营业日**（`businessDay.ts`）：楼面/清单/汇总一律只显示**当前营业日**，
+过日界自动翻篇（不用刷新页面）。跨天没结的单**不隐藏** ——
+顶部横幅 + `CarriedOver.tsx` 单独处理，因为那是还没收到的钱。
 
 **操作历史**（`CheckHistory.tsx`）：逐条重放 `sync_op` 算出每步前后差异。
 **没有新增任何存储** —— 数据本来就在审计日志里。
@@ -105,6 +109,11 @@ INSERT INTO sync_op (op_id, ...) ON CONFLICT (op_id) DO NOTHING RETURNING op_id
 - 营业时段用 op 的 `client_ts` 解析，不是服务端当前时间 ——
   离线两小时后补发的午市单必须按午市价算
 - 午/晚市分界 15:00（菜单印的）
+- **营业日分界 0 点整**，时区按 `store_setting` 表（⚙︎ 里可改）。
+  这个口径**只定义在 `backend/app/services/period.py`**，
+  由 `/api/catalog` 下发给前端 —— 前端写第二份常量的话，
+  清单页和月报会各按各的口径切，而"这两个数能对上"是本系统
+  唯一的交叉验证手段
 
 ---
 
@@ -115,11 +124,16 @@ INSERT INTO sync_op (op_id, ...) ON CONFLICT (op_id) DO NOTHING RETURNING op_id
 | | 当前值 |
 |---|---|
 | 税率 | 7.1%（Douglas County NV，⚙︎ 里可改） |
+| **店所在时区** | **America/Los_Angeles（按 Douglas County NV 推的，⚙︎ 里可改）** |
 | 儿童 buffet 午/晚 | $6.99 / $9.99 |
 | 长者 buffet 午/晚 | $10.99 / $13.99 |
 | 饮料 成人/儿童 | $2.50 / $1.50 |
 
 ✅ 已确认的：午市 buffet $14.05、晚市 $15.88（菜单上印的）。
+
+⚠️ 时区必须跟店里核实一遍。**它设错会直接收错钱** ——
+15:00 是午/晚市分界，时区偏一小时就有一小时按错误的价收
+（$14.05 vs $15.88）。⚙︎ 里那行「店内此刻」显示的时间要和店里的钟对得上。
 
 ---
 
@@ -149,6 +163,19 @@ INSERT INTO sync_op (op_id, ...) ON CONFLICT (op_id) DO NOTHING RETURNING op_id
 - iOS 不支持 Background Sync，必须在 `visibilitychange` 回到前台时同步。
 - `localhost` 也算安全上下文 —— **明文 8080 上一样会注册 Service Worker**，
   改了代码看不到新版就先 unregister。
+
+### 时间
+
+- **固定 UTC 偏移是错的**。原来写死 `STORE_UTC_OFFSET=-5`，而店在太平洋时区 ——
+  差两小时，下午 13:00 就被判成晚市、按晚市价收。用 IANA 时区名 + `zoneinfo`。
+  slim 镜像不保证有 tz 数据库，要装 `tzdata` 包。
+- 原来的凌晨 2 点日界**顺带**当了夏令时的缓冲（DST 切换点正好 2:00，
+  挡在营业日之外）。分界移到 0 点后这层缓冲没了 —— 这正是必须用真时区的原因。
+- **前端算营业日用的是设备时钟**（离线时没有别的可用）。iPad 时区跟店里
+  不一致时，每天靠近日界的几小时会静默归错日。所以后端下发店里的 UTC 偏移，
+  前端比偏移**而不是比营业日** —— 比营业日的话，等它们分叉时已经错了几小时。
+- 设置项里，**时区没有生效日、税率有**。税率是事实（历史账单要冻住），
+  时区是解释规则（设错了就该连过去的账一起重新归属）。
 
 ### 网络 / 部署
 
