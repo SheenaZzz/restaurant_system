@@ -74,7 +74,10 @@ export default function MenuPicker({
           placeholder="搜菜名（中文或英文）"
         />
 
-        <div className="menu-body">
+        {/* 搜索时分类栏整个不渲染 —— 必须同时把网格改回单列。
+            不改的话菜品列表会掉进那个 128px 的分类列里（它成了第一个
+            网格子元素），右边一大片空着，看上去就是"搜索结果只有窄窄一条"。 */}
+        <div className={`menu-body${q.trim() ? ' searching' : ''}`}>
           {!q.trim() && (
             <div className="menu-cats">
               {cats.map((c) => (

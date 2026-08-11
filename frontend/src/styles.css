@@ -918,7 +918,23 @@ ol.timeline li:last-child { border-left-color: transparent; }
 .bc-sub { color: var(--muted); font-size: 13px; }
 
 /* ---- 点菜 ---- */
-.sheet.menu-sheet { max-width: 760px; }
+/* 点菜弹层撑到可用高度，只让菜品区滚 ——
+   标题、搜索框、购物车、确认按钮都固定，不用为了点「确认」先滚回底部。
+   原来菜品区是写死的 46vh：屏幕再高也只给那么一条，
+   而 143 个菜里搜出来的结果经常比它长得多。 */
+.sheet.menu-sheet {
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  max-height: 88vh;
+  overflow: hidden;
+}
+.menu-sheet .menu-body { flex: 1; min-height: 0; }
+.menu-sheet .menu-cats,
+.menu-sheet .menu-items { max-height: none; min-height: 0; }
+.menu-sheet .sheet-actions,
+.menu-sheet .cart,
+.menu-sheet .search { flex: none; }
 .search {
   width: 100%;
   padding: 12px 14px;
@@ -931,6 +947,10 @@ ol.timeline li:last-child { border-left-color: transparent; }
 }
 .menu-body { display: grid; grid-template-columns: 128px 1fr; gap: 12px; }
 @media (max-width: 620px) { .menu-body { grid-template-columns: 1fr; } }
+
+/* 搜索时分类栏不渲染 —— 必须同时改回单列，否则菜品列表会掉进
+   那个 128px 的分类列里（它成了第一个网格子元素），右边一大片空着。 */
+.menu-body.searching { grid-template-columns: 1fr; }
 
 .menu-cats { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
 .menu-cats button {
