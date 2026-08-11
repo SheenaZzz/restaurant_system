@@ -197,7 +197,9 @@ export async function applyCheckOp(
       await db.checks.put({
         ...row,
         lines,
-        est_cents: recalcEst(row, lines),
+        // 服务费和税必须一起写回去，只更新 est_cents 会让详情页那两行
+        // 停在旧值，下一次加菜再拿旧值反推就会累积误差
+        ...recalcEst(row, lines, cat?.tax_rate ?? 0),
         last_by: opts.who ?? row.last_by,
         ...opts,
       })
@@ -730,10 +732,43 @@ export async function resetLocalData(): Promise<{ ok: boolean; pending: number }
 }
 
 
-/** 本地重算总额：人头 + 单点 + 服务费。仅供显示，落库以服务端为准。 */
-function recalcEst(row: LocalCheck, lines: LocalLine[]): number {
-  const head = row.est_cents - (row.service_cents ?? 0) - (row.tax_cents ?? 0) -
-    (row.lines ?? []).filter((l) => !l.voided)
+/**
+ * 加菜/退菜后重算本地金额。
+ *
+ * ⚠️ 这里出过一个会真的算错钱的 bug，别改回去：
+ *
+ * 原来的写法是 `taxRatio = tax_cents / est_cents`，然后
+ * `总额 = 税前 × (1 + taxRatio)`。但 `est_cents` 是**含税**总额，
+ * 而税是收在（小计 + 服务费）上的，所以这个比值算出来是
+ *   r / (1 + r)   而不是   r
+ * 7.1% 的税率会被当成 6.63%，每加一次菜就少算一点税。
+ *
+ * 后果不只是显示难看：服务端加菜时是按真实税率重算的，
+ * 于是界面上的「待收」比服务端真实的差额小一点 ——
+ * 员工照着补收完，账上仍留一个尾巴，月报继续报「支付与账单不符」。
+ *
+ * 当时的注释说「税率从缓存的 catalog 拿不到（这是同步函数）」，
+ * 那是错的：调用方就在上面 await 过 loadCatalog()。现在把税率传进来，
+ * 和 open/modify/merge 三条路用同一个 taxCents()。
+ *
+ * 返回三个数一起写回去 —— 只更新 est_cents 的话，详情页的
+ * 「大桌服务费」「税」两行会停在旧值，而下一次加菜又拿这两个旧值
+ * 去反推人头费，误差会累积。
+ */
+function recalcEst(
+  row: LocalCheck,
+  lines: LocalLine[],
+  taxRate: number,
+): { est_cents: number; service_cents: number; tax_cents: number } {
+  // 人头费 = 旧的含税总额 − 旧服务费 − 旧税 − 旧单品。
+  // 反推而不是按当前价重算，是为了**保住开台时的价格快照** ——
+  // 中途改过菜单价的话，重算会把历史账单的金额也改掉。
+  const head =
+    row.est_cents -
+    (row.service_cents ?? 0) -
+    (row.tax_cents ?? 0) -
+    (row.lines ?? [])
+      .filter((l) => !l.voided)
       .reduce((a, l) => a + l.qty * l.unit_price_cents, 0)
   const lineSum = lines
     .filter((l) => !l.voided)
@@ -742,12 +777,10 @@ function recalcEst(row: LocalCheck, lines: LocalLine[]): number {
     row.adult + row.child + row.senior,
     row.drink_adult + row.drink_child,
   )
-  const svc = serviceCents(head + lineSum, size)
-  // 注意：税率从缓存的 catalog 拿不到（这是同步函数），
-  // 所以按原比例估。真实金额以服务端为准 —— 这只是显示用。
-  const taxRatio = row.est_cents > 0 ? (row.tax_cents ?? 0) / row.est_cents : 0
-  const beforeTax = head + lineSum + svc
-  return Math.round(beforeTax * (1 + taxRatio))
+  const sub = head + lineSum
+  const svc = serviceCents(sub, size)
+  const tax = taxCents(sub, svc, taxRate)
+  return { est_cents: sub + svc + tax, service_cents: svc, tax_cents: tax }
 }
 
 export interface NewLine {

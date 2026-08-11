@@ -887,8 +887,17 @@ ol.timeline li:last-child { border-left-color: transparent; }
   .sheet.pay-wide { max-width: 460px; }
 }
 
-/* 弹层最高不超过视口，超了内部滚动，确认按钮始终够得着 */
+/* 弹层最高不超过视口，超了内部滚动，确认按钮始终够得着。
+ *
+ * ⚠️ iOS 上 100vh 是**地址栏收起时**的高度，比实际可见区域大 ——
+ *    88vh 在 iPad Safari 上会让弹层底部（购物车、取消/确认）
+ *    落到可视范围之外，看起来就是被上面的内容压住了。
+ *    dvh 跟随真实可见视口。两行都留着：不支持 dvh 的旧 iOS 退回 vh。
+ */
 .sheet { max-height: 88vh; overflow-y: auto; }
+@supports (max-height: 1dvh) {
+  .sheet { max-height: 88dvh; }
+}
 
 /* ---- 自提 ---- */
 .togo-actions {
@@ -929,7 +938,13 @@ ol.timeline li:last-child { border-left-color: transparent; }
   max-height: 88vh;
   overflow: hidden;
 }
-.menu-sheet .menu-body { flex: 1; min-height: 0; }
+@supports (max-height: 1dvh) {
+  .sheet.menu-sheet { max-height: 88dvh; }
+}
+/* grid 的行默认是 auto，会被内容撑开 —— 撑开之后弹层是 overflow:hidden，
+   底部的购物车和确认按钮就被顶出去裁掉了。minmax(0,1fr) 把行钉死，
+   多出来的内容留给 .menu-items 自己滚。 */
+.menu-sheet .menu-body { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); }
 .menu-sheet .menu-cats,
 .menu-sheet .menu-items { max-height: none; min-height: 0; }
 .menu-sheet .sheet-actions,
@@ -946,7 +961,21 @@ ol.timeline li:last-child { border-left-color: transparent; }
   border-radius: 10px;
 }
 .menu-body { display: grid; grid-template-columns: 128px 1fr; gap: 12px; }
-@media (max-width: 620px) { .menu-body { grid-template-columns: 1fr; } }
+/* 窄屏：分类栏改成横排在上、菜品在下。
+   竖排一列分类在窄屏上会吃掉半个屏 —— 实测 600×700 时菜品区只剩 113px。
+   行高也要显式给：默认 auto 会让两行平分，菜品区同样被挤没。 */
+@media (max-width: 620px) {
+  .menu-body { grid-template-columns: 1fr; }
+  .menu-sheet .menu-body { grid-template-rows: auto minmax(0, 1fr); }
+  /* 搜索时分类栏不渲染，只剩一行 */
+  .menu-sheet .menu-body.searching { grid-template-rows: minmax(0, 1fr); }
+  .menu-sheet .menu-cats {
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-height: 22vh;
+    overflow-y: auto;
+  }
+}
 
 /* 搜索时分类栏不渲染 —— 必须同时改回单列，否则菜品列表会掉进
    那个 128px 的分类列里（它成了第一个网格子元素），右边一大片空着。 */
