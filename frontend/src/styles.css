@@ -1158,3 +1158,13 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 .day-sheet .pay-split { flex: 1; min-height: 0; }
 .day-sheet .pay-left { overflow-y: auto; min-height: 0; }
 .day-sheet .sheet-actions { flex: none; }
+
+/* 已关单但钱没收齐。
+   放在 .card.closed 之后，覆盖掉那身绿色 —— 绿色是这套界面里最强的
+   "这单完事了"信号，拿它盖住一笔没收到的钱，等于把钱藏起来。
+   用虚线左条：和实线的"未结"区分开，一眼能看出是另一种待办。 */
+.card.due {
+  border-left-color: var(--warn);
+  border-left-style: dashed;
+  background: color-mix(in srgb, var(--warn) 12%, var(--panel));
+}

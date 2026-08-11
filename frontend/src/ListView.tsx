@@ -12,18 +12,28 @@ import {
   currentBusinessDate,
   cutoffHourOf,
 } from './businessDay'
-import { checksOfDay, pendingCheckUuids, totalsOf } from './checks'
+import { checksOfDay, dueCents, pendingCheckUuids, totalsOf } from './checks'
 import CheckDetail, { operatorText, PAY_LABEL, STATUS_LABEL } from './CheckDetail'
 import type { LocalCheck } from './db'
 
-type Filter = 'all' | 'open' | 'closed' | 'voided'
+type Filter = 'all' | 'open' | 'due' | 'closed' | 'voided'
 
 const FILTERS: { k: Filter; label: string }[] = [
   { k: 'all', label: '全部' },
   { k: 'open', label: '未结' },
+  // 「未收清」不是一个状态，是一个**条件** —— 单子已经关了，
+  // 但钱没收齐。放在未结旁边，因为它俩是同一类待办：还有钱没到手。
+  { k: 'due', label: '未收清' },
   { k: 'closed', label: '已结' },
   { k: 'voided', label: '已作废' },
 ]
+
+/** 这张单是否属于某个过滤条件。 */
+function matches(c: LocalCheck, f: Filter): boolean {
+  if (f === 'all') return true
+  if (f === 'due') return dueCents(c) !== 0
+  return c.status === f
+}
 
 export default function ListView({ role }: { role: Role }) {
   const [rows, setRows] = useState<LocalCheck[]>([])
@@ -75,8 +85,12 @@ export default function ListView({ role }: { role: Role }) {
 
   const t = totalsOf(rows)
   const manage = canManage(role)
-  const shown = rows.filter((r) => (filter === 'all' ? true : r.status === filter))
+  const shown = rows.filter((r) => matches(r, filter))
   const openChecks = rows.filter((r) => r.status === 'open')
+  // 已关单但钱没收齐的 —— 这笔钱在楼面上已经看不见了（桌子空了），
+  // 清单页是唯一还能发现它的地方
+  const dueRows = rows.filter((r) => dueCents(r) > 0)
+  const dueTotal = dueRows.reduce((s, r) => s + dueCents(r), 0)
 
   return (
     <>
@@ -95,6 +109,15 @@ export default function ListView({ role }: { role: Role }) {
           <Stat label="Buffet 人数" value={String(t.buffetGuests)} />
           <Stat label="饮料份数" value={String(t.drinkCount)} />
           <Stat label="未结 / 已结" value={`${t.openCount} / ${t.closedCount}`} />
+          {/* 「已结但没收齐」必须能一眼看到，不能只在卡片里。
+              一天几十单，靠扫卡片找是找不出来的 */}
+          {dueRows.length > 0 && (
+            <Stat
+              label="待收"
+              value={`${dueRows.length} 单 · ${money(dueTotal)}`}
+              bad
+            />
+          )}
           {t.serviceCents > 0 && (
             <Stat label="大桌服务费" value={money(t.serviceCents)} />
           )}
@@ -120,9 +143,7 @@ export default function ListView({ role }: { role: Role }) {
             onClick={() => setFilter(f.k)}
           >
             {f.label}
-            <span className="cnt">
-              {f.k === 'all' ? rows.length : rows.filter((r) => r.status === f.k).length}
-            </span>
+            <span className="cnt">{rows.filter((r) => matches(r, f.k)).length}</span>
           </button>
         ))}
       </div>
@@ -139,10 +160,14 @@ export default function ListView({ role }: { role: Role }) {
         {shown.map((c) => {
           const guests = c.adult + c.child + c.senior
           const drinks = c.drink_adult + c.drink_child
+          const due = dueCents(c)
           return (
             <button
               key={c.check_uuid}
-              className={`card ${c.status}`}
+              // 关了单但钱没收齐的，**不能长得和收齐的一样**。
+              // 绿色「已结」是这套界面里最强的"这单完事了"信号，
+              // 用它盖住一笔没收到的钱，等于把钱藏起来。
+              className={`card ${c.status}${due !== 0 ? ' due' : ''}`}
               onClick={() => setPick(c)}
             >
               <div className="c-top">
@@ -152,6 +177,10 @@ export default function ListView({ role }: { role: Role }) {
                 >
                   {STATUS_LABEL[c.status]}
                 </span>
+                {/* 状态和收款是两件事：单确实已经关了（桌子空出来了），
+                    但钱还没到齐。所以两个标签并存，不是互相替换。 */}
+                {due > 0 && <span className="tag warn">待收 {money(due)}</span>}
+                {due < 0 && <span className="tag bad">多收 {money(-due)}</span>}
                 {pending.has(c.check_uuid) && (
                   <span className="tag warn">未上传</span>
                 )}
