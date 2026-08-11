@@ -1297,7 +1297,51 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 .mod-split { display: grid; grid-template-columns: 1fr 300px; gap: 16px; min-height: 0; }
 @media (max-width: 700px) { .mod-split { grid-template-columns: 1fr; } }
 .mod-left { overflow-y: auto; min-height: 0; }
-.mod-right { display: flex; flex-direction: column; gap: 8px; }
+/* ⚠️ min-height:0 + overflow 是**硬约束**，不是优化。
+ *
+ * 没有它的时候：键盘那一栏实际 585px，而网格分给它的行只有 350px，
+ * 于是它整个溢出去，盖住了「合计」和「取消/确认」——
+ * 横屏矮屏上正好跨过临界点，竖屏因为高度富余看不出来。
+ *
+ * 有了这两行，右栏无论多高都只能待在自己那一格里，
+ * 物理上不可能压到下面。下面的媒体查询再把键盘压紧，
+ * 让它在横屏上连滚都不用滚。
+ */
+.mod-right {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 矮横屏（iPad 横屏可视高约 650–690）：把键盘压紧到能整个放进那一栏。
+   44px 是 Apple 的手指目标下限，不再往下压 —— 点不准比多滚一下更糟。 */
+@media (orientation: landscape) and (max-height: 760px) {
+  .sheet.mod-sheet { max-height: 94vh; padding: 16px; }
+  .mod-sheet h2 { margin-bottom: 8px; }
+  .mod-sheet .zone { margin: 10px 0 6px; }
+  .mod-sheet .stepper { padding: 4px 0; }
+  .mod-right { gap: 6px; }
+  .mod-right .reason { gap: 3px; margin-top: 0; }
+  .mod-right .reason input { padding: 10px; }
+  .mod-right .numpad { margin: 0; }
+  .mod-right .np-display { padding: 4px 12px; margin-bottom: 4px; font-size: 18px; }
+  .mod-right .np-grid { gap: 5px; }
+  /* 44px 是 Apple 的手指目标下限。压到这里为止 ——
+     再小就会误触，而在餐馆里误触一个数字比多滚一下严重得多。 */
+  .mod-right .np-grid button { height: 44px; font-size: 20px; }
+  .mod-right .np-quick { margin-top: 5px; }
+  .mod-right .np-quick button { padding: 4px; font-size: 12px; }
+  .mod-right .linkbtn.wide { padding: 8px; }
+  .mod-total { margin-top: 8px; padding-top: 8px; }
+  .mod-total strong { font-size: 19px; }
+}
+@supports (max-height: 1dvh) {
+  @media (orientation: landscape) and (max-height: 760px) {
+    .sheet.mod-sheet { max-height: 94dvh; }
+  }
+}
 
 .mod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
 .mod-grid button {
@@ -1347,3 +1391,22 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 /* 账单详情里，加料列在菜名底下 */
 .line-mods { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .chip.sm { font-size: 11px; padding: 1px 6px; }
+
+/* label 里的补充说明：跟标签同一行，不另占一行高度 */
+.reason small { font-weight: 400; opacity: 0.8; }
+
+/* 自定义要求：输入框 + 「加进」同一行。
+   按钮跟输入框底对齐，且**不在滚动区里排在键盘后面** ——
+   横屏矮屏上排在键盘后面的东西一定会被挤出去。 */
+.cust-block { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; }
+.cust-add {
+  padding: 12px 14px;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cust-add:disabled { opacity: 0.4; }

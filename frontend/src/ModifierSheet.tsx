@@ -137,23 +137,33 @@ export default function ModifierSheet({
           </div>
 
           <div className="mod-right">
-            <label className="reason">
-              自定义要求
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder="例如：不放花生 / 分两盘装"
-              />
-            </label>
-            <p className="hint">加价多少（不加钱就留 0）</p>
+            {/* 说明收在标签里且必须**放得下一行** ——
+                换行就多 20px，而横屏矮屏上每一行都在跟键盘抢高度。
+                怎么加价靠下面的键盘自明，不用写成一句话。 */}
+            {/* 「加进」和输入框同一行。
+                 放在键盘下面那版，横屏矮屏上它会被挤到滚动区外面 ——
+                 而这一栏里唯一必须**永远看得见**的就是它。
+                 按钮在 label 外面：放里面点它会顺带聚焦输入框，
+                 iOS 上还会顶出系统键盘。 */}
+            <div className="cust-block">
+              <label className="reason">
+                {/* ⚠️ 必须用一个 span 裹住。.reason 是 flex column，
+                    <small> 直接放会变成独立的 flex item 自己占一行 ——
+                    和宽度无关，多出来的 20px 全是从键盘那儿抢的。 */}
+                <span>
+                  自定义要求<small>　金额在下方输</small>
+                </span>
+                <input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder="例如：不放花生 / 分两盘装"
+                />
+              </label>
+              <button className="cust-add" disabled={!draft.trim()} onClick={addDraft}>
+                加进
+              </button>
+            </div>
             <NumPad value={draftCents} onChange={setDraftCents} />
-            <button
-              className="linkbtn wide"
-              disabled={!draft.trim()}
-              onClick={addDraft}
-            >
-              加进这道菜
-            </button>
           </div>
         </div>
 
