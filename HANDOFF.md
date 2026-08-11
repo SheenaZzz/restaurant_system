@@ -19,7 +19,7 @@
 
 | | |
 |---|---|
-| 提交 | 40 |
+| 提交 | 41 |
 | 文件 | 85 |
 | 数据库表 | 21 |
 | Alembic 迁移 | 12（head `c4e91f27a8b3`） |
@@ -177,6 +177,11 @@ INSERT INTO sync_op (op_id, ...) ON CONFLICT (op_id) DO NOTHING RETURNING op_id
 - **别在本地存 `synced` 状态**，从 outbox 实时推导。存状态会漏掉
   非 open_check 的 op（它们的 op_id 不等于 check_uuid）。
 - iOS 不支持 Background Sync，必须在 `visibilitychange` 回到前台时同步。
+- **网格里写 `1fr` 会被内容最小宽度顶开**（`1fr` = `minmax(auto, 1fr)`，
+  `auto` 的下限是 min-content）。只写 `grid-template-rows` 时隐式列也是 `auto`，
+  同样会被顶开。父容器如果是 `overflow: hidden`，多出来的部分被**静默裁掉** ——
+  点菜的小键盘最右一列就这么被切了 5px。凡是要能缩的轨道一律写
+  `minmax(0, 1fr)`，纵向对应的是 `min-height: 0`。
 - `localhost` 也算安全上下文 —— **明文 8080 上一样会注册 Service Worker**，
   改了代码看不到新版就先 unregister。
 

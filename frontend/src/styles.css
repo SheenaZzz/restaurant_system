@@ -816,9 +816,19 @@ ol.timeline li:last-child { border-left-color: transparent; }
 }
 .np-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* ⚠️ 必须是 minmax(0, 1fr)，不能写 1fr。
+   *
+   * `1fr` 展开是 `minmax(auto, 1fr)`，而 `auto` 的下限是**内容最小宽度**
+   * （24px 字号 + 内边距 + 边框）。列宽不够时它拒绝缩到那以下，
+   * 于是整个网格撑出容器 —— 实测在 300px 的栏里撑到 306px，
+   * 最右一列（3/6/9/⌫）被容器的 overflow:hidden 切掉 5px。
+   * 和纵向那个 min-height:0 是同一族陷阱。
+   */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+  min-width: 0;
 }
+.np-grid button { min-width: 0; }
 /* 56px 仍在手指目标的安全范围（Apple 的建议下限是 44pt）。
    再小就会误触，再大弹层就得滚动 —— 这是权衡后的值。 */
 .np-grid button {
@@ -1294,7 +1304,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 /* 定制弹层：左边选加料、右边手写 + 键盘。和结账弹层同一套分栏。 */
 .sheet.mod-sheet { max-width: 720px; max-height: 88vh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; overflow: hidden; }
 @supports (max-height: 1dvh) { .sheet.mod-sheet { max-height: 88dvh; } }
-.mod-split { display: grid; grid-template-columns: 1fr 300px; gap: 16px; min-height: 0; }
+.mod-split { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; min-height: 0; }
 @media (max-width: 700px) { .mod-split { grid-template-columns: 1fr; } }
 .mod-left { overflow-y: auto; min-height: 0; }
 /* ⚠️ min-height:0 + overflow 是**硬约束**，不是优化。
@@ -1321,8 +1331,16 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   display: grid;
   /* 输入行 / 金额行 / 按键（吃掉剩下的） */
   grid-template-rows: auto auto minmax(0, 1fr);
+  /* ⚠️ 列也必须显式写成 minmax(0, 1fr)。
+   * 只写 rows 的话隐式列是 auto = minmax(min-content, max-content)，
+   * 会被里面内容的最小宽度顶开 —— 实测在 300px 的栏里顶到 305px，
+   * 三个子元素全被拉到 305，最右一列的键被 overflow:hidden 切掉 5px。
+   * 这正是 iPad 上"键盘右侧显示不全"的原因。 */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
+  /* min-width:0 同理 —— 没有它，栏里的内容最小宽度会把这一列撑开 */
+  min-width: 0;
   overflow: hidden;
 }
 /* NumPad 是结账、小费、这里三处共用的，不去动它的结构。
@@ -1456,7 +1474,9 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 /* 自定义要求：输入框 + 「加进」同一行。
    按钮跟输入框底对齐，且**不在滚动区里排在键盘后面** ——
    横屏矮屏上排在键盘后面的东西一定会被挤出去。 */
-.cust-block { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; }
+/* 同理：1fr 会被输入框的最小宽度顶开，必须 minmax(0, 1fr) */
+.cust-block { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.cust-block .reason, .cust-block input { min-width: 0; }
 .cust-add {
   padding: 12px 14px;
   font-size: 15px;
