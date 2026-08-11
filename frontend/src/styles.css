@@ -1719,3 +1719,14 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .board-row.blank input { border-style: dashed; }
 @media (max-width: 700px) { .board-row { grid-template-columns: 30px minmax(0, 1fr) auto; } .board-row .be { display: none; } }
+
+/* 做完的单不消失，变绿留在下面 —— 厨师要看得见自己刚做完什么，
+   也才有机会撤销误点。真正让它离开屏幕的是前台关单。 */
+.kq-card.ok { border-color: color-mix(in srgb, var(--ok) 55%, transparent); background: color-mix(in srgb, var(--ok) 7%, var(--panel)); }
+.kq-card.ok .kq-wait { color: var(--ok); font-weight: 700; }
+.kq-lines li.done .kl-qty { color: var(--ok); }
+.kl-undo {
+  padding: 8px 12px; font-size: 14px;
+  color: var(--muted); background: transparent;
+  border: 1px dashed var(--line); border-radius: 8px; cursor: pointer;
+}

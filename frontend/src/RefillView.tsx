@@ -78,7 +78,7 @@ export default function RefillView() {
     await refresh()
     const label = tr(KINDS.find((k) => k.kind === kind)!.zh)
     setToast(
-      `${name(d)} · ${label}${back ? ` · ${back} ${tr('分钟前')}` : ''}`,
+      `${name(d)} · ${label} · ${back ? `${back} ${tr('分钟前')}` : tr('刚刚')}`,
     )
     // 回拨是**一次性**的，用完立刻归零。留着的话下一条会被静默记到过去，
     // 而没人会记得自己刚才拨过。
@@ -113,14 +113,19 @@ export default function RefillView() {
         </div>
       </div>
 
+      {/* 「−5′」这种缩写没人看得懂（老板第一眼就问了这是什么）。
+          写成整句：这一栏回答的是"这件事是什么时候发生的"。 */}
       <div className="refill-back">
-        <span className="rb-label">{tr('记到')}</span>
+        <span className="rb-label">{tr('什么时候的事？')}</span>
         {BACK.map((m) => (
           <button key={m} className={back === m ? 'on' : ''} onClick={() => setBack(m)}>
-            {m === 0 ? tr('现在') : `−${m}′`}
+            {m === 0 ? tr('刚刚') : `${m} ${tr('分钟前')}`}
           </button>
         ))}
       </div>
+      <p className="hint">
+        {tr('忙完才想起来记的话，选一下实际是多久以前。选完记一条就自动回到「刚刚」。')}
+      </p>
 
       {filled === 0 && (
         <p className="hint">{tr('这块板还没设置。老板账号在「修改 → 补菜台」里填。')}</p>

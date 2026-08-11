@@ -34,6 +34,11 @@ function pending(c: LocalCheck, done: Set<string>): LocalLine[] {
   )
 }
 
+/** 这张单上有没有要后厨做的东西（纯自助的桌子不进队列）。 */
+function hasFood(c: LocalCheck): boolean {
+  return (c.lines ?? []).some((l) => !l.voided)
+}
+
 export default function KitchenView() {
   const [tickets, setTickets] = useState<Ticket[] | null>(null)
   const [done, setDone] = useState<Set<string>>(new Set())
@@ -43,9 +48,18 @@ export default function KitchenView() {
   const refresh = useCallback(async () => {
     const marks = new Set(await getMeta<string[]>(DONE_KEY, []))
     const rows = await db.checks.toArray()
+    // 做完的单**不消失**，变绿留在下面 —— 厨师要能看见自己刚做完什么，
+    // 也才有机会撤销误点。真正让它离开屏幕的是前台关单：
+    // 客人结账走人，这张单对后厨就结束了，这个界限比任何超时规则都准。
     const open = rows
-      .filter((c) => c.status === 'open' && pending(c, marks).length > 0)
-      .sort((a, b) => a.opened_at.localeCompare(b.opened_at))
+      .filter((c) => c.status === 'open' && hasFood(c))
+      .sort((a, b) => {
+        const da = pending(a, marks).length === 0
+        const db_ = pending(b, marks).length === 0
+        // 没做完的排前面；同类按下单先后
+        if (da !== db_) return da ? 1 : -1
+        return a.opened_at.localeCompare(b.opened_at)
+      })
     setDone(marks)
     setTickets(
       open.map((c) => ({
@@ -70,9 +84,12 @@ export default function KitchenView() {
     return () => window.clearInterval(t)
   }, [refresh])
 
-  async function mark(uuid: string, idx: number) {
+  /** 标记 / 撤销标记。误点「做好了」在厨房里太容易发生，必须能改回来。 */
+  async function mark(uuid: string, idx: number, undo = false) {
     const next = new Set(done)
-    next.add(`${uuid}#${idx}`)
+    const key = `${uuid}#${idx}`
+    if (undo) next.delete(key)
+    else next.add(key)
     setDone(next)
     await setMeta(DONE_KEY, [...next])
     await refresh()
@@ -81,7 +98,7 @@ export default function KitchenView() {
   if (tickets === null) return <p className="hint">{tr('载入中…')}</p>
 
   if (!tickets.length) {
-    return <p className="hint big-hint">{tr('没有等待中的单品。')}</p>
+    return <p className="hint big-hint">{tr('现在没有单。')}</p>
   }
 
   const now = Date.now()
@@ -90,12 +107,17 @@ export default function KitchenView() {
     <div className="kq">
       {tickets.map((t) => {
         const waited = Math.max(0, Math.round((now - Date.parse(t.at)) / 60_000))
+        const live = t.lines.filter((l, i) => !l.voided && !done.has(`${t.uuid}#${i}`))
+        const allDone = live.length === 0
         return (
-          <section key={t.uuid} className={`kq-card${waited >= 15 ? ' late' : ''}`}>
+          <section
+            key={t.uuid}
+            className={`kq-card${allDone ? ' ok' : waited >= 15 ? ' late' : ''}`}
+          >
             <div className="kq-head">
               <span className="kq-table">{tr(t.table)}</span>
               {/* 等了多久比几点下的单有用得多 —— 厨房排的是先后，不是钟点 */}
-              <span className="kq-wait">{waited}′</span>
+              <span className="kq-wait">{allDone ? tr('已完成') : `${waited}′`}</span>
             </div>
             <ul className="kq-lines">
               {t.lines.map((l, i) => {
@@ -104,7 +126,7 @@ export default function KitchenView() {
                 const isDone = done.has(key)
                 return (
                   <li key={key} className={isDone ? 'done' : ''}>
-                    <span className="kl-qty">{l.qty}</span>
+                    <span className="kl-qty">{isDone ? '✓' : l.qty}</span>
                     <span className="kl-name">
                       {lineName(l, cat?.menu)}
                       {!!l.modifiers?.length && (
@@ -114,11 +136,12 @@ export default function KitchenView() {
                       )}
                       {l.notes && <em className="kl-mods">{l.notes}</em>}
                     </span>
-                    {!isDone && (
-                      <button className="kl-done" onClick={() => void mark(t.uuid, i)}>
-                        {tr('做好了')}
-                      </button>
-                    )}
+                    <button
+                      className={isDone ? 'kl-undo' : 'kl-done'}
+                      onClick={() => void mark(t.uuid, i, isDone)}
+                    >
+                      {tr(isDone ? '撤销' : '做好了')}
+                    </button>
                   </li>
                 )
               })}

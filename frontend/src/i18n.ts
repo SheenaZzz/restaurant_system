@@ -538,4 +538,11 @@ const EN: Record<string, string> = {
   '空格': 'empty',
   '保存这块板': 'Save this board',
   '台面已保存，补菜页立刻就是新的。': 'Board saved. The refill page has it already.',
+
+  '什么时候的事？': 'When did it happen?',
+  '刚刚': 'just now',
+  '忙完才想起来记的话，选一下实际是多久以前。选完记一条就自动回到「刚刚」。': 'If you are logging it after the fact, pick how long ago it actually was. It goes back to "just now" after one entry.',
+  '已完成': 'Done',
+  '撤销': 'Undo',
+  '现在没有单。': 'No orders right now.',
 }

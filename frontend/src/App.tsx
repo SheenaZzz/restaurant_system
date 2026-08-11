@@ -111,12 +111,14 @@ export default function App() {
     void refresh()
   }
 
-  // 后厨没有楼面这些页。默认值是 'floor'，不纠正的话后厨一进来
-  // 两个 tab 都不高亮 —— 看不出自己在哪一页。
+  // 每次登录把页面拨回这个角色的首页。后厨没有楼面那些页 ——
+  // 不拨的话它一进来两个 tab 都不高亮，看不出自己在哪一页；
+  // 换人接班时也该从头开始，而不是停在上一个人最后看的那一页。
   useEffect(() => {
-    if (identity?.role !== 'kitchen') return
-    setView((v) => (v === 'kitchen' || v === 'refill' ? v : 'kitchen'))
-  }, [identity?.role])
+    if (!identity) return
+    setView(identity.role === 'kitchen' ? 'kitchen' : 'floor')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity?.username])
 
   useEffect(() => {
     if (!identity) return
