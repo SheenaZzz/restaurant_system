@@ -1,15 +1,15 @@
-"""老板后台：改价（人头价、菜价、加料目录）和账户管理。
+"""Owner's back office: prices (per-head, dishes, add-ons) and accounts.
 
-⚠️ **只给 admin**，比设置页（front_manager + admin）严。
-   DESIGN.md 的权限矩阵里「改菜单/价格」这一行只有老板打勾 ——
-   改价是能让每一单的钱都变的操作，和录小费、设税率不是一个量级。
+⚠️ **admin only**, stricter than the settings sheet (front_manager + admin).
+   In DESIGN.md's permission matrix, "edit menu / prices" is ticked for the
+   owner alone -- a price change moves the money on every check, which is
 
-账户管理同理，而且更严格：改密码是安全操作，**只能在线做** ——
-离线排队一条"改密码"意味着它在某个不确定的时刻才生效，
-而人事变动恰恰是要立刻生效的那种事。
+Accounts are the same, and stricter still: changing a password is a security
+operation and **only works online**. Queuing one offline means it takes
+effect at some unknown later moment, and a staffing change is exactly the
 
-写入不走 /api/sync：这些都是**在线专用的后台操作**，不在营业关键路径上，
-和 PUT /api/reports/tax、/tips 同一类例外。离线时会发生的写入仍然必须走 sync。
+These writes do not go through /api/sync: they are **online-only back office**
+work, off the critical path, the same class of exception as PUT
 """
 
 from datetime import date, datetime, timezone
@@ -29,12 +29,12 @@ from ..services.period import load_store_clock
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
-# 老板专属。别放宽到 front_manager —— 见模块开头。
+# Owner only. Do not widen this to front_manager -- see the module docstring.
 _ADMIN = Depends(require_role("admin"))
 
 
 # ---------------------------------------------------------------------------
-# 读：一次给全
+# Read: everything in one call
 # ---------------------------------------------------------------------------
 
 class BuffetPriceOut(BaseModel):
@@ -69,19 +69,19 @@ class ModifierOut(BaseModel):
 class CategoryOut(BaseModel):
     key: str
     label: str
-    # 分类的英文名，给中英切换用
+    # English name of the category, for the language switch
     label_en: str
 
 
 class PricingOut(BaseModel):
-    # 当前生效的人头价（每个组合只给最新一条）
+    # Per-head prices in force (only the current row per combination)
     buffet: list[BuffetPriceOut]
-    # 这些价从哪天开始生效的 —— 界面上要显示，否则老板不知道自己在改哪一版
+    # Which day this version took effect -- shown in the UI, or the owner cannot tell which version is being edited
     buffet_effective_from: date | None
     menu: list[MenuItemOut]
     modifiers: list[ModifierOut]
     categories: list[CategoryOut]
-    # 默认的生效日 = 今天的营业日，不是设备日期也不是 UTC 日期
+    # Default effective date = today's business day, not the device date and not the UTC date
     business_date: date
 
 
@@ -90,9 +90,9 @@ def get_pricing(db: Session = Depends(get_db)):
     clock = load_store_clock(db)
     today = clock.business_date(clock.now())
 
-    # 每个 (时段, 类型, 客型) 组合取 effective_from <= 今天 里最新的一条。
-    # 和 services/pricing.py 的解析口径一致 —— 界面上显示的必须是
-    # **实际会被用到的那一版**，否则老板改的是一个自己看不见的值。
+    # For each (period, kind, guest type) take the newest row with
+    # effective_from <= today. Same resolution as services/pricing.py -- what
+    # the screen shows has to be **the version actually in use**, or the owner
     rows = db.scalars(
         select(BuffetPrice)
         .where(BuffetPrice.effective_from <= today)
@@ -123,7 +123,7 @@ def get_pricing(db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# 写：人头价
+# Write: per-head prices
 # ---------------------------------------------------------------------------
 
 class BuffetPriceIn(BaseModel):
@@ -140,24 +140,24 @@ class BuffetPricesIn(BaseModel):
 
 @router.put("/buffet-prices", response_model=PricingOut, dependencies=[_ADMIN])
 def set_buffet_prices(body: BuffetPricesIn, db: Session = Depends(get_db)):
-    """改人头价。
+    """Change the per-head prices.
 
-    ⚠️ **同一个生效日覆盖，换生效日新增** —— 和税率一个规矩。
+    ⚠️ **The same effective date overwrites; a new one adds a version** -- same rule as the tax rate.
 
-    换生效日 = 一次真正的调价，旧价必须原样留着：历史账单虽然存了
-    价格快照，但月报重算、对账、以及"当时到底卖多少钱"都要查这张表。
-    同一生效日覆盖 = 今天设错了当天改回来，那不是调价。
+    A new effective date is a real price change, and the old prices have to
+    stay: checks store a price snapshot, but recomputing the month report,
+    reconciling, and answering "what did a seat cost then" all read this
     """
     for r in body.rows:
         if r.period_kind not in ("lunch", "dinner"):
-            raise HTTPException(422, f"时段非法: {r.period_kind}")
+            raise HTTPException(422, f"Bad period: {r.period_kind}")
         if r.charge_kind not in ("admission", "drink"):
-            raise HTTPException(422, f"计费类型非法: {r.charge_kind}")
+            raise HTTPException(422, f"Bad charge kind: {r.charge_kind}")
         if r.guest_type not in ("adult", "child", "senior"):
-            raise HTTPException(422, f"客型非法: {r.guest_type}")
-        # 数据库有 ck_bp_drink_tier 挡着，这里提前给一句人话
+            raise HTTPException(422, f"Bad guest type: {r.guest_type}")
+        # ck_bp_drink_tier would catch this; say it in words first
         if r.charge_kind == "drink" and r.guest_type == "senior":
-            raise HTTPException(422, "饮料只有成人/儿童两档，长者按成人价")
+            raise HTTPException(422, "Drinks have adult and child tiers only; seniors pay the adult price")
 
     for r in body.rows:
         row = db.scalar(
@@ -183,7 +183,7 @@ def set_buffet_prices(body: BuffetPricesIn, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# 写：菜价
+# Write: dish prices
 # ---------------------------------------------------------------------------
 
 class MenuItemIn(BaseModel):
@@ -198,17 +198,17 @@ class MenuItemsIn(BaseModel):
 
 @router.put("/menu-items", response_model=PricingOut, dependencies=[_ADMIN])
 def set_menu_items(body: MenuItemsIn, db: Session = Depends(get_db)):
-    """改菜价 / 上下架。
+    """Change dish prices and what is on the menu.
 
-    这里是**直接改**，不留生效日 —— 和人头价不一样，因为
-    order_line 落库时存的是 unit_price_cents 快照，改菜单价
-    动不了任何一张已经开出去的单。人头价那张表是要被回查的，所以才要留版本。
+    This one edits **in place**, with no effective date -- unlike per-head
+    prices, because an order_line stores a unit_price_cents snapshot, so
+    changing the menu cannot move a check that is already open. The per-head
     """
     for it in body.items:
         mi = db.get(MenuItem, it.id)
         if mi is None:
-            raise HTTPException(422, f"菜品不存在: {it.id}")
-        # 开放价条目（Buffet To Go 按重量称）没有固定价，别让它被设死
+            raise HTTPException(422, f"No such dish: {it.id}")
+        # Open-price items (Buffet To Go, by weight) have no fixed price -- do not pin one on
         if not mi.open_price:
             mi.price_cents = it.price_cents
         mi.active = it.active
@@ -218,11 +218,11 @@ def set_menu_items(body: MenuItemsIn, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# 写：加料目录（内容 + 顺序）
+# Write: the add-on catalogue (contents and order)
 # ---------------------------------------------------------------------------
 
 class ModifierIn(BaseModel):
-    # 没有 id = 新增
+    # no id = a new one
     id: int | None = None
     name_zh: str
     name_en: str = ""
@@ -230,29 +230,29 @@ class ModifierIn(BaseModel):
 
 
 class ModifiersIn(BaseModel):
-    """**整份列表按顺序发上来**，数组下标就是显示顺序。"""
+    """**The whole list arrives in order**; the array index is the display order."""
 
     rows: list[ModifierIn]
 
 
 @router.put("/modifiers", response_model=PricingOut, dependencies=[_ADMIN])
 def set_modifiers(body: ModifiersIn, db: Session = Depends(get_db)):
-    """改加料目录的内容和顺序。
+    """Change the contents and the order of the add-on catalogue.
 
-    整份替换：带 id 的原地改，没 id 的新增，**没出现在列表里的停用**。
+    Wholesale replacement: rows with an id are edited, rows without are added,
 
-    ⚠️ 停用而不是删除。order_line_modifier.modifier_id 是指向这张表的外键，
-       删了会让历史账单的加料记录断链。停用对历史没有任何影响 ——
-       那边的 label 和 price_cents 都是快照，不查这张表。
+    ⚠️ Deactivated, not deleted. order_line_modifier.modifier_id is a foreign
+       key into this table, and deleting would orphan the add-ons on past
+       checks. Deactivating changes nothing for them -- their label and
     """
-    # ⚠️ 按**对象**跟踪，不能按 id：新增的行要 flush 之后才有 id，
-    #    用 id 集合的话它们会被下面的停用循环当成"不在列表里"立刻停掉。
+    # ⚠️ Track **objects**, not ids: a new row has no id until flush, so an id
+    #    set would make the deactivation loop below treat it as "not in the
     kept: list[MenuModifier] = []
 
     for i, r in enumerate(body.rows):
         name = r.name_zh.strip()
         if not name:
-            raise HTTPException(422, "加料名称不能为空")
+            raise HTTPException(422, "An add-on needs a name")
 
         if r.id is None:
             row = MenuModifier(name_zh=name, name_en=r.name_en.strip() or name)
@@ -260,19 +260,19 @@ def set_modifiers(body: ModifiersIn, db: Session = Depends(get_db)):
         else:
             row = db.get(MenuModifier, r.id)
             if row is None:
-                raise HTTPException(422, f"加料不存在: {r.id}")
+                raise HTTPException(422, f"No such add-on: {r.id}")
             row.name_zh = name
             row.name_en = r.name_en.strip() or name
 
         row.price_cents = r.price_cents
-        # 顺序就是数组下标。留出间隔，将来手工插一条也不用整体重排。
+        # The order is the array index. Leave gaps so inserting one by hand later needs no renumbering.
         row.sort_order = (i + 1) * 10
         row.active = True
         kept.append(row)
 
     db.flush()
     keep_ids = {r.id for r in kept}
-    # 列表里没有的 = 老板删掉了 → 停用（不删，见上面的说明）
+    # Not in the list = the owner removed it -> deactivate (never delete, see above)
     for row in db.scalars(select(MenuModifier).where(MenuModifier.active.is_(True))):
         if row.id not in keep_ids:
             row.active = False
@@ -282,18 +282,20 @@ def set_modifiers(body: ModifiersIn, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# 账户
+# Accounts
 #
-# ⚠️ **密码只能重设，不能查看。** 库里存的是 argon2 哈希，设计上就是不可逆的 ——
-#    这不是功能缺失。真能查出来就意味着拖库的人也查得出来。
-#    老板忘了员工的密码，正确的做法是设一个新的，不是"找回"。
+# ⚠️ **A password can be reset, never read.** What is stored is an argon2
+#    hash, irreversible by design -- that is not a missing feature. Being able
+#    to read one back would mean whoever dumps the database can too. When the
 # ---------------------------------------------------------------------------
 
-_ROLE_LABELS: dict[str, tuple[str, str]] = {
-    "admin": ("老板", "Owner"),
-    "front_manager": ("前台主管", "Front manager"),
-    "front_employee": ("前台员工", "Front staff"),
-    "kitchen": ("后厨", "Kitchen"),
+# Shown as-is on an English screen; the front-end catalogue turns them into
+# Chinese. One place holds Chinese UI copy, and it is not this one.
+_ROLE_LABELS: dict[str, str] = {
+    "admin": "Owner",
+    "front_manager": "Front manager",
+    "front_employee": "Front staff",
+    "kitchen": "Kitchen",
 }
 
 
@@ -303,10 +305,9 @@ class UserOut(BaseModel):
     display_name: str
     role: str
     role_label: str
-    role_label_en: str
     active: bool
-    # 这个账号现在有几台设备还登录着。改密码前老板该看见这个数 ——
-    # 「还有 2 台设备登录着」和「一台都没有」是两个决定。
+    # How many devices are still signed in as this account. The owner should
+    # see it before changing a password -- "two devices" and "none" are different decisions.
     sessions: int
 
 
@@ -331,8 +332,7 @@ def _users(db: Session) -> UsersOut:
                 username=u.username,
                 display_name=u.display_name,
                 role=u.role,
-                role_label=_ROLE_LABELS.get(u.role, (u.role, u.role))[0],
-                role_label_en=_ROLE_LABELS.get(u.role, (u.role, u.role))[1],
+                role_label=_ROLE_LABELS.get(u.role, u.role),
                 active=u.active,
                 sessions=live.get(u.id, 0),
             )
@@ -353,25 +353,25 @@ class UserPatch(BaseModel):
 
 @router.put("/users/{uid}", response_model=UsersOut, dependencies=[_ADMIN])
 def set_user(uid: int, body: UserPatch, db: Session = Depends(get_db)):
-    """改登录名和显示名。角色不在这里改 —— 见下面的说明。"""
+    """Change the username and display name. Roles are not changed here -- see below."""
     u = db.get(AppUser, uid)
     if u is None:
-        raise HTTPException(404, "账号不存在")
+        raise HTTPException(404, "No such account")
 
     username = body.username.strip()
     display = body.display_name.strip()
     if not username or " " in username:
-        raise HTTPException(422, "登录名不能为空、也不能有空格")
+        raise HTTPException(422, "A username cannot be empty or contain spaces")
 
-    # 登录是精确匹配（见 core/deps.user_by_username），所以 Admin 和 admin
-    # 是两个账号。这对店里只会造成"我明明输对了却登不进去"，
-    # 一律按小写存，把这个坑堵死。
+    # Sign-in is an exact match (see core/deps.user_by_username), so Admin and
+    # admin are two accounts. In a store that only produces "I typed it right
+    # and it will not let me in", so everything is stored lower-cased.
     username = username.lower()
 
     if username != u.username:
         taken = db.scalar(select(AppUser).where(AppUser.username == username))
         if taken is not None:
-            raise HTTPException(409, f"登录名已被占用：{username}")
+            raise HTTPException(409, f"Username already taken: {username}")
 
     u.username = username
     u.display_name = display
@@ -380,27 +380,27 @@ def set_user(uid: int, body: UserPatch, db: Session = Depends(get_db)):
 
 
 class PasswordIn(BaseModel):
-    # 下限只有 4 位。这台服务器只在店内局域网上，威胁模型是
-    # "员工离职后还能用自己的账号进来"，不是互联网上的暴力破解。
-    # 强制复杂密码的真实后果是被写在收银台的便利贴上 —— 那更糟。
+    # Four characters is the floor. This server only lives on the store LAN;
+    # the threat is "someone who left can still sign in", not brute force from
+    # the internet. Forcing complex passwords really produces a sticky note on the till.
     password: str = Field(min_length=4, max_length=128)
 
 
 @router.post("/users/{uid}/password", response_model=UsersOut, dependencies=[_ADMIN])
 def set_password(uid: int, body: PasswordIn, db: Session = Depends(get_db)):
-    """重设密码，并把这个账号已有的登录**全部吊销**。
+    """Reset a password and **revoke every session** that account holds.
 
-    吊销是重点，不是附赠：老板改密码的典型场景就是员工离职，
-    而那台 iPad 上的 refresh token 能一直续到 30 天后。
-    不吊销的话，改完密码那个人照样进得来 —— 等于什么都没做。
+    The revocation is the point, not a bonus: the reason an owner changes a
+    staff password is that the person left, and the refresh token on their
+    iPad would otherwise keep working for another 30 days. Without revoking,
 
-    ⚠️ 已经发出去的 access token 撤不回来（JWT 不落库，这是它快的原因），
-       所以最长还有 15 分钟的窗口。这是刻意的取舍，不是漏洞：
-       要立刻断掉，就得每个请求都查库。
+    ⚠️ Access tokens already issued cannot be recalled (JWTs are not stored,
+       which is why they are fast), so there is a window of up to 15 minutes.
+       That is a deliberate trade: cutting it to zero means a database lookup on every request.
     """
     u = db.get(AppUser, uid)
     if u is None:
-        raise HTTPException(404, "账号不存在")
+        raise HTTPException(404, "No such account")
 
     u.password_hash = hash_password(body.password)
 
@@ -417,11 +417,11 @@ def set_password(uid: int, body: PasswordIn, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# 写：自助餐台的布局
+# Write: the buffet layout
 # ---------------------------------------------------------------------------
 
 class BoardDishIn(BaseModel):
-    # 没有 id = 新增的一道菜
+    # no id = a dish the owner just added
     id: int | None = None
     page: int = Field(ge=1, le=3)
     pos: int = Field(ge=1, le=10)
@@ -430,7 +430,7 @@ class BoardDishIn(BaseModel):
 
 
 class BoardIn(BaseModel):
-    """**一个时段的整块板按顺序发上来。** 午市和晚市分开保存。"""
+    """**One period's whole board arrives in order.** Lunch and dinner save separately."""
 
     period_kind: str
     rows: list[BoardDishIn]
@@ -447,14 +447,14 @@ def get_buffet_board(db: Session = Depends(get_db)):
 
 @router.put("/buffet-board", response_model=BoardOut, dependencies=[_ADMIN])
 def set_buffet_board(body: BoardIn, db: Session = Depends(get_db)):
-    """改自助餐台的菜和位置。
+    """Change the dishes on the buffet and where they sit.
 
-    ⚠️ **原地改名 = 同一道菜，历史接得上；换成另一道菜必须删掉再加。**
-       这条规矩界面上也写着，因为它决定消耗模型看到的是一条连续的序列
-       还是两道菜被接成一条 —— 后者是静默的数据污染，事后查不出来。
+    ⚠️ **Renaming in place keeps the dish and its history; a different dish
+       means clearing the slot and adding one.** The UI says so too, because
+       it decides whether the consumption model sees one continuous series or
 
-    删掉的是停用不是删除：tray_event 的外键指着它，
-    删了历史补菜记录就断链了。
+    Removing deactivates rather than deletes: tray_event has a foreign key
+    into this table, and deleting would orphan the refill history.
     """
     try:
         set_board(db, body.period_kind, [r.model_dump() for r in body.rows])

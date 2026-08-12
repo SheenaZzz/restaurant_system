@@ -22,7 +22,7 @@ body {
   color: var(--text);
   font: 16px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", sans-serif;
-  /* iPad 上禁止整页橡皮筋滚动，更像原生 App */
+  /* No rubber-band scrolling of the whole page on an iPad; it reads as native */
   overscroll-behavior: none;
 }
 
@@ -63,7 +63,7 @@ header {
   color: var(--warn);
 }
 
-/* 餐馆环境：按钮必须够大，戴着手套、端着盘子也能点中 */
+/* A restaurant: buttons have to be big enough to hit with gloves on, carrying a plate */
 button.big {
   width: 100%;
   margin: 20px 0;
@@ -137,7 +137,7 @@ li {
   color: var(--accent);
 }
 
-/* 状态栏配色：离线（warn）绝不能和出错（bad）长得一样 */
+/* Status colours: offline (warn) must never look like an error (bad) */
 .status.ok   { color: var(--ok); }
 .status.warn { color: var(--warn); }
 .status.bad  { color: var(--bad); }
@@ -153,7 +153,7 @@ li {
   opacity: 0.55;
 }
 
-/* ---- 身份与登录 ---- */
+/* ---- identity and sign-in ---- */
 .who {
   display: inline-flex;
   align-items: center;
@@ -220,7 +220,7 @@ li {
 }
 .login input {
   padding: 14px;
-  font-size: 17px;              /* iOS 上小于 16px 会自动放大页面 */
+  font-size: 17px;              /* under 16px, iOS zooms the page in */
   color: var(--text);
   background: var(--panel);
   border: 1px solid var(--line);
@@ -240,7 +240,7 @@ li {
 .login .err { margin: 0; color: var(--bad); font-size: 14px; }
 .login .hint { margin: 0; color: var(--muted); font-size: 12px; text-align: center; }
 
-/* ---- 楼面 ---- */
+/* ---- the floor ---- */
 .floor-head {
   display: flex;
   align-items: baseline;
@@ -263,7 +263,7 @@ li {
   gap: 10px;
 }
 
-/* 桌子按钮必须够大 —— 高峰期端着盘子也要能点中 */
+/* Table buttons have to be big -- hit at peak while carrying plates */
 .table {
   display: flex;
   flex-direction: column;
@@ -281,7 +281,7 @@ li {
 .table:active { transform: scale(0.97); }
 .table.free    { opacity: 0.65; }
 .table.busy    { border-color: var(--ok);   background: color-mix(in srgb, var(--ok) 12%, var(--panel)); }
-/* 还没被服务端确认的用虚线框 —— 员工要能一眼看出"这条还没发出去" */
+/* Not yet confirmed by the server = a dashed border, so staff can see at a glance that it has not gone out */
 .table.busy.pending { border-style: dashed; border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); }
 
 .tlabel  { font-size: 19px; font-weight: 700; }
@@ -289,7 +289,7 @@ li {
 .tguests { font-size: 14px; }
 .tmoney  { font-size: 13px; color: var(--muted); font-family: ui-monospace, monospace; }
 
-/* ---- 弹层 ---- */
+/* ---- sheets ---- */
 .sheet-back {
   position: fixed;
   inset: 0;
@@ -332,7 +332,7 @@ li {
 }
 .stepper .sl { flex: 1; font-size: 17px; }
 .stepper .sl small { color: var(--muted); font-size: 12px; }
-/* 加减按钮 56px —— 手指目标，不是鼠标目标 */
+/* 56px steppers -- a finger target, not a mouse target */
 .stepper button {
   width: 56px;
   height: 56px;
@@ -383,7 +383,7 @@ li {
 .hint { color: var(--muted); font-size: 13px; }
 .err { color: var(--bad); font-size: 14px; }
 
-/* ---- 视图切换 ---- */
+/* ---- view switcher ---- */
 .tabs { display: flex; gap: 8px; margin: 18px 0 4px; }
 .tabs button {
   padding: 10px 22px;
@@ -402,7 +402,7 @@ li {
 }
 .badge.clickable { border: none; cursor: pointer; font: inherit; }
 
-/* ---- 清单页 ---- */
+/* ---- check list ---- */
 .list-head {
   display: flex;
   flex-wrap: wrap;
@@ -485,7 +485,7 @@ button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 4
   border-radius: 10px;
 }
 
-/* ---- 死信 ---- */
+/* ---- dead letters ---- */
 .sheet.wide { max-width: 680px; max-height: 80vh; overflow-y: auto; }
 ul.dl { list-style: none; margin: 12px 0 0; padding: 0; }
 ul.dl li { padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -498,7 +498,7 @@ ul.dl li { padding: 12px 0; border-bottom: 1px solid var(--line); }
   border-color: color-mix(in srgb, var(--ok) 45%, transparent);
 }
 
-/* ---- 行状态配色：一眼看出状态，不用去读文字 ---- */
+/* ---- row status colours: read the state without reading the words ---- */
 .orders tr.row-closed { background: color-mix(in srgb, var(--ok) 11%, transparent); }
 .orders tr.row-voided {
   background: color-mix(in srgb, var(--bad) 13%, transparent);
@@ -517,7 +517,7 @@ ul.dl li { padding: 12px 0; border-bottom: 1px solid var(--line); }
 
 .warnText { color: var(--warn); }
 
-/* 支付方式选择 */
+/* payment method picker */
 .paygrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 14px 0; }
 .paygrid button {
   padding: 16px;
@@ -535,7 +535,7 @@ ul.dl li { padding: 12px 0; border-bottom: 1px solid var(--line); }
   font-weight: 600;
 }
 
-/* 换/并桌 */
+/* transfer / merge */
 .grid.tight { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
 .grid.tight .table { min-height: 60px; padding: 8px; }
 .grid.tight .tlabel { font-size: 16px; }
@@ -562,7 +562,7 @@ ul.pick input { width: 22px; height: 22px; }
 }
 .preview .total.small { font-size: 20px; margin: 4px 0 0; }
 
-/* 详情页里的次级动作：一行铺开，手指目标够大 */
+/* Secondary actions on the detail page: one row across, targets big enough for a finger */
 .actiongrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
@@ -580,7 +580,7 @@ ul.pick input { width: 22px; height: 22px; }
 }
 .tmoney .svc { color: var(--warn); }
 
-/* ---- 月报 ---- */
+/* ---- month report ---- */
 .month-head {
   display: flex;
   align-items: center;
@@ -701,7 +701,7 @@ table.kv .num { text-align: right; font-variant-numeric: tabular-nums; }
 .mcell .mv { font-size: 13px; color: var(--ok); font-variant-numeric: tabular-nums; }
 .mcell .md { font-size: 11px; color: var(--muted); }
 
-/* ---- 账单卡片 ---- */
+/* ---- check cards ---- */
 .tabs.sub { margin: 14px 0 8px; }
 .tabs.sub button { padding: 8px 16px; font-size: 15px; }
 .tabs.sub .cnt {
@@ -719,7 +719,7 @@ table.kv .num { text-align: right; font-variant-numeric: tabular-nums; }
   margin-top: 10px;
 }
 
-/* 卡片要够大 —— iPad 上用手指点，不是用鼠标 */
+/* Cards have to be big -- an iPad is tapped with a finger, not clicked */
 .card {
   display: flex;
   flex-direction: column;
@@ -767,7 +767,7 @@ table.kv .num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .c-note { color: var(--muted); font-size: 12px; }
 
-/* ---- 操作历史时间线 ---- */
+/* ---- operation history timeline ---- */
 ol.timeline { list-style: none; margin: 12px 0; padding: 0; }
 ol.timeline li {
   position: relative;
@@ -801,7 +801,7 @@ ol.timeline li:last-child { border-left-color: transparent; }
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- POS 数字键盘 ---- */
+/* ---- POS numeric keypad ---- */
 .numpad { margin: 12px 0 4px; }
 .np-display {
   padding: 10px 14px;
@@ -816,21 +816,22 @@ ol.timeline li:last-child { border-left-color: transparent; }
 }
 .np-grid {
   display: grid;
-  /* ⚠️ 必须是 minmax(0, 1fr)，不能写 1fr。
+  /* ⚠️ This has to be minmax(0, 1fr), never 1fr.
    *
-   * `1fr` 展开是 `minmax(auto, 1fr)`，而 `auto` 的下限是**内容最小宽度**
-   * （24px 字号 + 内边距 + 边框）。列宽不够时它拒绝缩到那以下，
-   * 于是整个网格撑出容器 —— 实测在 300px 的栏里撑到 306px，
-   * 最右一列（3/6/9/⌫）被容器的 overflow:hidden 切掉 5px。
-   * 和纵向那个 min-height:0 是同一族陷阱。
+   * `1fr` expands to `minmax(auto, 1fr)`, and the floor of `auto` is the
+   * **min-content width** (24px type + padding + border). When the column is
+   * narrower it refuses to shrink below that and the grid pushes past its
+   * container -- measured at 306px inside a 300px column, with the right-hand
+   * column (3/6/9/⌫) clipped 5px by the container's overflow:hidden.
+   * The same family of trap as min-height:0 vertically.
    */
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
 }
 .np-grid button { min-width: 0; }
-/* 56px 仍在手指目标的安全范围（Apple 的建议下限是 44pt）。
-   再小就会误触，再大弹层就得滚动 —— 这是权衡后的值。 */
+/* 56px is still inside the safe finger-target range (Apple suggests 44pt as the floor).
+   Smaller mistaps, larger and the sheet has to scroll -- this is the traded value. */
 .np-grid button {
   height: 56px;
   font-size: 24px;
@@ -857,7 +858,7 @@ ol.timeline li:last-child { border-left-color: transparent; }
 }
 .np-quick .np-q { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 
-/* 混合支付的两边 */
+/* the two sides of a mixed payment */
 .splitrow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
 .splitrow button {
   display: flex;
@@ -879,7 +880,7 @@ ol.timeline li:last-child { border-left-color: transparent; }
 .tiplabel { margin-bottom: 2px; font-size: 14px; color: var(--muted); }
 
 
-/* ---- 混合支付：左右分栏 ---- */
+/* ---- mixed payment: two columns ---- */
 .sheet.pay-wide { max-width: 720px; }
 
 .pay-split {
@@ -891,25 +892,25 @@ ol.timeline li:last-child { border-left-color: transparent; }
 .pay-left .total { margin-top: 0; }
 .pay-right .numpad { margin-top: 0; }
 
-/* 竖屏 / 窄屏退回上下排列 —— 分栏挤在一起比滚动更难用 */
+/* Portrait / narrow falls back to stacked -- two cramped columns are worse than scrolling */
 @media (max-width: 720px) {
   .pay-split { grid-template-columns: 1fr; }
   .sheet.pay-wide { max-width: 460px; }
 }
 
-/* 弹层最高不超过视口，超了内部滚动，确认按钮始终够得着。
+/* A sheet never exceeds the viewport; past that it scrolls internally, so the confirm button stays reachable.
  *
- * ⚠️ iOS 上 100vh 是**地址栏收起时**的高度，比实际可见区域大 ——
- *    88vh 在 iPad Safari 上会让弹层底部（购物车、取消/确认）
- *    落到可视范围之外，看起来就是被上面的内容压住了。
- *    dvh 跟随真实可见视口。两行都留着：不支持 dvh 的旧 iOS 退回 vh。
- */
+ * ⚠️ On iOS 100vh is the height **with the address bar hidden**, which is more
+ *    than is actually visible -- 88vh on iPad Safari puts the bottom of the
+ *    sheet (cart, cancel/confirm) outside the visible area, which reads as
+ *    being covered by the content above it.
+ *    dvh follows the real visible viewport. Both lines stay: older iOS without dvh falls back to vh. */
 .sheet { max-height: 88vh; overflow-y: auto; }
 @supports (max-height: 1dvh) {
   .sheet { max-height: 88dvh; }
 }
 
-/* ---- 自提 ---- */
+/* ---- to go ---- */
 .togo-actions {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -936,25 +937,28 @@ ol.timeline li:last-child { border-left-color: transparent; }
 .bc-title { font-size: 21px; font-weight: 700; }
 .bc-sub { color: var(--muted); font-size: 13px; }
 
-/* ---- 点菜 ---- */
-/* 点菜弹层撑到可用高度，只让菜品区滚 ——
-   标题、搜索框、购物车、确认按钮都固定，不用为了点「确认」先滚回底部。
-   原来菜品区是写死的 46vh：屏幕再高也只给那么一条，
-   而 143 个菜里搜出来的结果经常比它长得多。 */
-/* 点菜弹层：用**网格的显式行**给每一块划地盘，不靠 flex 收缩。
+/* ---- ordering ---- */
+/* The ordering sheet fills the available height and only the dish area scrolls --
+   the title, the search box, the cart and the confirm button all stay put, so
+   nobody has to scroll back down to reach Confirm.
+   The dish area used to be a hard-coded 46vh: a taller screen still got one
+   strip, while a search across 143 dishes is often much longer than that. */
+/* The ordering sheet: **explicit grid rows** give each block its own space,
  *
- * 子元素顺序：h2 / 搜索框 / 菜品区 / 购物车(可能没有) / 动作条
- * 行分配：    auto   auto     1fr      auto            auto
+ * rather than relying on flex shrinking.
+ * Children in order: h2 / search / dishes / cart (maybe absent) / action bar
  *
- * 关键性质：网格里 auto 行**先按内容拿够高度**，1fr 才吃剩下的。
- * 所以动作条永远有自己的一栏，既不会被挤出去，也**不会盖在菜上**。
+ * Rows:              auto   auto     1fr      auto              auto
+ * The property that matters: an auto row **takes the height its content needs
  *
- * ⚠️ 两条弯路都别再走：
- *   · flex + min-height:0 + overflow:hidden —— iOS 横屏上 WebKit 收缩
- *     失败，溢出被裁，取消/确认整个消失。
- *   · position: sticky 的动作条 —— 按钮是保住了，但它**盖在**滚动内容上，
- *     菜单最底下那排菜点不到。为了能点按钮而让菜点不到，不划算。
- */
+ * first**, and only then does 1fr take what is left. So the action bar always
+ * has its own row: it can neither be squeezed out nor **cover the dishes**.
+ * ⚠️ Neither dead end again:
+ *   - flex + min-height:0 + overflow:hidden -- WebKit fails to shrink in iOS
+ *     landscape, the overflow is clipped, and cancel/confirm disappear entirely.
+ *   - a position: sticky action bar -- the buttons survive, but it **covers**
+ *     the scrolling content and the bottom row of dishes cannot be tapped.
+ *     Trading untappable dishes for a tappable button is a bad deal. */
 .sheet.menu-sheet {
   max-width: 760px;
   display: grid;
@@ -963,23 +967,24 @@ ol.timeline li:last-child { border-left-color: transparent; }
   overflow: hidden;
 }
 @supports (max-height: 1dvh) {
-  /* iOS 上 100vh 是地址栏收起时的高度，比可见区域大。
-     横屏可见高度本来就小，这个溢出占比更大 —— 所以竖屏没事、横屏出问题。 */
+  /* On iOS 100vh is the height with the address bar hidden, more than is visible.
+     Landscape has less visible height to begin with, so the overshoot is a bigger
+     share of it -- which is why portrait was fine and landscape was not. */
   .sheet.menu-sheet { max-height: 88dvh; }
 }
 
-/* 动作条自己一栏，跟菜品区之间留一道分隔线，视觉上也说清"这是另一块" */
+/* The action bar gets its own row, with a rule between it and the dishes so it reads as a separate block */
 .menu-sheet .sheet-actions {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 
-/* 购物车是这一屏里唯一会无限长高的东西（22 项就换行成 141px）。
-   给它自己的滚动条，别让它把菜品区和按钮一起挤出去。 */
+/* The cart is the only thing here that can grow without limit (22 items wrap to 141px).
+   Give it its own scrollbar rather than letting it push the dishes and the buttons out. */
 .menu-sheet .cart { max-height: 22vh; overflow-y: auto; }
 
-/* 横屏矮屏（iPad 横屏可视高度约 650–690）：把固定开销压到最小 */
+/* Short landscape (an iPad in landscape has roughly 650-690 visible): squeeze the fixed overhead */
 @media (orientation: landscape) and (max-height: 720px) {
   .sheet-back { padding: 10px; }
   .sheet.menu-sheet { max-height: 94vh; padding: 16px; }
@@ -992,9 +997,9 @@ ol.timeline li:last-child { border-left-color: transparent; }
     .sheet.menu-sheet { max-height: 94dvh; }
   }
 }
-/* grid 的行默认是 auto，会被内容撑开 —— 撑开之后弹层是 overflow:hidden，
-   底部的购物车和确认按钮就被顶出去裁掉了。minmax(0,1fr) 把行钉死，
-   多出来的内容留给 .menu-items 自己滚。 */
+/* Grid rows default to auto and are pushed open by their content -- and since the
+   sheet is overflow:hidden, the cart and the confirm button at the bottom get
+   clipped. minmax(0,1fr) pins the row and leaves the excess to .menu-items to scroll. */
 .menu-sheet .menu-body { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); }
 .menu-sheet .menu-cats,
 .menu-sheet .menu-items { max-height: none; min-height: 0; }
@@ -1012,13 +1017,14 @@ ol.timeline li:last-child { border-left-color: transparent; }
   border-radius: 10px;
 }
 .menu-body { display: grid; grid-template-columns: 128px 1fr; gap: 12px; }
-/* 窄屏：分类栏改成横排在上、菜品在下。
-   竖排一列分类在窄屏上会吃掉半个屏 —— 实测 600×700 时菜品区只剩 113px。
-   行高也要显式给：默认 auto 会让两行平分，菜品区同样被挤没。 */
+/* Narrow: the category rail moves to a row on top with dishes below.
+   A vertical rail eats half a narrow screen -- measured at 600x700, the dish
+   area was down to 113px.
+   The row heights have to be explicit too: auto splits them evenly and squeezes the dishes out again. */
 @media (max-width: 620px) {
   .menu-body { grid-template-columns: 1fr; }
   .menu-sheet .menu-body { grid-template-rows: auto minmax(0, 1fr); }
-  /* 搜索时分类栏不渲染，只剩一行 */
+  /* While searching the rail is not rendered, so there is only one row */
   .menu-sheet .menu-body.searching { grid-template-rows: minmax(0, 1fr); }
   .menu-sheet .menu-cats {
     flex-direction: row;
@@ -1028,8 +1034,9 @@ ol.timeline li:last-child { border-left-color: transparent; }
   }
 }
 
-/* 搜索时分类栏不渲染 —— 必须同时改回单列，否则菜品列表会掉进
-   那个 128px 的分类列里（它成了第一个网格子元素），右边一大片空着。 */
+/* While searching the rail is not rendered -- the column count has to go back to
+   one at the same time, or the dish list falls into that 128px rail column (it
+   becomes the first grid child) and the right-hand side is left empty. */
 .menu-body.searching { grid-template-columns: 1fr; }
 
 .menu-cats { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
@@ -1107,7 +1114,7 @@ ol.timeline li:last-child { border-left-color: transparent; }
 table.kv.lines td { padding: 6px 2px; }
 table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 
-/* 弹层标题行里的次级入口：够醒目，但不跟主操作抢 */
+/* Secondary entry points in a sheet title row: visible, without competing with the main action */
 .sheet h2 .headbtn {
   padding: 9px 16px;
   font-size: 15px;
@@ -1121,7 +1128,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .sheet h2 .headbtn:active { transform: scale(0.97); }
 
-/* 高频快捷操作：用主色标出来，但比主按钮小一号 —— 它是加速器，不是主流程 */
+/* A frequent shortcut: marked in the accent colour but a size below the primary button -- it is an accelerator, not the main path */
 .quickbtn {
   width: 100%;
   margin: 8px 0 0;
@@ -1136,10 +1143,10 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .quickbtn:active { transform: scale(0.99); }
 
-/* ---- 营业日：日期标记 / 跨天未结账单 ---- */
+/* ---- business day: date markers and carried-over checks ---- */
 
-/* 楼面头部的营业日。旁边的在座人数、开台数都是"这一天"的数字，
-   不写清是哪一天，跨零点之后员工没法判断该不该信。 */
+/* The business day in the floor header. The seated and open counts beside it are
+   "this day's" numbers, and without saying which day nobody can tell whether to trust them after midnight. */
 .bday {
   font-size: 14px;
   color: var(--muted);
@@ -1148,9 +1155,9 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   border-radius: 999px;
 }
 
-/* 跨天未结账单的横幅。
-   用 warn 而不是 bad：这不是故障，是一件待办的事 ——
-   把它染成红色，员工看两天就学会无视了，真出故障时也不会再看。 */
+/* The carried-over banner.
+   warn rather than bad: this is not a fault, it is something to deal with --
+   in red, staff learn to ignore it within two days and stop looking when something really breaks. */
 .carry-banner {
   display: flex;
   align-items: center;
@@ -1200,7 +1207,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 .cr-money { flex: 1; font-size: 17px; font-variant-numeric: tabular-nums; }
 .cr-who { flex: none; font-size: 12px; color: var(--muted); }
 
-/* 设置页里"改了会影响历史"的警告。比普通 hint 重，但不是错误。 */
+/* The "changing this affects history" warning in Settings. Heavier than a hint, but not an error. */
 .hint.warnbox {
   padding: 10px 12px;
   background: color-mix(in srgb, var(--warn) 10%, transparent);
@@ -1208,7 +1215,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   border-radius: 0 8px 8px 0;
 }
 
-/* 时区不一致是**故障**（数据会归错日），不是待办事项 —— 用 bad 配色 */
+/* A time zone mismatch is a **fault** (data lands on the wrong day), not a task -- so bad colours */
 .carry-banner.bad {
   background: color-mix(in srgb, var(--bad) 12%, var(--panel));
   border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
@@ -1216,14 +1223,14 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .carry-banner.bad .cb-n { color: var(--bad); }
 
-/* ---- 待收 / 应退 ---- */
+/* ---- outstanding / to refund ---- */
 .duebox { margin: 8px 0 4px; }
 .duebox .num.strong { font-size: 19px; font-weight: 700; color: var(--warn); }
 
-/* ---- 月报：对账告警下钻 ---- */
+/* ---- month report: drilling into a warning ---- */
 
-/* 可点的统计行。整行给 hover 提示，但只有右侧数字是可点区域 —— 
-   左边标签也可点的话，误触率会明显上升 */
+/* A clickable stat row. The whole row hints on hover, but only the number on the
+   right is the hit area -- making the label clickable too raises mistaps noticeably */
 .tappable-row td.num { padding: 2px 0; }
 .drill {
   display: inline-flex;
@@ -1239,7 +1246,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .drill .cb-go { font-size: 16px; }
 
-/* 下钻列表里的行是只读的，不该看起来能点 */
+/* Rows inside a drill-down are read-only and should not look tappable */
 .carry-row.static { cursor: default; border-left-color: var(--line); }
 .carry-row.static .cr-money { flex: 1; }
 .cr-reason {
@@ -1249,30 +1256,31 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   color: var(--muted);
 }
 
-/* 日详情的分栏：左边数字列表要能滚，右边键盘固定 */
+/* Day detail columns: the numbers on the left scroll, the keypad on the right stays */
 .pay-split > .pay-left > .kv { width: 100%; }
 
-/* 日详情：h2 和底部动作条固定，只有中间分栏可滚。
-   「保存小费」必须永远够得着 —— 这一屏就是为了录它。 */
+/* Day detail: the h2 and the action bar are fixed and only the middle scrolls.
+   "Save tips" has to stay reachable -- entering it is the whole point of this screen. */
 .sheet.pay-wide.day-sheet { display: flex; flex-direction: column; }
 .day-sheet .pay-split { flex: 1; min-height: 0; }
 .day-sheet .pay-left { overflow-y: auto; min-height: 0; }
 .day-sheet .sheet-actions { flex: none; }
 
-/* 已关单但钱没收齐。
-   放在 .card.closed 之后，覆盖掉那身绿色 —— 绿色是这套界面里最强的
-   "这单完事了"信号，拿它盖住一笔没收到的钱，等于把钱藏起来。
-   用虚线左条：和实线的"未结"区分开，一眼能看出是另一种待办。 */
+/* Closed, but not fully collected.
+   After .card.closed so it overrides the green -- green is the strongest "this
+   one is finished" signal in the whole UI, and using it to cover money that
+   never arrived is hiding money.
+   A dashed left bar: distinct from the solid "open", so it reads as a different kind of task. */
 .card.due {
   border-left-color: var(--warn);
   border-left-style: dashed;
   background: color-mix(in srgb, var(--warn) 12%, var(--panel));
 }
 
-/* ---- 加料 / 特殊要求 ---- */
+/* ---- add-ons / special requests ---- */
 
-/* 菜品卡片上的「定制」入口。做小、放右上角 ——
-   点菜名直接加一份是最高频的动作，这个按钮不能挡它。 */
+/* The "customise" entry on a dish card. Small, top right --
+   tapping the name to add one is the most frequent action and this must not get in its way. */
 .mi { position: relative; }
 .mi-cust {
   position: absolute;
@@ -1288,7 +1296,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .mi.on .mi-cust { border-color: var(--accent); color: var(--accent); }
 
-/* 购物车里带加料的那条要看得出来，否则和没加的长得一样、改都没法改 */
+/* A cart line with add-ons has to look different, or it is indistinguishable from a plain one and cannot be corrected */
 .chip.has-mod { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .chip.has-mod small { font-size: 11px; color: var(--warn); }
 .chip-x {
@@ -1301,51 +1309,53 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   cursor: pointer;
 }
 
-/* 定制弹层：左边选加料、右边手写 + 键盘。和结账弹层同一套分栏。 */
+/* The customise sheet: add-ons on the left, free text plus keypad on the right. Same two columns as the collect sheet. */
 .sheet.mod-sheet { max-width: 720px; max-height: 88vh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; overflow: hidden; }
 @supports (max-height: 1dvh) { .sheet.mod-sheet { max-height: 88dvh; } }
 .mod-split { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; min-height: 0; }
 @media (max-width: 700px) { .mod-split { grid-template-columns: 1fr; } }
 .mod-left { overflow-y: auto; min-height: 0; }
-/* ⚠️ min-height:0 + overflow 是**硬约束**，不是优化。
+/* ⚠️ min-height:0 + overflow is a **hard requirement**, not an optimisation.
  *
- * 没有它的时候：键盘那一栏实际 585px，而网格分给它的行只有 350px，
- * 于是它整个溢出去，盖住了「合计」和「取消/确认」——
- * 横屏矮屏上正好跨过临界点，竖屏因为高度富余看不出来。
+ * Without it: the keypad column is really 585px while the grid row gives it
+ * 350px, so it overflows and covers the total and the cancel/confirm buttons --
+ * short landscape crosses the threshold exactly, and portrait has enough spare
+ * height to hide it.
  *
- * 有了这两行，右栏无论多高都只能待在自己那一格里，
- * 物理上不可能压到下面。下面的媒体查询再把键盘压紧，
- * 让它在横屏上连滚都不用滚。
- */
-/* 键盘这一栏**钉死不动**。
+ * With these two lines the right column stays inside its cell however tall it
+ * is, so it physically cannot cover what is below. The media query further down
+ * then tightens the keypad so landscape does not even scroll. */
+/* The keypad column is **pinned**.
  *
- * 之前是 flex + overflow-y:auto：能防住溢出，但代价是这一栏可以滚 ——
- * 手指在数字键上稍微一划就把整栏滚走了，盲按直接按错。
- * 收银键盘的位置必须是固定的，这是它比系统键盘强的全部理由。
+ * It used to be flex + overflow-y:auto: that prevents the overflow, but the
+ * cost is a scrollable column -- a finger sliding slightly on the digits
+ * scrolls it away, and tapping without looking then hits the wrong key.
  *
- * 现在：输入行按内容取高，键盘吃掉剩下的全部高度并**按比例缩放键高**
- * （见 .np-grid 的 minmax）。高度永远刚好，所以既不用滚、也不会移位。
- * overflow:hidden 只是兜底，正常情况下没有东西会溢出。
- */
+ * A till keypad has to be in a fixed place; that is the entire reason it beats
+ * the system keyboard.
+ * Now: the input row takes its content height and the keypad takes all the rest,
+ * **scaling the key height** (see the minmax on .np-grid). The height always
+ * fits, so it neither scrolls nor moves. overflow:hidden is only a backstop. */
 .mod-right {
   display: grid;
-  /* 输入行 / 金额行 / 按键（吃掉剩下的） */
+  /* input row / amount row / keys (taking the rest) */
   grid-template-rows: auto auto minmax(0, 1fr);
-  /* ⚠️ 列也必须显式写成 minmax(0, 1fr)。
-   * 只写 rows 的话隐式列是 auto = minmax(min-content, max-content)，
-   * 会被里面内容的最小宽度顶开 —— 实测在 300px 的栏里顶到 305px，
-   * 三个子元素全被拉到 305，最右一列的键被 overflow:hidden 切掉 5px。
-   * 这正是 iPad 上"键盘右侧显示不全"的原因。 */
+  /* ⚠️ The columns have to be minmax(0, 1fr) explicitly too.
+   * With only rows written, the implicit column is auto =
+   * minmax(min-content, max-content) and gets pushed open by its content's
+   * minimum width -- measured at 305px inside a 300px column, dragging all
+   * three children to 305 so the right-hand keys are clipped 5px by overflow:hidden.
+   * That is exactly the "keypad cut off on the right" on the iPad. */
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
-  /* min-width:0 同理 —— 没有它，栏里的内容最小宽度会把这一列撑开 */
+  /* min-width:0 for the same reason -- without it the column's min-content width pushes it open */
   min-width: 0;
   overflow: hidden;
 }
-/* NumPad 是结账、小费、这里三处共用的，不去动它的结构。
-   在这一栏里把它自带的显示条和快捷行藏掉 —— 那两行 80px
-   由上面的 .cust-amt 用 40px 一行代替，省下来的全给按键。 */
+/* NumPad is shared by collect, tips and here, so its structure is left alone.
+   In this column its own display and shortcut rows are hidden -- those 80px are
+   replaced by .cust-amt above in 40px, and the saving goes to the keys. */
 .mod-right .np-display,
 .mod-right .np-quick { display: none; }
 .mod-right .numpad {
@@ -1355,7 +1365,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   margin: 0;
 }
 
-/* 金额 + 清空一行 */
+/* amount + clear on one row */
 .cust-amt {
   display: flex;
   align-items: center;
@@ -1382,8 +1392,8 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   border-radius: 8px;
   cursor: pointer;
 }
-/* minmax(0, 56px)：**上限 56、可以往下压**。
-   空间够就是原来的 56px；不够就整体等比缩，而不是把最后一排挤出去。 */
+/* minmax(0, 56px): **56 as the ceiling, free to compress**.
+   With room it is the original 56px; without, everything scales down proportionally rather than pushing the last row out. */
 .mod-right .np-grid {
   grid-template-rows: repeat(4, minmax(0, 56px));
   min-height: 0;
@@ -1391,8 +1401,8 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .mod-right .np-grid button { height: 100%; min-height: 0; }
 
-/* 矮横屏（iPad 横屏可视高约 650–690）：把键盘压紧到能整个放进那一栏。
-   44px 是 Apple 的手指目标下限，不再往下压 —— 点不准比多滚一下更糟。 */
+/* Short landscape (an iPad in landscape has roughly 650-690 visible): tighten the keypad until it fits in its column.
+   44px is Apple's finger-target floor and it does not go below -- mistaps are worse than one more scroll. */
 @media (orientation: landscape) and (max-height: 760px) {
   .sheet.mod-sheet { max-height: 94vh; padding: 16px; }
   .mod-sheet h2 { margin-bottom: 8px; }
@@ -1403,9 +1413,10 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   .mod-right .reason input { padding: 10px; }
   .mod-right .numpad { margin: 0; }
   .mod-right .np-display { padding: 4px 12px; margin-bottom: 4px; font-size: 18px; }
-  /* 横屏只收紧间距，**不再压键高上限**。
-     上限仍是 56px：省下的固定开销（金额行合并）已经把空间还回来了，
-     够就用 56，不够 minmax 会自己等比缩。写死 44 反而是白丢高度。 */
+  /* Landscape only tightens the gaps; it **no longer caps the key height**.
+     The ceiling stays 56px: the fixed overhead saved (merging the amount row)
+     already gave the space back, so 56 is used when it fits and minmax scales it
+     when it does not. Hard-coding 44 would just throw height away. */
   .mod-right .np-grid { gap: 5px; }
   .mod-right .np-quick { margin-top: 5px; }
   .mod-right .np-quick button { padding: 4px; font-size: 12px; }
@@ -1464,17 +1475,17 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .mod-total strong { font-size: 22px; color: var(--text); font-variant-numeric: tabular-nums; }
 
-/* 账单详情里，加料列在菜名底下 */
+/* On a check, add-ons sit under the dish name */
 .line-mods { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .chip.sm { font-size: 11px; padding: 1px 6px; }
 
-/* label 里的补充说明：跟标签同一行，不另占一行高度 */
+/* A note inside a label: on the same line, not taking a line of its own */
 .reason small { font-weight: 400; opacity: 0.8; }
 
-/* 自定义要求：输入框 + 「加进」同一行。
-   按钮跟输入框底对齐，且**不在滚动区里排在键盘后面** ——
-   横屏矮屏上排在键盘后面的东西一定会被挤出去。 */
-/* 同理：1fr 会被输入框的最小宽度顶开，必须 minmax(0, 1fr) */
+/* Custom request: the input and "add" on one row.
+   The button aligns to the bottom of the input and is **not inside the scroll
+   area after the keypad** -- in short landscape, anything after the keypad gets squeezed out. */
+/* Same again: 1fr is pushed open by the input's minimum width, so minmax(0, 1fr) */
 .cust-block { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
 .cust-block .reason, .cust-block input { min-width: 0; }
 .cust-add {
@@ -1489,7 +1500,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .cust-add:disabled { opacity: 0.4; }
 
-/* ---- 老板改价页 ---- */
+/* ---- owner's pricing page ---- */
 
 .price-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
 .price-grid.wide { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
@@ -1503,8 +1514,8 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   border-radius: 10px;
   min-width: 0;
 }
-/* 改过但还没保存的要一眼看得出来 —— 一次改几十个价，
-   不标出来根本不知道自己动过哪些 */
+/* Changed but not yet saved has to be obvious -- editing dozens of prices in one
+   sitting, there is no other way to know which ones were touched */
 .price-cell.changed { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--panel)); }
 .price-cell.off { opacity: 0.55; }
 .pc-label { font-size: 14px; display: flex; flex-direction: column; }
@@ -1522,7 +1533,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .pc-toggle.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 
-/* 金额输入：$ 贴着框，数字右对齐 —— 一列价格扫下来要能对齐比较 */
+/* Amount input: the $ hugs the box and the digits are right-aligned -- a column of prices has to line up to be compared */
 .money-in { display: flex; align-items: center; gap: 4px; }
 .mi-sign { color: var(--muted); font-size: 15px; }
 .money-in input {
@@ -1581,8 +1592,8 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .cnt.warn { background: color-mix(in srgb, var(--warn) 25%, transparent); color: var(--warn); }
 
-/* 中英切换。做成和 build 号同一档的小控件 —— 一天点不了一次，
-   但换班的人要能一眼找到，所以放顶栏而不是藏进设置里。 */
+/* Language switch. Sized like the build badge -- tapped less than once a day,
+   but whoever takes over a shift has to find it at a glance, so it is in the header rather than buried in settings. */
 .langbtn {
   margin-left: 8px;
   padding: 4px 10px;
@@ -1596,9 +1607,9 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   cursor: pointer;
 }
 
-/* ---- 账户 ----
-   一人一卡片。每张卡自己保存 —— 改名和改密码是两个不同的写入，
-   合成一个"全部保存"会让人以为不填密码就等于把密码清空了。 */
+/* ---- accounts ----
+   One card per person. Each card saves itself -- renaming and resetting a
+   password are two different writes, and one "save all" reads as if leaving the password blank clears it. */
 .acct-list { display: flex; flex-direction: column; gap: 12px; margin: 12px 0; }
 .acct {
   padding: 12px 14px 14px;
@@ -1615,14 +1626,14 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   border-bottom: 1px solid var(--line);
 }
 .ac-role { font-size: 16px; font-weight: 600; color: var(--text); }
-/* 还有几处登录 —— 靠右，改密码前该看见的数字 */
+/* How many sessions are live -- right-aligned, the number to see before changing a password */
 .ac-sess { margin-left: auto; font-size: 13px; color: var(--muted); }
 .acct .sheet-actions { margin-top: 10px; }
 .acct .linkbtn.wide { margin-top: 10px; }
 
-/* ---- 补菜台 ----
-   唯一的设计目标：**高峰期三秒点得完**，戴着一次性手套、隔一臂远也点得中。
-   所以按钮做得比界面其它任何地方都大，一页只放十格。 */
+/* ---- the refill board ----
+   One design goal: **three seconds at peak**, hit with disposable gloves on from
+   an arm's length. So the buttons are bigger than anywhere else in the UI and a page holds ten. */
 .refill-top { display: flex; gap: 10px; align-items: center; margin: 10px 0 6px; }
 .seg { display: flex; gap: 4px; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
 .seg button {
@@ -1635,7 +1646,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 .seg.pages { margin-left: auto; }
 .seg.pages button { min-width: 46px; }
 
-/* 回拨。**一次性**的，记完一条自己跳回"现在" —— 见 RefillView 的注释。 */
+/* Backdating. **One-shot**: it jumps back to "just now" after one entry -- see the comment in RefillView. */
 .refill-back { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
 .rb-label { font-size: 13px; color: var(--muted); }
 .refill-back button {
@@ -1655,8 +1666,8 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 .tray.empty { opacity: 0.35; align-items: center; justify-content: center; min-height: 92px; }
 .t-head { display: flex; align-items: baseline; gap: 8px; }
 .t-name { font-size: 19px; font-weight: 700; color: var(--text); }
-/* "上次多久以前"是台前唯一的反馈 —— 没有它，人不知道自己点上没有，
-   于是要么重复点、要么干脆不点 */
+/* "How long ago" is the only feedback the board gives -- without it nobody knows
+   whether their tap registered, so they either tap again or stop bothering */
 .t-ago { margin-left: auto; font-size: 13px; color: var(--muted); white-space: nowrap; }
 .t-btns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .t-btns button {
@@ -1671,7 +1682,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 .k-half { border-color: color-mix(in srgb, var(--warn) 55%, transparent) !important; }
 .k-empty { border-color: color-mix(in srgb, var(--bad) 55%, transparent) !important; }
 
-/* 记完给一句确认。没有撤销 —— append-only，误点了就再记一条对的。 */
+/* A confirmation after each entry. No undo -- append-only; a mistap is fixed by recording the right one. */
 .tray-toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
   z-index: 40;
@@ -1681,8 +1692,8 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
   border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.35);
 }
 
-/* ---- 后厨订单队列 ----
-   字要大，隔一米看得清；等得久的整张卡变色。 */
+/* ---- kitchen order queue ----
+   Big type, readable from a metre away; a ticket that has waited turns colour. */
 .kq { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 10px; }
 .kq-card { padding: 10px 12px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
 .kq-card.late { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--panel)); }
@@ -1704,7 +1715,7 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 }
 .big-hint { margin-top: 40px; font-size: 18px; text-align: center; }
 
-/* ---- 老板改台面 ---- */
+/* ---- owner's buffet board editor ---- */
 .board-edit { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
 .board-row {
   display: grid;
@@ -1720,8 +1731,9 @@ table.kv.lines tr.voided { opacity: 0.5; text-decoration: line-through; }
 .board-row.blank input { border-style: dashed; }
 @media (max-width: 700px) { .board-row { grid-template-columns: 30px minmax(0, 1fr) auto; } .board-row .be { display: none; } }
 
-/* 做完的单不消失，变绿留在下面 —— 厨师要看得见自己刚做完什么，
-   也才有机会撤销误点。真正让它离开屏幕的是前台关单。 */
+/* Finished tickets do not disappear; they turn green and stay below -- a cook has
+   to see what they just finished, and that is also the only chance to undo a mistap.
+   What takes a ticket off the screen is the front closing the check. */
 .kq-card.ok { border-color: color-mix(in srgb, var(--ok) 55%, transparent); background: color-mix(in srgb, var(--ok) 7%, var(--panel)); }
 .kq-card.ok .kq-wait { color: var(--ok); font-weight: 700; }
 .kq-lines li.done .kl-qty { color: var(--ok); }

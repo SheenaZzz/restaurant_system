@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie'
 
-/** outbox：待同步的操作队列。同步成功后删除。 */
+/** outbox: operations waiting to sync. Deleted once the server has them. */
 export interface OutboxOp {
   op_id: string
   entity: string
@@ -10,42 +10,42 @@ export interface OutboxOp {
   payload: Record<string, unknown>
 }
 
-/** events：本地镜像，UI 直接读它 —— 所以离线时界面照样有数据。 */
+/** events: the local mirror the UI reads directly, which is why it still has data offline. */
 export interface LocalEvent {
   op_id: string
   label: string
   created_at: string
-  /** 0 = 还在 outbox 里，1 = 服务端已确认 */
+  /** 0 = still in the outbox, 1 = the server confirmed it */
   synced: 0 | 1
-  /** 来自其它设备的变更 */
+  /** A change that came from another device */
   remote: 0 | 1
 }
 
-/** meta：客户端 id、同步游标、本地序号计数器 */
+/** meta: client id, sync cursor, local sequence counter */
 export interface Meta {
   key: string
   value: unknown
 }
 
-/** 账单上的一道菜。 */
+/** One dish on a check. */
 export interface LocalLine {
-  /** 服务端行 id；本地刚加的还没有，同步后才会有 */
+  /** The server's line id; a line just added locally has none until it syncs */
   line_id?: number
   menu_item_id: number
   name: string
-  /** 英文菜名。下单当时一起存下来 —— 菜单改名不影响历史账单显示。 */
+  /** English dish name, captured at order time -- renaming the menu never restates a past check. */
   name_en?: string
   qty: number
   /**
-   * ⚠️ **已经含加料的钱**（菜价 + Σ 加料单价），和服务端
-   * order_line.unit_price_cents 一个口径。所有算金额的地方都乘这个数，
-   * 不要再去加 modifiers —— 会重复计一次。
+   * ⚠️ **Add-on money is already in here** (dish price + the sum of add-on
+   * prices), the same convention as the server's order_line.unit_price_cents.
+   * Everything that computes money multiplies this; never add modifiers on top -- that counts them twice.
    */
   unit_price_cents: number
   /**
-   * 加了什么，仅供显示。金额已折进 unit_price_cents。
-   * label_en / modifier_id 是给中英切换用的：目录里的加料跟着语言显示，
-   * 手写的要求（没有 id）原样保留 —— 那是前台当场打进去的字。
+   * What was added, for display only. The money is folded into unit_price_cents.
+   * label_en / modifier_id are for the language switch: catalogue add-ons follow
+   * the language, hand-typed requests (no id) are shown exactly as the front typed them.
    */
   modifiers?: {
     label: string
@@ -57,15 +57,15 @@ export interface LocalLine {
   voided?: boolean
 }
 
-/** 楼面上的一张账单（本地镜像）。UI 只读它 —— 所以断网照样能用。 */
+/** One check on the floor (local mirror). The UI only reads this, which is why it works offline. */
 export interface LocalCheck {
   check_uuid: string
-  /** dine_in 占桌；phone_order / buffet_togo 是自提，没有桌号 */
+  /** dine_in holds a table; phone_order / buffet_togo are to-go and have none */
   source: 'dine_in' | 'phone_order' | 'buffet_togo'
   table_label: string
-  /** 单点菜品 */
+  /** A la carte dishes */
   lines: LocalLine[]
-  /** 自提单的客人信息 */
+  /** Guest details on a to-go check */
   customer_name?: string
   phone_last4?: string
   status: 'open' | 'closed' | 'voided' | 'merged'
@@ -75,46 +75,47 @@ export interface LocalCheck {
   senior: number
   drink_adult: number
   drink_child: number
-  /** 客户端按缓存价估的金额，**仅供显示**；落库金额以服务端为准 */
+  /** The client's estimate from cached prices, **for display only**; the stored amount is the server's */
   est_cents: number
-  /** 0 = 还没被服务端确认 */
+  /** 0 = the server has not confirmed it yet */
   synced: 0 | 1
-  /** 1 = 别的设备开的 */
+  /** 1 = opened on another device */
   remote: 0 | 1
-  /** 作废原因（仅 voided） */
+  /** Void reason (voided only) */
   void_reason?: string
-  /** 作废前的状态，撤销时恢复成它 */
+  /** The status before the void; undo restores it */
   pre_void_status?: 'open' | 'closed'
-  /** 被并入了哪张单 */
+  /** Which check this was folded into */
   merged_into?: string
-  /** 大桌服务费（本地估算） */
+  /** Large-party service charge (local estimate) */
   service_cents: number
-  /** 税（本地估算） */
+  /** Tax (local estimate) */
   tax_cents: number
-  /** 支付方式 */
+  /** Payment method */
   pay_method?: 'cash' | 'card' | 'mixed' | 'other'
   pay_cash?: number
   pay_card?: number
   pay_other?: number
   pay_note?: string
-  /** 开台的人 */
+  /** Who opened the table */
   by?: string
-  /** 最近一次操作的人 */
+  /** Who touched it last */
   last_by?: string
 }
 
 /**
- * 一条补菜记录的本地镜像。
+ * One refill record in the local mirror.
  *
- * 存它只为了显示「上次补菜是多久以前」—— 那是台前唯一需要的反馈，
- * 没有它，人不知道自己刚才点没点上，就会重复点或者干脆不点。
- * 真正的事实在服务端 tray_event 里，这份是只读的副本。
+ * It exists only to show "last refilled N minutes ago" -- the one piece of
+ * feedback the board needs. Without it nobody knows whether their tap
+ * registered, so they tap again or stop bothering. The fact itself lives in
+ * tray_event on the server; this is a read-only copy.
  */
 export interface LocalTray {
   op_id: string
   dish_id: number
   kind: 'refill' | 'half' | 'empty'
-  /** 观察发生的时刻（已经把回拨算进去了） */
+  /** When it was observed (the backdating is already applied) */
   at: string
   synced: 0 | 1
   remote: 0 | 1
@@ -130,7 +131,7 @@ const db = new Dexie('restaurant') as Dexie & {
   trays: EntityTable<LocalTray, 'op_id'>
 }
 
-/** 服务端明确拒绝的操作。不能留在 outbox 里无限重试。 */
+/** Operations the server explicitly rejected. They must not retry forever in the outbox. */
 export interface DeadLetter {
   op_id: string
   entity: string
@@ -140,7 +141,7 @@ export interface DeadLetter {
 }
 
 db.version(1).stores({
-  // 主键写在第一位，逗号后面是额外索引
+  // The primary key comes first; anything after the comma is an extra index
   outbox: 'op_id, client_seq',
   events: 'op_id, created_at, synced',
   meta: 'key',
@@ -155,23 +156,23 @@ db.version(3).stores({
 })
 
 db.version(4).stores({
-  // dish_id 上建索引：补菜页每道菜都要问"上一条是什么时候"
+  // Indexed on dish_id: the refill page asks "when was the last one" per dish
   trays: 'op_id, dish_id, at',
 })
 
 export default db
 
 /**
- * 单调递增的本地序号，**NaN 安全**。
+ * A monotonic local sequence number, **NaN-safe**.
  *
- * 踩过的坑：原来直接写 `(await getMeta('client_seq', 0)) + 1`。
- * 一旦 meta 里的值不是数字，结果就是 NaN —— 而 NaN 不是合法的
- * IndexedDB 索引键，于是这条记录：
- *   ① 能存进 outbox
- *   ② 被 count() 数到（UI 显示"待同步 N"）
- *   ③ 却永远不会出现在 orderBy('client_seq') 的结果里
- * 也就是永久卡死、且不报任何错。更糟的是 NaN+1 还是 NaN，
- * 之后每一条都会中招。在餐馆里这等于静默丢单。
+ * What this cost: it used to be `(await getMeta('client_seq', 0)) + 1`.
+ * The moment meta holds something that is not a number the result is NaN --
+ * and NaN is not a valid IndexedDB index key, so that record:
+ *   1. stores into the outbox fine
+ *   2. is counted by count() (the UI shows "N pending")
+ *   3. never appears in an orderBy('client_seq') result
+ * That is stuck forever, with no error. Worse, NaN+1 is still NaN, so every
+ * record after it is caught too. In a restaurant that is silently losing checks.
  */
 export async function nextClientSeq(): Promise<number> {
   const raw = await getMeta<unknown>('client_seq', 0)
@@ -182,7 +183,7 @@ export async function nextClientSeq(): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// meta 读写
+// meta read/write
 // ---------------------------------------------------------------------------
 
 export async function getMeta<T>(key: string, fallback: T): Promise<T> {
@@ -195,13 +196,13 @@ export async function setMeta(key: string, value: unknown): Promise<void> {
 }
 
 /**
- * crypto.randomUUID 只在安全上下文（HTTPS 或 localhost）可用。
- * iPad 上走明文 HTTP 时它是 undefined —— 这正是"必须上 HTTPS"的
- * 又一个理由。这里给个降级实现，避免静默炸掉。
+ * crypto.randomUUID only exists in a secure context (HTTPS or localhost).
+ * On an iPad over plain HTTP it is undefined -- one more reason HTTPS is not
+ * optional. This is a fallback so it degrades instead of throwing.
  */
 export function uuid(): string {
-  // 显式放宽类型：lib.dom 把 crypto 声明为必然存在，
-  // 用 `in` 收窄会让 TS 把 else 分支推成 never。
+  // Widen the type deliberately: lib.dom declares crypto as always present,
+  // so narrowing with `in` makes TS infer the else branch as never.
   const c = globalThis.crypto as Crypto | undefined
 
   if (c && typeof c.randomUUID === 'function') {
@@ -212,9 +213,9 @@ export function uuid(): string {
   if (c && typeof c.getRandomValues === 'function') {
     c.getRandomValues(bytes)
   } else {
-    // 最后的兜底。Math.random 不是密码学安全的，但这里只需要
-    // op_id 不重复，不需要不可预测。宁可退化也不能抛异常 ——
-    // 抛了就等于这台设备永远无法记录任何东西。
+    // The last resort. Math.random is not cryptographically secure, but this
+    // only needs op_ids not to collide, not to be unpredictable. Degrading beats
+    // throwing -- a throw means this device can never record anything again.
     for (let i = 0; i < bytes.length; i++) {
       bytes[i] = (Math.random() * 256) | 0
     }
@@ -226,7 +227,7 @@ export function uuid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
-/** 设备标识：首次生成后固定，用于服务端区分变更来源。 */
+/** Device identity: generated once and then fixed, so the server can tell where a change came from. */
 export async function clientId(): Promise<string> {
   let id = await getMeta<string | null>('client_id', null)
   if (!id) {

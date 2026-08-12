@@ -2,12 +2,12 @@ import { clientId, getMeta, setMeta } from './db'
 
 export type Role = 'front_employee' | 'front_manager' | 'kitchen' | 'admin'
 
-/** 能改单/作废的角色 —— 这只是 UI 门控，真正的判断在服务端 */
+/** Roles that may edit and void -- this is UI gating only; the real check is server-side */
 export function canManage(role: Role): boolean {
   return role === 'front_manager' || role === 'admin'
 }
 
-/** 能看楼面的角色 */
+/** Roles that see the floor */
 export function isFront(role: Role): boolean {
   return role !== 'kitchen'
 }
@@ -21,22 +21,23 @@ export interface Identity {
 interface Tokens {
   access: string
   refresh: string
-  /** access token 的本地过期时刻（毫秒时间戳） */
+  /** When the access token expires locally (ms timestamp) */
   access_exp: number
 }
 
 /**
- * 令牌存 IndexedDB，不存 httpOnly cookie。
+ * Tokens live in IndexedDB, not an httpOnly cookie.
  *
- * 权衡：cookie 更抗 XSS，但这个 App 必须在**完全离线**时也能启动并
- * 渲染出正确的角色界面 —— 需要能读到身份信息，cookie 读不了。
- * 加上它只在店内内网跑、没有第三方脚本，XSS 面很小。
- * 换成公网多租户产品的话，这个取舍要重做。
+ * The trade: a cookie resists XSS better, but this app has to start **fully
+ * offline** and render the right role, which means reading the identity -- and a
+ * cookie cannot be read.
+ * On top of that it only runs on the store's own network with no third-party scripts, so the XSS surface is small.
+ * For a public multi-tenant product this trade would have to be made again.
  */
 const K_TOKENS = 'auth_tokens'
 const K_IDENTITY = 'auth_identity'
 
-/** 提前 60 秒续期，避免请求正好卡在过期边界 */
+/** Refresh 60 seconds early, so a request cannot land exactly on the expiry */
 const REFRESH_MARGIN = 60_000
 
 let cached: Tokens | null = null
@@ -79,7 +80,7 @@ export async function login(username: string, password: string): Promise<Identit
     body: JSON.stringify({ username, password, client_id: await clientId() }),
   })
   if (!res.ok) {
-    throw new Error(res.status === 401 ? '用户名或密码错误' : `登录失败 (${res.status})`)
+    throw new Error(res.status === 401 ? 'Wrong username or password' : `Sign-in failed (${res.status})`)
   }
   const data = await res.json()
   await saveSession(data)
@@ -87,14 +88,14 @@ export async function login(username: string, password: string): Promise<Identit
 }
 
 /**
- * 登出**只清凭证，不动 outbox**。
- * 未同步的记录属于店里，不属于这次登录会话 —— 换个人登进来照样要发出去。
- * 清掉它们等于丢单。
+ * Signing out **only clears credentials; the outbox is untouched**.
+ * Unsynced records belong to the store, not to this session -- whoever signs in
+ * next still has to send them. Clearing them is losing checks.
  */
 export async function logout(): Promise<void> {
   const t = await getTokens()
   if (t) {
-    // 尽力通知服务端作废；离线时失败也无所谓，本地清掉即可
+    // Best effort to tell the server; failing while offline is fine, clearing locally is enough
     await fetch('/api/auth/logout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -108,7 +109,7 @@ export async function logout(): Promise<void> {
 
 let refreshing: Promise<boolean> | null = null
 
-/** 用 refresh token 换一套新的。并发调用只会真正执行一次。 */
+/** Exchange the refresh token for a new pair. Concurrent calls only do it once. */
 async function doRefresh(): Promise<boolean> {
   const t = await getTokens()
   if (!t) return false
@@ -120,9 +121,9 @@ async function doRefresh(): Promise<boolean> {
   })
 
   if (!res.ok) {
-    // 401 = 会话真的失效了，清掉逼用户重新登录。
-    // 其它状态码（5xx / 网络问题）不能清 —— 那只是暂时的，
-    // 清了会让离线的员工凭空被登出。
+    // 401 = the session really is gone, so clear it and force a sign-in.
+    // Any other status (5xx, network) must not clear -- that is temporary, and
+    // clearing would sign an offline server out for no reason.
     if (res.status === 401) {
       cached = null
       await setMeta(K_TOKENS, null)
@@ -145,20 +146,20 @@ async function refreshTokens(): Promise<boolean> {
 }
 
 /**
- * 带认证的 fetch。
+ * fetch with authentication.
  *
- * - 快过期就先续期
- * - 真的 401 了再续一次并重试一遍（令牌可能被服务端提前作废）
- * - **离线时照常抛错**，交给上层当作"排队"处理，不要在这里吞掉
+ * - refresh first if it is about to expire
+ * - on a real 401, refresh once more and retry (the server may have revoked the token early)
+ * - **still throws when offline**, leaving the caller to treat it as queued rather than swallowing it here
  */
 export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
   let t = await getTokens()
-  if (!t) throw new Error('未登录')
+  if (!t) throw new Error('Not signed in')
 
   if (Date.now() > t.access_exp - REFRESH_MARGIN) {
     await refreshTokens()
     t = await getTokens()
-    if (!t) throw new Error('会话已失效')
+    if (!t) throw new Error('Session expired')
   }
 
   const withAuth = (token: string): RequestInit => ({
@@ -182,13 +183,14 @@ export async function isLoggedIn(): Promise<boolean> {
 
 
 /**
- * 从服务端刷新身份。
+ * Refresh the identity from the server.
  *
- * 角色可能在服务端被改（比如员工升成主管）。缓存的 identity 是登录时
- * 那一刻的快照，不刷新的话前端会一直按旧角色渲染。
+ * A role can change server-side (a member of staff becomes a manager). The
+ * cached identity is a snapshot from sign-in, and without refreshing the front
+ * end keeps rendering the old role.
  *
- * ⚠️ 只影响**界面显示**。真正的授权判断始终在服务端 ——
- * 缓存过期最多让按钮显示错，点下去照样会被拒。
+ * ⚠️ This only affects **what is displayed**. Authorisation is always decided
+ * server-side -- a stale cache at worst shows the wrong button, and tapping it is still refused.
  */
 export async function refreshIdentity(): Promise<Identity | null> {
   try {
@@ -203,6 +205,6 @@ export async function refreshIdentity(): Promise<Identity | null> {
     await setMeta(K_IDENTITY, id)
     return id
   } catch {
-    return getIdentity() // 离线，用缓存
+    return getIdentity() // offline, use the cache
   }
 }

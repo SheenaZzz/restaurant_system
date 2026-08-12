@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
 /// <reference types="vite-plugin-pwa/client" />
 
-/** 构建时间戳，由 vite.config.ts 的 define 注入 */
+/** Build timestamp, injected by define in vite.config.ts */
 declare const __BUILD__: string

@@ -1,14 +1,15 @@
-"""同步核心：幂等接收 + 增量下发。
+"""The sync core: idempotent intake and incremental push.
 
-整个离线优先架构的正确性都压在这个文件上，所以逻辑刻意写得很直白。
+The correctness of the whole offline-first design rests on this file, so the logic is deliberately plain.
 
-不变量
+Invariants
 ------
-1. 同一个 op_id 无论重放多少次，业务副作用只发生一次。
-2. "记录 sync_op" 和 "产生业务副作用" 要么都成功、要么都不发生
-   —— 二者必须在同一个事务里。否则崩溃在中间会留下
-   "记了但没生效" 的洞，而重放又会被幂等判断跳过，数据就永久少了一条。
-3. 一条 op 失败不能拖垮整批 —— 用 SAVEPOINT 隔离。
+1. However often an op_id is replayed, its side effect happens once.
+2. "Record the sync_op" and "produce the side effect" both happen or
+   neither does -- they have to share a transaction. A crash in between
+   would leave a "recorded but never applied" hole that replay then skips
+   as a duplicate, and the row is gone for good.
+3. One failing op must not take the batch down -- SAVEPOINT isolates it.
 """
 
 import json
@@ -36,39 +37,41 @@ from .services.buffet import record_tray_event
 
 log = logging.getLogger(__name__)
 
-# 每个实体需要的角色。写入路径的授权判断**只看这张表**，
-# 不看客户端自称的任何东西。
+# The roles each entity needs. Authorisation on the write path reads **only**
+# this table, never anything the client claims about itself.
 _FRONT = frozenset({"front_employee", "front_manager", "admin"})
-# 改单/作废是**能让钱消失**的操作 —— 只有主管和老板可以
+# Editing and voiding **make money disappear** -- managers and the owner only
 _FRONT_MANAGER = frozenset({"front_manager", "admin"})
 
 _HANDLERS: dict[str, frozenset[str]] = {
     "open_check": _FRONT,
     "close_check": _FRONT,
-    # 换桌、并桌、改支付方式都不涉及金额增减，给普通员工 ——
-    # 每次都要找主管的摩擦太大，反而会导致干脆不记
+    # Transferring, merging and changing the payment method move no money, so
+    # regular staff can do them -- needing a manager every time is enough
+    # friction that people stop recording anything
     "transfer_check": _FRONT,
     "merge_checks": _FRONT,
     "set_payment": _FRONT,
-    # 补收差额同样给普通员工：收到的钱当场就得记下，
-    # 要等主管来点一下，忙起来就永远不会记了
+    # Top-ups are open to regular staff too: money in hand has to be recorded
+    # now, and waiting for a manager at peak means it never gets recorded
     "add_payment": _FRONT,
-    # 自提与加菜都是日常操作
+    # To-go and adding dishes are daily work
     "open_togo_check": _FRONT,
     "add_order_lines": _FRONT,
     "void_order_line": _FRONT,
     "modify_check": _FRONT_MANAGER,
     "void_check": _FRONT_MANAGER,
     "restore_check": _FRONT_MANAGER,
-    # 补菜记录：**前台和后厨都能记**。厨师补菜时顺手点最自然，
-    # 但发现菜盘空了的往往是服务员 —— 只给后厨的话，最该被记下的
-    # "空了"事件会大量丢失，而那正是区间截尾的右端点。
+    # Refills: **the front and the kitchen can both record them**. A cook
+    # tapping while refilling is the natural case, but the person who notices
+    # an empty tray is usually a server -- kitchen-only would lose most of the
+    # "ran empty" events, and those are the right-hand end of the censoring interval.
     "tray_event": _FRONT | {"kitchen"},
 }
 
 
 def _apply_effect(db: Session, op: SyncOpIn, user) -> None:
-    """产生业务副作用。必须与 sync_op 的插入处在同一事务内。"""
+    """Produce the business side effect. Has to share the transaction with the sync_op insert."""
     if op.entity == "open_check":
         open_check(db, op.op_id, op.payload, op.client_ts, user.id if user else None)
 
@@ -110,15 +113,15 @@ def _apply_effect(db: Session, op: SyncOpIn, user) -> None:
         record_tray_event(db, op.payload, op.client_ts, user.id if user else None)
 
     else:
-        raise ValueError(f"未知实体: {op.entity}")
+        raise ValueError(f"Unknown entity: {op.entity}")
 
 
 def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn], user=None):
-    """逐条幂等地应用操作。返回 (applied, duplicate, rejected)。
+    """Apply ops one by one, idempotently. Returns (applied, duplicate, rejected).
 
-    `user` 来自服务端验过的 access token，**不是客户端自称的身份**。
-    每条 op 都记下 user_id —— 逃单、免单、作废这些操作必须能追到人，
-    否则内控无从谈起。
+    `user` comes from the access token the server verified, **not from anything
+    the client says about itself**. Every op records its user_id -- walkouts,
+    comps and voids have to be traceable to a person or there is no control at all.
     """
     applied: list = []
     duplicate: list = []
@@ -127,27 +130,27 @@ def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn], user=None):
     for op in ops:
         allowed = _HANDLERS.get(op.entity)
         if allowed is None:
-            rejected.append({"op_id": op.op_id, "reason": f"未知实体: {op.entity}"})
+            rejected.append({"op_id": op.op_id, "reason": f"Unknown entity: {op.entity}"})
             continue
 
-        # ⚠️ 授权在这里，不在前端。
-        # 客户端离线期间攒的 op 不带任何角色声明 ——
-        # 角色只来自服务端验过的 access token。
+        # ⚠️ Authorisation happens here, not in the front end.
+        # Ops queued on a client while offline carry no role claim --
+        # the role comes only from the access token the server verified.
         if user is not None and user.role not in allowed:
             rejected.append(
                 {
                     "op_id": op.op_id,
-                    "reason": f"{user.role} 无权执行 {op.entity}",
+                    "reason": f"{user.role} may not perform {op.entity}",
                 }
             )
             continue
 
         try:
-            # SAVEPOINT：这一条炸了只回滚它自己，前面成功的不受影响
+            # SAVEPOINT: if this one blows up it rolls back alone, and the ops before it stand
             with db.begin_nested():
-                # 幂等的关键：主键冲突时什么都不做，并且**不返回行**。
-                # 拿到行 = 我们是第一个写入者 = 应该产生副作用。
-                # 拿不到行 = 别人（或上一次重放）已经写过 = 跳过。
+                # The heart of idempotency: on a key conflict do nothing and
+                # **return no row**. Got a row = we are the first writer = the
+                # side effect is ours. No row = someone (or an earlier replay) already did it.
                 row = db.execute(
                     text(
                         """
@@ -185,8 +188,8 @@ def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn], user=None):
                 )
                 applied.append(op.op_id)
 
-        except Exception as exc:  # noqa: BLE001 — 单条失败不应中断整批
-            log.warning("op %s 被拒绝: %s", op.op_id, exc)
+        except Exception as exc:  # noqa: BLE001 -- one failure must not stop the batch
+            log.warning("op %s rejected: %s", op.op_id, exc)
             rejected.append({"op_id": op.op_id, "reason": f"{type(exc).__name__}: {exc}"})
 
     db.commit()
@@ -194,18 +197,20 @@ def apply_ops(db: Session, client_id: str, ops: list[SyncOpIn], user=None):
 
 
 def log_truncated(db: Session, since_cursor: int) -> bool:
-    """客户端已消费到 since_cursor，但日志里 **seq ≤ 它的记录一条都不剩了**。
+    """The client consumed up to since_cursor, but **not one record at or below**
+    **that seq is left in the log**.
 
-    正常运转时这不可能：游标是 N 就说明 1..N 曾经存在过，其中总有一条还在。
-    只有日志被整段删掉（清测试数据、按保留期归档）才会出现。
+    In normal operation that cannot happen: a cursor of N means 1..N existed,
+    and one of them is still there. Only a log that was deleted wholesale (test
+    data cleared, retention archiving) produces it.
 
-    这时不能只发增量 —— 客户端的本地镜像里存着服务端已经没有的账单，
-    而同步是**只追加**的，没有任何后续变更会去删掉它们。设备会永远显示
-    已经不存在的单。所以要让它整份重来。
+    An increment is then not enough -- the client's mirror holds checks the
+    server no longer has, and since sync is **append-only** nothing later will
+    ever remove them. The device would show them forever. So it starts over.
 
-    ⚠️ 判据不能写成 `since_cursor > MAX(seq)`：seq 是 bigserial，
-       DELETE 不会把它退回去。清空之后别的设备写一条就是 seq 80，
-       游标停在 79 的那台反而"看起来正常"，然后一辈子对不上。
+    ⚠️ The test cannot be `since_cursor > MAX(seq)`: seq is a bigserial and
+       DELETE does not wind it back. After a purge, one write from another
+       device is seq 80, so the device sitting at 79 looks fine and never agrees again.
     """
     if since_cursor <= 0:
         return False
@@ -222,12 +227,12 @@ def fetch_changes(
     limit: int = 500,
     resync: bool = False,
 ):
-    """拉取 since_cursor 之后、由**其它设备**产生的已生效变更。
+    """Fetch applied changes after since_cursor that came from **other devices**.
 
-    过滤掉自己产生的，避免客户端把刚写的东西再应用一遍。
+    Filtering out its own keeps a client from applying what it just wrote.
 
-    `resync=True` 时**不过滤**：客户端刚把本地镜像清空了，
-    自己写过的那些单也得由服务端重新发一遍，否则就凭空少了一截。
+    With `resync=True` **nothing is filtered**: the client just emptied its
+    mirror, so its own checks have to be sent again or a chunk is simply missing.
     """
     rows = db.execute(
         text(
@@ -251,13 +256,13 @@ def fetch_changes(
         },
     ).mappings().all()
 
-    # 游标只推进到本次真正返回的最后一条 ——
-    # 若直接用 MAX(seq)，在被 LIMIT 截断时会漏掉中间的变更。
+    # The cursor only advances to the last row actually returned -- using
+    # MAX(seq) would skip changes in the middle whenever LIMIT truncated.
     next_cursor = rows[-1]["seq"] if rows else since_cursor
 
-    # 但如果没被截断，说明到 max(seq) 为止已经全部消费完
-    #（中间被过滤掉的都是自己产生的），可以安全跳过去。
-    # 否则自己写的每一条都会在后续每次同步里被重复扫描。
+    # But an untruncated page means everything up to max(seq) is consumed
+    # (whatever was filtered out came from this device), so it is safe to jump.
+    # Otherwise every op this device wrote gets rescanned on every later sync.
     if len(rows) < limit:
         max_applied = db.execute(
             text("SELECT COALESCE(MAX(seq), 0) FROM sync_op WHERE applied_at IS NOT NULL")

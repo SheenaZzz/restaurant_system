@@ -17,13 +17,13 @@ depends_on: Union[Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # ⚠️ 手动补的数据回填 —— **autogenerate 永远不会生成数据迁移**。
+    # ⚠️ A hand-written backfill -- **autogenerate never emits a data migration**.
     #
-    # 改动之前，饮料只有一档、`guest_type` 是 NULL。现在要 SET NOT NULL，
-    # 那些历史行会直接把迁移炸掉。语义上它们就是"按成人价收的饮料"，
-    # 所以回填成 'adult'。
+    # Before this change drinks had one tier and `guest_type` was NULL. SET NOT
+    # NULL would blow up on those rows. They mean "drinks charged at the adult
+    # price", so they are backfilled to 'adult'.
     #
-    # 必须放在 SET NOT NULL **之前**，顺序错了迁移就失败。
+    # It has to run **before** SET NOT NULL, or the migration fails.
     op.execute("UPDATE buffet_price SET guest_type = 'adult' WHERE guest_type IS NULL")
     op.execute("UPDATE head_charge  SET guest_type = 'adult' WHERE guest_type IS NULL")
 

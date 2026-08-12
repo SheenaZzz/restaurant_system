@@ -14,8 +14,8 @@ import type { LocalCheck } from './db'
 import MenuPicker, { TogoAmountSheet } from './MenuPicker'
 
 /**
- * 自提。和楼面分开是因为它**根本没有桌位这个概念** ——
- * 硬塞进楼面网格只会让人去找"这单在哪张桌上"。
+ * To go. Kept apart from the floor because it **has no concept of a table** --
+ * forcing it into the floor grid only makes people look for which table it is on.
  */
 export default function ToGoView({ role }: { role: Role }) {
   const [cat, setCat] = useState<Catalog | null>(null)
@@ -29,7 +29,7 @@ export default function ToGoView({ role }: { role: Role }) {
 
   const reload = useCallback(async () => {
     const all = await allChecks()
-    // 白名单判断 —— 老数据没有 source，用排除法会把堂食单混进来
+    // A whitelist -- old rows have no source, and excluding by type would sweep dine-in checks in
     setRows(all.filter(isTogo))
     setPending(await pendingCheckUuids())
     setPick((p) => (p ? (all.find((r) => r.check_uuid === p.check_uuid) ?? null) : null))
@@ -43,7 +43,7 @@ export default function ToGoView({ role }: { role: Role }) {
     return () => window.clearInterval(t)
   }, [reload])
 
-  if (!cat) return <p className="hint">{tr('首次使用需要联网加载一次菜单…')}</p>
+  if (!cat) return <p className="hint">{tr('First run needs a connection to load the menu…')}</p>
 
   const togoItem = cat.menu.find((m) => m.open_price)
   const openOnes = rows.filter((r) => r.status === 'open')
@@ -56,17 +56,17 @@ export default function ToGoView({ role }: { role: Role }) {
           disabled={!togoItem}
           onClick={() => setSheet('buffet')}
         >
-          <span className="bc-title">{tr('自助餐打包')}</span>
-          <span className="bc-sub">{tr('Buffet To Go · 按重量，直接录金额')}</span>
+          <span className="bc-title">{tr('Buffet to go')}</span>
+          <span className="bc-sub">{tr('Buffet To Go — by weight, enter the amount')}</span>
         </button>
         <button className="bigcard phone" onClick={() => setSheet('phone')}>
-          <span className="bc-title">{tr('电话点菜')}</span>
-          <span className="bc-sub">{tr('从菜单点，客人到店自提')}</span>
+          <span className="bc-title">{tr('Phone order')}</span>
+          <span className="bc-sub">{tr('Order from the menu for pickup')}</span>
         </button>
       </div>
 
 
-      <h3 className="zone">{tr('未取')} {openOnes.length}</h3>
+      <h3 className="zone">{tr('Waiting')} {openOnes.length}</h3>
 
       <div className="cards">
         {rows.map((c) => (
@@ -77,14 +77,14 @@ export default function ToGoView({ role }: { role: Role }) {
           >
             <div className="c-top">
               <span className="c-table">
-                {tr(c.source === 'buffet_togo' ? '打包' : '电话')}
+                {tr(c.source === 'buffet_togo' ? 'Takeout' : 'Phone')}
               </span>
               <span
                 className={`tag ${c.status === 'open' ? 'warn' : c.status === 'voided' ? 'bad' : 'ok'}`}
               >
                 {tr(STATUS_LABEL[c.status])}
               </span>
-              {pending.has(c.check_uuid) && <span className="tag warn">{tr('未上传')}</span>}
+              {pending.has(c.check_uuid) && <span className="tag warn">{tr('Pending')}</span>}
               <span className="grow" />
               <span className="c-time">
                 {new Date(c.opened_at).toLocaleTimeString('zh-CN', {
@@ -100,7 +100,7 @@ export default function ToGoView({ role }: { role: Role }) {
             {(c.customer_name || c.phone_last4) && (
               <div className="c-line">
                 {c.customer_name && <span className="chip">{c.customer_name}</span>}
-                {c.phone_last4 && <span className="chip">{tr('尾号')} {c.phone_last4}</span>}
+                {c.phone_last4 && <span className="chip">{tr('last 4')} {c.phone_last4}</span>}
               </div>
             )}
 
@@ -117,13 +117,13 @@ export default function ToGoView({ role }: { role: Role }) {
             </div>
 
             <div className="c-foot">
-              <span>{c.pay_method ? tr(PAY_LABEL[c.pay_method]) : tr('未记支付')}</span>
+              <span>{c.pay_method ? tr(PAY_LABEL[c.pay_method]) : tr('No payment recorded')}</span>
               <span className="grow" />
               <span>{operatorText(c)}</span>
             </div>
           </button>
         ))}
-        {rows.length === 0 && <p className="hint">{tr('还没有自提单。')}</p>}
+        {rows.length === 0 && <p className="hint">{tr('No to-go orders yet.')}</p>}
       </div>
 
       {sheet === 'buffet' && togoItem && (
@@ -143,7 +143,7 @@ export default function ToGoView({ role }: { role: Role }) {
           menu={cat.menu}
           categories={cat.categories}
           modifiers={cat.modifiers ?? []}
-          title={tr('电话点菜')}
+          title={tr('Phone order')}
           onCancel={() => setSheet(null)}
           onConfirm={(lines) => {
             setPhoneLines(lines)
@@ -153,18 +153,18 @@ export default function ToGoView({ role }: { role: Role }) {
         />
       )}
 
-      {/* 点完菜再问客人信息 —— 反过来会让人在电话里干等 */}
+      {/* Ask for the guest's details after the dishes -- the other way round leaves them waiting on the phone */}
       {sheet === 'phone' && phoneLines && (
         <div className="sheet-back" onClick={() => setPhoneLines(null)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <h2>{tr('客人信息')}</h2>
-            <p className="hint">{tr('都可以留空。手机号只记后四位。')}</p>
+            <h2>{tr('Customer')}</h2>
+            <p className="hint">{tr('Both optional. Only the last 4 digits are kept.')}</p>
             <label className="reason">
-              {tr('姓名')}
+              {tr('Name')}
               <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
             </label>
             <label className="reason">
-              {tr('手机号（只取后四位）')}
+              {tr('Phone (last 4 digits)')}
               <input
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
@@ -172,7 +172,7 @@ export default function ToGoView({ role }: { role: Role }) {
               />
             </label>
             <div className="sheet-actions">
-              <button onClick={() => setPhoneLines(null)}>{tr('返回改菜')}</button>
+              <button onClick={() => setPhoneLines(null)}>{tr('Back to dishes')}</button>
               <button
                 className="primary"
                 onClick={async () => {
@@ -184,7 +184,7 @@ export default function ToGoView({ role }: { role: Role }) {
                   setSheet(null)
                   await reload()
                 }}
-              >{tr('建单')}</button>
+              >{tr('Create')}</button>
             </div>
           </div>
         </div>

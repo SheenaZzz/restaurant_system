@@ -1,4 +1,4 @@
-"""登录 / 续期 / 登出 / 当前用户。"""
+"""Sign in / refresh / sign out / who am I."""
 
 from datetime import datetime, timezone
 
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 class LoginIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
-    # 设备标识，用于审计和"iPad 丢了吊销这台设备"
+    # Device identifier, for the audit trail and for "the iPad is lost, revoke it"
     client_id: str = Field(min_length=1, max_length=64)
 
 
@@ -88,12 +88,12 @@ def _issue(db: Session, user, device: Device | None) -> TokenOut:
 def login(body: LoginIn, db: Session = Depends(get_db)):
     user = user_by_username(db, body.username)
 
-    # 用户不存在和密码错误返回**同一个**错误，且都要走一次密码校验，
-    # 否则响应时间差会泄露"这个用户名存在"
+    # An unknown user and a wrong password return the **same** error, and both
+    # verify a password, or the difference in timing leaks that a username exists
     ok = bool(user and user.active and verify_password(body.password, user.password_hash))
     if not ok:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong username or password"
         )
 
     device = _touch_device(db, body.client_id)
@@ -109,16 +109,16 @@ def refresh(body: RefreshIn, db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
     if sess is None or sess.revoked_at is not None or sess.expires_at <= now:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="会话已失效，请重新登录"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired, please sign in again"
         )
 
     user = db.get(AppUser, sess.user_id)
     if user is None or not user.active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号已停用")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="This account is disabled")
 
-    # 轮换：旧的立刻作废，换一张新的。
-    # 这样 refresh token 一旦泄露，正常使用会让攻击者的那张失效（反之亦然），
-    # 至少能被发现。
+    # Rotation: the old one dies immediately and a new one is issued.
+    # So if a refresh token leaks, ordinary use invalidates the attacker's copy
+    # (or the other way round) -- at least it becomes noticeable.
     sess.revoked_at = now
     device = db.get(Device, sess.device_id) if sess.device_id else None
     return _issue(db, user, device)
@@ -133,7 +133,7 @@ def logout(body: RefreshIn, db: Session = Depends(get_db)):
     if sess and sess.revoked_at is None:
         sess.revoked_at = datetime.now(timezone.utc)
         db.commit()
-    # 无论找没找到都返回 204 —— 不泄露 token 是否有效
+    # 204 whether or not it was found -- do not leak whether a token was valid
 
 
 @router.get("/me", response_model=MeOut)

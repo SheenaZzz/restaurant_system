@@ -11,26 +11,27 @@ import {
 } from './trays'
 
 /**
- * 补菜台。**前台和后厨共用这一页。**
+ * The refill board. **Shared by the front and the kitchen.**
  *
- * 厨师补菜时顺手点最自然，但发现菜盘空了的往往是服务员 ——
- * 只给后厨的话，最该被记下的"空了"事件会大量丢失，
- * 而那正是区间截尾的右端点，模型最需要的那一头。
+ * A cook tapping while refilling is the natural case, but the person who
+ * notices an empty tray is usually a server -- kitchen-only would lose most of
+ * the "ran empty" events, and those are the right-hand end of the censoring
+ * interval, the end the model needs most.
  *
- * 界面上的每个取舍都为一件事让路：**高峰期三秒之内点得完**。
- *   · 三个按钮，没有下拉、没有确认、没有填充度滑块
- *   · 一页十格，翻页而不是长列表 —— 站在台前不该滚动找菜
- *   · 午市/晚市**手动切**，不跟着时钟走：换台面是人做的动作，
- *     系统猜错了反而会把记录记到另一块板上
+ * Every choice on this screen serves one thing: **three seconds at peak**.
+ *   - three buttons; no dropdown, no confirmation, no fill-level slider
+ *   - ten slots a page, paged rather than a long list -- nobody should scroll to find a dish at the counter
+ *   - lunch and dinner are **switched by hand**, not by the clock: changing the
+ *     board is something a person does, and a wrong guess files the record against the other board
  */
 
-const KINDS: { kind: TrayKind; zh: string; cls: string }[] = [
-  { kind: 'refill', zh: '补满', cls: 'k-refill' },
-  { kind: 'half', zh: '一半', cls: 'k-half' },
-  { kind: 'empty', zh: '空了', cls: 'k-empty' },
+const KINDS: { kind: TrayKind; label: string; cls: string }[] = [
+  { kind: 'refill', label: 'Full', cls: 'k-refill' },
+  { kind: 'half', label: 'Half', cls: 'k-half' },
+  { kind: 'empty', label: 'Empty', cls: 'k-empty' },
 ]
 
-/** 回拨选项。厨师往往是**事后**才想起来点 —— 见 JOURNAL 的说明。 */
+/** Backdating options. Cooks usually tap **after** the fact -- see JOURNAL. */
 const BACK = [0, 5, 10, 15]
 
 const PAGES = [1, 2, 3]
@@ -43,15 +44,15 @@ export default function RefillView() {
   const [last, setLast] = useState<Map<number, LocalTray>>(new Map())
   const [back, setBack] = useState(0)
   const [toast, setToast] = useState<string | null>(null)
-  // 每分钟重算一次"多久以前"。不重算的话数字会停在打开页面那一刻。
+  // "How long ago" is recomputed every minute; without it the number freezes at whatever it was when the page opened.
   const [, tick] = useState(0)
 
   useEffect(() => {
     void (async () => {
       const cat = await loadCatalog()
       setBoard((cat?.buffet_board ?? { lunch: [], dinner: [] }) as Record<string, BoardDish[]>)
-      // 默认落在服务端认定的时段上，但**允许手动改** ——
-      // 15:00 那一刻台面不会自己换，人换台面才换。
+      // Default to the period the server says it is, but **allow it to be changed** --
+      // the board does not swap itself at 15:00; it swaps when a person swaps it.
       setPeriod(cat?.current_period_kind === 'dinner' ? 'dinner' : 'lunch')
     })()
   }, [])
@@ -76,17 +77,17 @@ export default function RefillView() {
   async function hit(d: BoardDish, kind: TrayKind) {
     await recordTray(d.id, kind, back)
     await refresh()
-    const label = tr(KINDS.find((k) => k.kind === kind)!.zh)
+    const label = tr(KINDS.find((k) => k.kind === kind)!.label)
     setToast(
-      `${name(d)} · ${label} · ${back ? `${back} ${tr('分钟前')}` : tr('刚刚')}`,
+      `${name(d)} · ${label} · ${back ? `${back} ${tr('min ago')}` : tr('just now')}`,
     )
-    // 回拨是**一次性**的，用完立刻归零。留着的话下一条会被静默记到过去，
-    // 而没人会记得自己刚才拨过。
+    // Backdating is **one-shot** and resets immediately. Left on, the next entry
+    // is silently filed in the past, and nobody remembers having set it.
     setBack(0)
     window.setTimeout(() => setToast(null), 2500)
   }
 
-  if (!board) return <p className="hint">{tr('载入中…')}</p>
+  if (!board) return <p className="hint">{tr('Loading…')}</p>
 
   const filled = (board[period] ?? []).length
 
@@ -100,7 +101,7 @@ export default function RefillView() {
               className={period === p ? 'on' : ''}
               onClick={() => setPeriod(p)}
             >
-              {tr(p === 'lunch' ? '午市' : '晚市')}
+              {tr(p === 'lunch' ? 'Lunch' : 'Dinner')}
             </button>
           ))}
         </div>
@@ -113,22 +114,22 @@ export default function RefillView() {
         </div>
       </div>
 
-      {/* 「−5′」这种缩写没人看得懂（老板第一眼就问了这是什么）。
-          写成整句：这一栏回答的是"这件事是什么时候发生的"。 */}
+      {/* "-5'" means nothing to anyone (the owner's first question was what it
+          was). Written as a sentence: this row answers "when did it happen". */}
       <div className="refill-back">
-        <span className="rb-label">{tr('什么时候的事？')}</span>
+        <span className="rb-label">{tr('When did it happen?')}</span>
         {BACK.map((m) => (
           <button key={m} className={back === m ? 'on' : ''} onClick={() => setBack(m)}>
-            {m === 0 ? tr('刚刚') : `${m} ${tr('分钟前')}`}
+            {m === 0 ? tr('just now') : `${m} ${tr('min ago')}`}
           </button>
         ))}
       </div>
       <p className="hint">
-        {tr('忙完才想起来记的话，选一下实际是多久以前。选完记一条就自动回到「刚刚」。')}
+        {tr('If you are logging it after the fact, pick how long ago it actually was. It goes back to "just now" after one entry.')}
       </p>
 
       {filled === 0 && (
-        <p className="hint">{tr('这块板还没设置。老板账号在「修改 → 补菜台」里填。')}</p>
+        <p className="hint">{tr('This board is empty. The owner sets it up under Prices → Buffet board.')}</p>
       )}
 
       <div className="tray-grid">
@@ -144,15 +145,15 @@ export default function RefillView() {
                 <span className="t-ago">
                   {last.get(d.id)
                     ? `${agoText(last.get(d.id)!.at).text}′ ${tr(
-                        KINDS.find((k) => k.kind === last.get(d.id)!.kind)?.zh ?? '',
+                        KINDS.find((k) => k.kind === last.get(d.id)!.kind)?.label ?? '',
                       )}`
-                    : tr('还没记过')}
+                    : tr('no record yet')}
                 </span>
               </div>
               <div className="t-btns">
                 {KINDS.map((k) => (
                   <button key={k.kind} className={k.cls} onClick={() => void hit(d, k.kind)}>
-                    {tr(k.zh)}
+                    {tr(k.label)}
                   </button>
                 ))}
               </div>
@@ -161,7 +162,7 @@ export default function RefillView() {
         )}
       </div>
 
-      {toast && <div className="tray-toast">{tr('已记')} · {toast}</div>}
+      {toast && <div className="tray-toast">{tr('Logged')} · {toast}</div>}
     </>
   )
 }

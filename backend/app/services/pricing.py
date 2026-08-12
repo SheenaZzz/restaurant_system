@@ -1,12 +1,12 @@
-"""价格解析。
+"""Resolving prices.
 
-**价格永远在服务端解析，绝不信客户端传来的金额。**
+**Prices are always resolved on the server; an amount from the client is never trusted.**
 
-两个理由：
-  1. 客户端可能拿着几天前缓存的旧价（离线时更是必然）
-  2. 前端传什么金额就记什么金额 = 谁都能给自己打折
+Two reasons:
+  1. the client may be holding prices cached days ago (certain to, offline)
+  2. recording whatever amount the front end sends = anyone can discount themselves
 
-客户端缓存价格只用于**界面上先显示个数字**，落库的以服务端为准。
+The client's cached prices only put a number on the screen first; what gets stored is the server's.
 """
 
 from datetime import date
@@ -20,10 +20,10 @@ from ..models import BuffetPrice
 def resolve_head_prices(
     db: Session, period_kind: str, on: date
 ) -> dict[tuple[str, str], int]:
-    """返回 {(charge_kind, guest_type): price_cents}。
+    """Returns {(charge_kind, guest_type): price_cents}.
 
-    取 effective_from <= on 里最新的一条 —— 改价是**新增一行**而不是
-    覆盖旧行，所以历史账单永远按当时的价格算。
+    Takes the newest row with effective_from <= on -- a price change **adds a
+    row** rather than overwriting, so past checks keep the price they were charged.
     """
     rows = db.scalars(
         select(BuffetPrice)
@@ -35,6 +35,6 @@ def resolve_head_prices(
     ).all()
 
     out: dict[tuple[str, str], int] = {}
-    for r in rows:  # 按 effective_from 升序，后面的覆盖前面的
+    for r in rows:  # ascending effective_from, so later rows win
         out[(r.charge_kind, r.guest_type)] = r.price_cents
     return out

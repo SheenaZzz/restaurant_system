@@ -9,14 +9,15 @@ import './styles.css'
 import { sync } from './sync'
 
 /**
- * 调试钩子。
+ * Debug hooks.
  *
- * iPad 上没有开发者工具，真机排障只能靠这个 —— 用 Safari 的
- * "网页检查器"连上后直接在控制台调 `__rs.openTable('A7', ...)`。
- * 前面丢 op 那次如果早有它，定位能快很多。
+ * There are no developer tools on an iPad, so on-device troubleshooting has
+ * to go through these -- attach Safari's Web Inspector and call
+ * `__rs.openTable('A7', ...)` in the console. The time ops went missing, this
+ * would have found it much faster.
  *
- * 只读不到任何敏感信息：这些函数本来就是 UI 在调的，
- * 能打开控制台的人已经能操作 UI 了。
+ * Nothing sensitive is exposed: these are the same functions the UI calls,
+ * and anyone who can open the console can already work the UI.
  */
 declare global {
   interface Window {

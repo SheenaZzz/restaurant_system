@@ -1,11 +1,11 @@
-"""一张账单的完整操作历史。
+"""The full operation history of one check.
 
-**不需要额外存任何东西** —— `sync_op` 里本来就有每一条操作的完整 payload，
-按 seq 排出来就是这张单的全部经历。当初把它设计成 append-only 的审计日志
-（而不是"同步完就能删"的临时队列），回报就在这里。
+**Nothing extra is stored** -- `sync_op` already holds the complete payload of
+every operation, and ordering by seq is the whole life of that check. This is
+what designing it as an append-only audit log (rather than a queue to empty once synced) pays for.
 
-改单是整体替换，所以"改了什么"需要跟前一个状态比。
-比对放在客户端做 —— 服务端只负责把事件按顺序吐出来。
+An edit replaces wholesale, so "what changed" needs comparing against the previous state.
+The comparison happens on the client; the server only emits the events in order.
 """
 
 from datetime import datetime
@@ -37,11 +37,11 @@ _SQL = text(
       LEFT JOIN app_user u ON u.id = s.user_id
      WHERE s.applied_at IS NOT NULL
        AND (
-             -- 开桌：账单的身份就是那条 op 的 id
+             -- opening a check: the check's identity is that op's id
              s.op_id::text = :cu
-             -- 其它操作都在 payload 里引用账单
+             -- every other operation references the check in its payload
              OR s.payload->>'check_uuid' = :cu
-             -- 并桌时这张单可能是被并入的一方
+             -- on a merge this check may be the one folded in
              OR (
                   jsonb_typeof(s.payload->'source_uuids') = 'array'
                   AND jsonb_exists(s.payload->'source_uuids', :cu)

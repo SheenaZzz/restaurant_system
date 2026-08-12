@@ -10,14 +10,15 @@ interface MonthRow {
   tips_total_cents: number
 }
 
-const MONTHS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 /**
- * 年月快速选择。
+ * Quick year and month picker.
  *
- * 原来只有 ‹ › 一格格翻 —— 要回看去年同期得点二十几下。
- * 这里把「有数据的月份」一次拉回来，没数据的直接灰掉，
- * 并把每月营业额显示在格子里：**选之前就知道该选哪个**。
+ * It used to be ‹ › one month at a time -- getting back to this time last year
+ * took twenty-odd taps. This pulls back **which months have data**, greys out
+ * the ones that do not, and puts each month's sales in the cell: you know
+ * which one to pick before picking.
  */
 export default function MonthPicker({
   year,
@@ -45,7 +46,7 @@ export default function MonthPicker({
 
   const byYm = new Map(rows.map((r) => [r.ym, r]))
   const years = [...new Set(rows.map((r) => Number(r.ym.slice(0, 4))))]
-  // 即使某年没数据也允许翻过去，只是格子会是灰的
+  // Paging into a year with no data is allowed; the cells are simply grey
   const minY = Math.min(year, ...(years.length ? years : [year]))
   const maxY = Math.max(year, new Date().getFullYear())
 
@@ -54,13 +55,13 @@ export default function MonthPicker({
   return (
     <div className="sheet-back" onClick={onClose}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <h2>{tr('选择月份')}</h2>
+        <h2>{tr('Pick a month')}</h2>
 
         <div className="month-head">
           <button onClick={() => setY((v) => v - 1)} disabled={y <= minY - 1}>
             ‹
           </button>
-          <span className="mtitle">{y} 年</span>
+          <span className="mtitle">{y}</span>
           <button onClick={() => setY((v) => v + 1)} disabled={y >= maxY}>
             ›
           </button>
@@ -84,7 +85,7 @@ export default function MonthPicker({
               >
                 <span className="ml">{label}</span>
                 {r && <span className="mv">{money(r.revenue_cents)}</span>}
-                {r && <span className="md">{r.days} 天</span>}
+                {r && <span className="md">{r.days} {tr('days')}</span>}
               </button>
             )
           })}
@@ -93,7 +94,7 @@ export default function MonthPicker({
         <div className="divider" />
 
         <label className="reason">
-          {tr('跳到某一天')}
+          {tr('Jump to a day')}
           <input
             type="date"
             value={day}
@@ -108,14 +109,14 @@ export default function MonthPicker({
         </label>
 
         <div className="sheet-actions">
-          <button onClick={onClose}>{tr('取消')}</button>
+          <button onClick={onClose}>{tr('Cancel')}</button>
           <button
             className="primary"
             onClick={() => {
               onPick(today.getFullYear(), today.getMonth() + 1)
               onClose()
             }}
-          >{tr('回到本月')}</button>
+          >{tr('This month')}</button>
         </div>
       </div>
     </div>

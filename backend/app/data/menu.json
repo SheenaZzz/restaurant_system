@@ -1,0 +1,1072 @@
+{
+  "categories": [
+    {
+      "key": "lunch_special",
+      "name_zh": "午市特餐",
+      "name_en": "Lunch Specials"
+    },
+    {
+      "key": "chef_special",
+      "name_zh": "厨师特荐",
+      "name_en": "Chef's Specials"
+    },
+    {
+      "key": "appetizer",
+      "name_zh": "开胃菜",
+      "name_en": "Appetizers"
+    },
+    {
+      "key": "soup",
+      "name_zh": "汤",
+      "name_en": "Soups"
+    },
+    {
+      "key": "chicken",
+      "name_zh": "鸡",
+      "name_en": "Chicken"
+    },
+    {
+      "key": "beef",
+      "name_zh": "牛肉",
+      "name_en": "Beef"
+    },
+    {
+      "key": "pork",
+      "name_zh": "猪肉",
+      "name_en": "Pork"
+    },
+    {
+      "key": "seafood",
+      "name_zh": "海鲜",
+      "name_en": "Seafood"
+    },
+    {
+      "key": "vegetable",
+      "name_zh": "蔬菜",
+      "name_en": "Vegetables"
+    },
+    {
+      "key": "moo_shi",
+      "name_zh": "木须",
+      "name_en": "Moo Shi"
+    },
+    {
+      "key": "egg_foo_young",
+      "name_zh": "芙蓉",
+      "name_en": "Egg Foo Young"
+    },
+    {
+      "key": "chow_mein",
+      "name_zh": "炒面",
+      "name_en": "Chow Mein"
+    },
+    {
+      "key": "rice_noodle",
+      "name_zh": "炒米粉",
+      "name_en": "Rice Noodles"
+    },
+    {
+      "key": "fried_rice",
+      "name_zh": "炒饭",
+      "name_en": "Fried Rice"
+    },
+    {
+      "key": "combo",
+      "name_zh": "套餐",
+      "name_en": "Combos"
+    },
+    {
+      "key": "togo",
+      "name_zh": "自提",
+      "name_en": "To Go"
+    }
+  ],
+  "items": [
+    {
+      "name_en": "Sweet and Sour Pork (Lunch)",
+      "name_zh": "咕咾肉（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Chicken with Garlic Sauce (Lunch)",
+      "name_zh": "鱼香鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Mongolian Chicken (Lunch)",
+      "name_zh": "蒙古鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Vegetable Deluxe (Lunch)",
+      "name_zh": "素什锦（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Almond Chicken (Lunch)",
+      "name_zh": "杏仁鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Cashew Chicken (Lunch)",
+      "name_zh": "腰果鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "General Chicken (Lunch)",
+      "name_zh": "左宗鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Mushroom Chicken (Lunch)",
+      "name_zh": "蘑菇鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Lemon Chicken (Lunch)",
+      "name_zh": "柠檬鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Sweet and Sour Chicken (Lunch)",
+      "name_zh": "甜酸鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Hunan Chicken (Lunch)",
+      "name_zh": "湖南鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Broccoli Chicken (Lunch)",
+      "name_zh": "芥兰鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Kung Pao Chicken (Lunch)",
+      "name_zh": "宫保鸡（午市）",
+      "category": "lunch_special",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Kung Pao Beef (Lunch)",
+      "name_zh": "宫保牛（午市）",
+      "category": "lunch_special",
+      "price_cents": 1215,
+      "station": "wok"
+    },
+    {
+      "name_en": "Hunan Beef (Lunch)",
+      "name_zh": "湖南牛（午市）",
+      "category": "lunch_special",
+      "price_cents": 1215,
+      "station": "wok"
+    },
+    {
+      "name_en": "Broccoli Beef (Lunch)",
+      "name_zh": "芥兰牛（午市）",
+      "category": "lunch_special",
+      "price_cents": 1215,
+      "station": "wok"
+    },
+    {
+      "name_en": "Mongolian Beef (Lunch)",
+      "name_zh": "蒙古牛（午市）",
+      "category": "lunch_special",
+      "price_cents": 1215,
+      "station": "wok"
+    },
+    {
+      "name_en": "Green Pepper Beef (Lunch)",
+      "name_zh": "青椒牛（午市）",
+      "category": "lunch_special",
+      "price_cents": 1215,
+      "station": "wok"
+    },
+    {
+      "name_en": "Vegetable Beef (Lunch)",
+      "name_zh": "蔬菜牛（午市）",
+      "category": "lunch_special",
+      "price_cents": 1215,
+      "station": "wok"
+    },
+    {
+      "name_en": "Broccoli Shrimp (Lunch)",
+      "name_zh": "芥兰虾（午市）",
+      "category": "lunch_special",
+      "price_cents": 1215,
+      "station": "wok"
+    },
+    {
+      "name_en": "Vegetable Shrimp (Lunch)",
+      "name_zh": "蔬菜虾（午市）",
+      "category": "lunch_special",
+      "price_cents": 1215,
+      "station": "wok"
+    },
+    {
+      "name_en": "Kung Pao Shrimp (Lunch)",
+      "name_zh": "宫保虾（午市）",
+      "category": "lunch_special",
+      "price_cents": 1215,
+      "station": "wok"
+    },
+    {
+      "name_en": "Hunan Shrimp (Lunch)",
+      "name_zh": "湖南虾（午市）",
+      "category": "lunch_special",
+      "price_cents": 1215,
+      "station": "wok"
+    },
+    {
+      "name_en": "Paper Wrapped Chicken (10)",
+      "name_zh": "纸包鸡（10）",
+      "category": "appetizer",
+      "price_cents": 1120,
+      "station": "fryer"
+    },
+    {
+      "name_en": "Egg Roll (4)",
+      "name_zh": "春卷（4）",
+      "category": "appetizer",
+      "price_cents": 470,
+      "station": "fryer"
+    },
+    {
+      "name_en": "Chicken Teriyaki (4)",
+      "name_zh": "鸡串烧（4）",
+      "category": "appetizer",
+      "price_cents": 750,
+      "station": "fryer"
+    },
+    {
+      "name_en": "Pot Stickers (14)",
+      "name_zh": "锅贴（14）",
+      "category": "appetizer",
+      "price_cents": 1030,
+      "station": "fryer"
+    },
+    {
+      "name_en": "Crab Rangoon Cheese (10)",
+      "name_zh": "芝士蟹角（10）",
+      "category": "appetizer",
+      "price_cents": 840,
+      "station": "fryer"
+    },
+    {
+      "name_en": "Barbecued Pork",
+      "name_zh": "叉烧",
+      "category": "appetizer",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Fried Prawns (12)",
+      "name_zh": "炸虾（12）",
+      "category": "appetizer",
+      "price_cents": 1120,
+      "station": "fryer"
+    },
+    {
+      "name_en": "Barbecued Spareribs (4)",
+      "name_zh": "烧排骨（4）",
+      "category": "appetizer",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Pu Pu Platter",
+      "name_zh": "宝宝盘",
+      "category": "appetizer",
+      "price_cents": 1588,
+      "station": "fryer"
+    },
+    {
+      "name_en": "Hot Sour Soup",
+      "name_zh": "酸辣汤",
+      "category": "soup",
+      "price_cents": 655,
+      "station": "wok"
+    },
+    {
+      "name_en": "Egg Flower Soup",
+      "name_zh": "蛋花汤",
+      "category": "soup",
+      "price_cents": 655,
+      "station": "wok"
+    },
+    {
+      "name_en": "Won Ton Soup",
+      "name_zh": "云吞汤",
+      "category": "soup",
+      "price_cents": 845,
+      "station": "wok"
+    },
+    {
+      "name_en": "War Won Ton Soup",
+      "name_zh": "窝云吞汤",
+      "category": "soup",
+      "price_cents": 935,
+      "station": "wok"
+    },
+    {
+      "name_en": "Seafood Soup",
+      "name_zh": "海鲜汤",
+      "category": "soup",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Sesame Chicken",
+      "name_zh": "芝麻鸡",
+      "category": "chef_special",
+      "price_cents": 1310,
+      "station": "wok"
+    },
+    {
+      "name_en": "Black Pepper Chicken",
+      "name_zh": "黑椒鸡",
+      "category": "chef_special",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Orange Chicken",
+      "name_zh": "陈皮鸡",
+      "category": "chef_special",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Crispy Chicken",
+      "name_zh": "脆皮鸡",
+      "category": "chef_special",
+      "price_cents": 1405,
+      "station": "fryer"
+    },
+    {
+      "name_en": "Sesame Beef",
+      "name_zh": "芝麻牛",
+      "category": "chef_special",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Szechuan Beef",
+      "name_zh": "四川牛",
+      "category": "chef_special",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Sweet & Sour Three Flavors",
+      "name_zh": "甜酸三样",
+      "category": "chef_special",
+      "price_cents": 1495,
+      "station": "wok"
+    },
+    {
+      "name_en": "Crispy Shrimp",
+      "name_zh": "脆皮虾",
+      "category": "chef_special",
+      "price_cents": 1495,
+      "station": "fryer"
+    },
+    {
+      "name_en": "Walnut Shrimp",
+      "name_zh": "核桃虾",
+      "category": "chef_special",
+      "price_cents": 1495,
+      "station": "wok"
+    },
+    {
+      "name_en": "Sizzling Chicken",
+      "name_zh": "铁板鸡",
+      "category": "chef_special",
+      "price_cents": 1495,
+      "station": "wok"
+    },
+    {
+      "name_en": "Sizzling Beef",
+      "name_zh": "铁板牛",
+      "category": "chef_special",
+      "price_cents": 1495,
+      "station": "wok"
+    },
+    {
+      "name_en": "Sizzling Shrimp",
+      "name_zh": "铁板虾",
+      "category": "chef_special",
+      "price_cents": 1495,
+      "station": "wok"
+    },
+    {
+      "name_en": "Shrimp with Lobster Sauce",
+      "name_zh": "虾龙糊",
+      "category": "chef_special",
+      "price_cents": 1495,
+      "station": "wok"
+    },
+    {
+      "name_en": "Mongolian Three Flavors Delight",
+      "name_zh": "蒙古三样",
+      "category": "chef_special",
+      "price_cents": 1495,
+      "station": "wok"
+    },
+    {
+      "name_en": "Snow Peas Shrimp",
+      "name_zh": "雪豆虾",
+      "category": "chef_special",
+      "price_cents": 1495,
+      "station": "wok"
+    },
+    {
+      "name_en": "Sizzling Seafood",
+      "name_zh": "铁板海鲜",
+      "category": "chef_special",
+      "price_cents": 1682,
+      "station": "wok"
+    },
+    {
+      "name_en": "Happy Family",
+      "name_zh": "全家福",
+      "category": "chef_special",
+      "price_cents": 1682,
+      "station": "wok"
+    },
+    {
+      "name_en": "Dragon and Phoenix",
+      "name_zh": "龙凤配",
+      "category": "chef_special",
+      "price_cents": 1682,
+      "station": "wok"
+    },
+    {
+      "name_en": "Snow Peas Scallop",
+      "name_zh": "雪豆干贝",
+      "category": "chef_special",
+      "price_cents": 1775,
+      "station": "wok"
+    },
+    {
+      "name_en": "Kung Pao Scallop",
+      "name_zh": "宫保干贝",
+      "category": "chef_special",
+      "price_cents": 1775,
+      "station": "wok"
+    },
+    {
+      "name_en": "Scallop with Hot Garlic Sauce",
+      "name_zh": "鱼香干贝",
+      "category": "chef_special",
+      "price_cents": 1775,
+      "station": "wok"
+    },
+    {
+      "name_en": "Broccoli Shrimp",
+      "name_zh": "芥兰虾",
+      "category": "seafood",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Vegetable Shrimp",
+      "name_zh": "蔬菜虾",
+      "category": "seafood",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Kung Pao Shrimp",
+      "name_zh": "宫保虾",
+      "category": "seafood",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Shrimp with Garlic Sauce",
+      "name_zh": "鱼香虾",
+      "category": "seafood",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Hunan Shrimp",
+      "name_zh": "湖南虾",
+      "category": "seafood",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Broccoli Beef",
+      "name_zh": "芥兰牛",
+      "category": "beef",
+      "price_cents": 1262,
+      "station": "wok"
+    },
+    {
+      "name_en": "Green Pepper Beef",
+      "name_zh": "青椒牛",
+      "category": "beef",
+      "price_cents": 1262,
+      "station": "wok"
+    },
+    {
+      "name_en": "Vegetable Beef",
+      "name_zh": "蔬菜牛",
+      "category": "beef",
+      "price_cents": 1262,
+      "station": "wok"
+    },
+    {
+      "name_en": "Beef with Garlic Sauce",
+      "name_zh": "鱼香牛",
+      "category": "beef",
+      "price_cents": 1262,
+      "station": "wok"
+    },
+    {
+      "name_en": "Kung Pao Beef",
+      "name_zh": "宫保牛",
+      "category": "beef",
+      "price_cents": 1262,
+      "station": "wok"
+    },
+    {
+      "name_en": "Mongolian Beef",
+      "name_zh": "蒙古牛",
+      "category": "beef",
+      "price_cents": 1262,
+      "station": "wok"
+    },
+    {
+      "name_en": "Snow Pea Beef",
+      "name_zh": "雪豆牛",
+      "category": "beef",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Mongolian Chicken",
+      "name_zh": "蒙古鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Pineapple Chicken",
+      "name_zh": "凤梨鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Sweet and Sour Chicken",
+      "name_zh": "甜酸鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Lemon Chicken",
+      "name_zh": "柠檬鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Almond Chicken",
+      "name_zh": "杏仁鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Cashew Chicken",
+      "name_zh": "腰果鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Vegetable Chicken",
+      "name_zh": "素菜鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Broccoli Chicken",
+      "name_zh": "芥兰鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Mushroom Chicken",
+      "name_zh": "蘑菇鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Chicken with Black Bean Sauce",
+      "name_zh": "豆豉鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Kung Pao Chicken",
+      "name_zh": "宫保鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Hunan Chicken",
+      "name_zh": "湖南鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "General's Chicken",
+      "name_zh": "左宗鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Chicken with Garlic Sauce",
+      "name_zh": "鱼香鸡",
+      "category": "chicken",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Snow Pea Chicken",
+      "name_zh": "雪豆鸡",
+      "category": "chicken",
+      "price_cents": 1307,
+      "station": "wok"
+    },
+    {
+      "name_en": "Sweet and Sour Pork",
+      "name_zh": "甜酸肉",
+      "category": "pork",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Broccoli Pork",
+      "name_zh": "芥兰肉",
+      "category": "pork",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Pork with Garlic Sauce",
+      "name_zh": "鱼香肉",
+      "category": "pork",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Mixed Vegetable",
+      "name_zh": "素什锦",
+      "category": "vegetable",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Broccoli with Cashew Nuts",
+      "name_zh": "腰果芥兰",
+      "category": "vegetable",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Family Style To Fu (Fried)",
+      "name_zh": "家常豆腐",
+      "category": "vegetable",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Hot To Fu",
+      "name_zh": "辣豆腐",
+      "category": "vegetable",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Green Beans with Wine",
+      "name_zh": "四季豆",
+      "category": "vegetable",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Moo Shi Vegetable",
+      "name_zh": "木须菜",
+      "category": "moo_shi",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Moo Shi Pork",
+      "name_zh": "木须肉",
+      "category": "moo_shi",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Moo Shi Chicken",
+      "name_zh": "木须鸡",
+      "category": "moo_shi",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Moo Shi Beef",
+      "name_zh": "木须牛",
+      "category": "moo_shi",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Moo Shi Shrimp",
+      "name_zh": "木须虾",
+      "category": "moo_shi",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Vegetable Egg Foo Young",
+      "name_zh": "什菜芙蓉",
+      "category": "egg_foo_young",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Pork Foo Young",
+      "name_zh": "肉芙蓉",
+      "category": "egg_foo_young",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Chicken Foo Young",
+      "name_zh": "鸡芙蓉",
+      "category": "egg_foo_young",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Shrimp Foo Young",
+      "name_zh": "虾芙蓉",
+      "category": "egg_foo_young",
+      "price_cents": 1214,
+      "station": "wok"
+    },
+    {
+      "name_en": "House Foo Young",
+      "name_zh": "招牌芙蓉",
+      "category": "egg_foo_young",
+      "price_cents": 1214,
+      "station": "wok"
+    },
+    {
+      "name_en": "Fried Rice Noodle (Pork/Chicken/Beef/Veg)",
+      "name_zh": "各式炒米粉",
+      "category": "rice_noodle",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Singapore Fried Rice Noodle",
+      "name_zh": "星州炒粉",
+      "category": "rice_noodle",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "House Fried Rice Noodle",
+      "name_zh": "本楼炒米粉",
+      "category": "rice_noodle",
+      "price_cents": 1120,
+      "station": "wok"
+    },
+    {
+      "name_en": "Vegetable Chow Mein",
+      "name_zh": "什菜炒面",
+      "category": "chow_mein",
+      "price_cents": 887,
+      "station": "wok"
+    },
+    {
+      "name_en": "Pork Chow Mein",
+      "name_zh": "肉炒面",
+      "category": "chow_mein",
+      "price_cents": 887,
+      "station": "wok"
+    },
+    {
+      "name_en": "Chicken Chow Mein",
+      "name_zh": "鸡炒面",
+      "category": "chow_mein",
+      "price_cents": 887,
+      "station": "wok"
+    },
+    {
+      "name_en": "Beef Chow Mein",
+      "name_zh": "牛炒面",
+      "category": "chow_mein",
+      "price_cents": 887,
+      "station": "wok"
+    },
+    {
+      "name_en": "Shrimp Chow Mein",
+      "name_zh": "虾炒面",
+      "category": "chow_mein",
+      "price_cents": 980,
+      "station": "wok"
+    },
+    {
+      "name_en": "House Chow Mein",
+      "name_zh": "招牌炒面",
+      "category": "chow_mein",
+      "price_cents": 980,
+      "station": "wok"
+    },
+    {
+      "name_en": "Eggs Fried Rice",
+      "name_zh": "蛋炒饭",
+      "category": "fried_rice",
+      "price_cents": 845,
+      "station": "wok"
+    },
+    {
+      "name_en": "Vegetable Fried Rice",
+      "name_zh": "素菜炒饭",
+      "category": "fried_rice",
+      "price_cents": 845,
+      "station": "wok"
+    },
+    {
+      "name_en": "Pork Fried Rice",
+      "name_zh": "肉丝炒饭",
+      "category": "fried_rice",
+      "price_cents": 845,
+      "station": "wok"
+    },
+    {
+      "name_en": "Chicken Fried Rice",
+      "name_zh": "鸡肉炒饭",
+      "category": "fried_rice",
+      "price_cents": 845,
+      "station": "wok"
+    },
+    {
+      "name_en": "Beef Fried Rice",
+      "name_zh": "牛肉炒饭",
+      "category": "fried_rice",
+      "price_cents": 845,
+      "station": "wok"
+    },
+    {
+      "name_en": "Shrimp Fried Rice",
+      "name_zh": "虾炒饭",
+      "category": "fried_rice",
+      "price_cents": 935,
+      "station": "wok"
+    },
+    {
+      "name_en": "House Fried Rice",
+      "name_zh": "招牌炒饭",
+      "category": "fried_rice",
+      "price_cents": 935,
+      "station": "wok"
+    },
+    {
+      "name_en": "Combination Plate (Serves 1)",
+      "name_zh": "组合餐（1人）",
+      "category": "combo",
+      "price_cents": 1405,
+      "station": "wok"
+    },
+    {
+      "name_en": "Szechuan Dinner (Serves 2)",
+      "name_zh": "四川餐（2人）",
+      "category": "combo",
+      "price_cents": 3735,
+      "station": "wok"
+    },
+    {
+      "name_en": "Szechuan Dinner - Add a Person",
+      "name_zh": "四川餐加人",
+      "category": "combo",
+      "price_cents": 1868,
+      "station": "wok"
+    },
+    {
+      "name_en": "Hong Kong Dinner (Serves 2)",
+      "name_zh": "香港餐（2人）",
+      "category": "combo",
+      "price_cents": 4202,
+      "station": "wok"
+    },
+    {
+      "name_en": "Hong Kong Dinner - Add a Person",
+      "name_zh": "香港餐加人",
+      "category": "combo",
+      "price_cents": 2101,
+      "station": "wok"
+    },
+    {
+      "name_en": "Hunan Dinner (Serves 2)",
+      "name_zh": "湖南餐（2人）",
+      "category": "combo",
+      "price_cents": 4670,
+      "station": "wok"
+    },
+    {
+      "name_en": "Hunan Dinner - Add a Person",
+      "name_zh": "湖南餐加人",
+      "category": "combo",
+      "price_cents": 2335,
+      "station": "wok"
+    }
+  ],
+  "buffet_dishes": [
+    {
+      "name_en": "General Tso's Chicken",
+      "name_zh": "左宗棠鸡",
+      "category": "buffet_entree",
+      "station": "wok"
+    },
+    {
+      "name_en": "Sesame Chicken",
+      "name_zh": "芝麻鸡（自助）",
+      "category": "buffet_entree",
+      "station": "wok"
+    },
+    {
+      "name_en": "Broccoli Beef",
+      "name_zh": "西兰花牛肉（自助）",
+      "category": "buffet_entree",
+      "station": "wok"
+    },
+    {
+      "name_en": "Sweet & Sour Pork",
+      "name_zh": "咕咾肉（自助）",
+      "category": "buffet_entree",
+      "station": "wok"
+    },
+    {
+      "name_en": "Lo Mein",
+      "name_zh": "捞面（自助）",
+      "category": "buffet_noodle",
+      "station": "wok"
+    },
+    {
+      "name_en": "Fried Rice",
+      "name_zh": "炒饭（自助）",
+      "category": "buffet_rice",
+      "station": "wok"
+    },
+    {
+      "name_en": "Salt & Pepper Shrimp",
+      "name_zh": "椒盐虾（自助）",
+      "category": "buffet_seafood",
+      "station": "fryer"
+    },
+    {
+      "name_en": "Crab Rangoon",
+      "name_zh": "蟹角（自助）",
+      "category": "buffet_appetizer",
+      "station": "fryer"
+    },
+    {
+      "name_en": "Spring Roll",
+      "name_zh": "春卷（自助）",
+      "category": "buffet_appetizer",
+      "station": "fryer"
+    },
+    {
+      "name_en": "Hot & Sour Soup",
+      "name_zh": "酸辣汤（自助）",
+      "category": "buffet_soup",
+      "station": "wok"
+    },
+    {
+      "name_en": "Salad Bar",
+      "name_zh": "沙拉吧",
+      "category": "buffet_cold",
+      "station": "cold"
+    },
+    {
+      "name_en": "Fresh Fruit",
+      "name_zh": "水果",
+      "category": "buffet_dessert",
+      "station": "cold"
+    }
+  ],
+  "users": [
+    {
+      "username": "manager",
+      "display_name": "前台主管",
+      "role": "front_manager",
+      "dev_password": "manager-dev-pw",
+      "dev_pin": "1111"
+    },
+    {
+      "username": "front",
+      "display_name": "前台员工",
+      "role": "front_employee",
+      "dev_password": "front-dev-pw",
+      "dev_pin": "3333"
+    },
+    {
+      "username": "kitchen",
+      "display_name": "后厨",
+      "role": "kitchen",
+      "dev_password": "kitchen-dev-pw",
+      "dev_pin": "2222"
+    },
+    {
+      "username": "boss",
+      "display_name": "老板",
+      "role": "admin",
+      "dev_password": "boss-dev-pw",
+      "dev_pin": null
+    }
+  ]
+}

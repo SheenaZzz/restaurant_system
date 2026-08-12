@@ -11,10 +11,11 @@ import {
 import type { LocalCheck } from './db'
 
 /**
- * 换桌 / 并桌。
+ * Transfer and merge.
  *
- * 两件事放一个弹层里，因为现场是同一个动作的两种结果：
- * 客人挪位子 → 换桌；几桌拼一起 → 并桌。分成两个入口反而要想"我该点哪个"。
+ * Both live in one sheet because on the floor they are two outcomes of the
+ * same move: guests change seats -> transfer; tables push together -> merge.
+ * Two entry points would only raise the question of which one to tap.
  */
 export default function TransferSheet({
   check,
@@ -40,8 +41,8 @@ export default function TransferSheet({
 
   const occupied = new Set(others.map((o) => o.table_label))
 
-  // 并桌后的人数与服务费预览 —— 这是并桌最容易被忽略的后果，
-  // 必须在**点确认之前**就让人看见
+  // Party size and service charge after the merge -- the consequence people
+  // forget, so it has to be visible **before** they confirm
   const merged = [...picked]
     .map((u) => others.find((o) => o.check_uuid === u))
     .filter(Boolean) as LocalCheck[]
@@ -71,13 +72,13 @@ export default function TransferSheet({
         <h2>{check.table_label}</h2>
 
         <div className="tabs">
-          <button className={tab === 'move' ? 'on' : ''} onClick={() => setTab('move')}>{tr('换桌')}</button>
-          <button className={tab === 'merge' ? 'on' : ''} onClick={() => setTab('merge')}>{tr('并桌')}</button>
+          <button className={tab === 'move' ? 'on' : ''} onClick={() => setTab('move')}>{tr('Move table')}</button>
+          <button className={tab === 'merge' ? 'on' : ''} onClick={() => setTab('merge')}>{tr('Merge')}</button>
         </div>
 
         {tab === 'move' ? (
           <>
-            <p className="hint">{tr('选一张空桌，整张单挪过去。已占用的桌不能选。')}</p>
+            <p className="hint">{tr('Pick an empty table to move the whole check to. Occupied tables cannot be chosen.')}</p>
             <div className="grid tight">
               {tables.map((t) => {
                 const busyT = occupied.has(t.label)
@@ -98,7 +99,7 @@ export default function TransferSheet({
                   >
                     <span className="tlabel">{tr(t.label)}</span>
                     <span className="tseats">
-                      {self ? '当前' : busyT ? '占用中' : `${t.seats} 座`}
+                      {self ? tr('current') : busyT ? tr('in use') : `${t.seats} ${tr('seats')}`}
                     </span>
                   </button>
                 )
@@ -108,9 +109,9 @@ export default function TransferSheet({
         ) : (
           <>
             <p className="hint">
-              选要并进 <b>{check.table_label}</b>{tr('的单。明细会搬到这张单上， 原来的单标记为「已并入」，不再单独计入营业额。')}</p>
+              {tr('Pick the checks to fold into')} <b>{check.table_label}</b>{tr('. Their lines move onto this check; the originals are marked merged and no longer counted on their own.')}</p>
 
-            {others.length === 0 && <p className="hint">{tr('没有其它未结账单。')}</p>}
+            {others.length === 0 && <p className="hint">{tr('No other open checks.')}</p>}
 
             <ul className="pick">
               {others.map((o) => (
@@ -128,7 +129,7 @@ export default function TransferSheet({
                     />
                     <span className="tb">{o.table_label}</span>
                     <span className="dim">
-                      {o.adult + o.child + o.senior} 人 · {money(o.est_cents)}
+                      {o.adult + o.child + o.senior} {tr('guests')} · {money(o.est_cents)}
                     </span>
                   </label>
                 </li>
@@ -138,20 +139,20 @@ export default function TransferSheet({
             {picked.size > 0 && (
               <div className="preview">
                 <div>
-                  合并后 <b>{size}</b> 人 · 小计 {money(subtotal)}
+                  {tr('After merging')} <b>{size}</b> {tr('guests')} · {tr('Subtotal')} {money(subtotal)}
                 </div>
                 {svc > 0 && (
                   <div className={willCharge ? 'warnText' : ''}>
                     {willCharge && '⚠️ '}
-                    满 {LARGE_PARTY_MIN} 人，加收 10% 服务费 {money(svc)}
+                    {tr('At')} {LARGE_PARTY_MIN}{tr(' guests a 10% service charge applies')} {money(svc)}
                   </div>
                 )}
-                <div className="total small">合计 {money(subtotal + svc)}</div>
+                <div className="total small">{tr('Total')} {money(subtotal + svc)}</div>
               </div>
             )}
 
             <div className="sheet-actions">
-              <button onClick={onCancel}>{tr('取消')}</button>
+              <button onClick={onCancel}>{tr('Cancel')}</button>
               <button
                 className="primary"
                 disabled={busy || picked.size === 0}
@@ -164,7 +165,7 @@ export default function TransferSheet({
                   }
                 }}
               >
-                {busy ? '…' : `并入 ${picked.size} 单`}
+                {busy ? '…' : `${tr('Merge')} ${picked.size}`}
               </button>
             </div>
           </>
@@ -172,7 +173,7 @@ export default function TransferSheet({
 
         {tab === 'move' && (
           <div className="sheet-actions">
-            <button onClick={onCancel}>{tr('取消')}</button>
+            <button onClick={onCancel}>{tr('Cancel')}</button>
           </div>
         )}
       </div>

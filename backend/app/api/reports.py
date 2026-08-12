@@ -1,8 +1,10 @@
-"""报表：按营业日汇总。
+"""Reports, aggregated by business day.
 
-**权威数字只能从服务端算。** 客户端本地镜像里的金额是按缓存价估的，
-而且只包含这台设备同步到的部分 —— 拿它做月报会算错。
-代价是月报需要联网，但那不是关键路径（关键路径是开桌/关单，那些离线可用）。
+**Authoritative numbers can only come from the server.** The amounts in a
+client's local mirror are estimated from cached prices and only cover what
+that device synced -- a month report built from them would be wrong. The cost
+is that reports need a connection, but they are not the critical path (opening
+and closing checks is, and that works offline).
 """
 
 from datetime import date, datetime, timezone
@@ -32,21 +34,23 @@ class DayRow(BaseModel):
     card_cents: int
     other_cents: int
     unpaid_count: int
-    # 已记支付、但支付金额和账单金额对不上的单数。
-    # 最常见的成因：结账之后又改了单，支付金额没跟着改。
-    # 日结对账对不上时，先看这个数。
+    # Checks that recorded a payment whose amount does not match the check.
+    # The usual cause: the check was edited after collecting and the payment was not.
+    # When close of day does not reconcile, look here first.
     mismatch_count: int
     voided_cents: int
     voided_count: int
-    # 小费**不是系统算出来的** —— 卡机小费和桌上现金都在系统之外，
-    # 只能人工录入。所以它跟营业额的性质完全不同：
-    # 营业额是"应该收到多少"，小费是"实际拿到多少"。
+    # Tips are **not computed by the system** -- card machine tips and cash on
+    # the table both happen outside it, so they can only be typed in. That
+    # makes them a different kind of number from sales: sales is what should
+    # have been taken, tips is what was actually received.
     tips_total_cents: int
     tips_updated_by: str | None
 
 
-# 只有主管和老板能看整月营业额 —— 普通服务员没有理由看到全店经营数字。
-# 这不是不信任，是最小权限：能看见的人越少，泄露面越小。
+# Only managers and the owner see a whole month's sales -- a server has no
+# reason to see the shop's figures. Not distrust, least privilege: the fewer
+# people who can see it, the smaller the exposure.
 _GUARD = Depends(require_role("front_manager", "admin"))
 
 _SQL = text(
@@ -71,8 +75,8 @@ _SQL = text(
          GROUP BY c.id, p.business_date
     )
     SELECT business_date,
-           -- merged 的单明细已搬到目标单，自己不计入任何统计；
-           -- voided 单独统计，不进营业额
+           -- a merged check's lines have moved to its target, so it counts nowhere;
+           -- voided is counted separately and never as sales
            COALESCE(SUM(subtotal + svc + tax) FILTER (WHERE status IN ('open','closed')), 0) AS revenue_cents,
            COALESCE(SUM(svc)            FILTER (WHERE status IN ('open','closed')), 0) AS service_cents,
            COALESCE(SUM(tax)            FILTER (WHERE status IN ('open','closed')), 0) AS tax_cents,
@@ -82,7 +86,7 @@ _SQL = text(
            COALESCE(SUM(cash)  FILTER (WHERE status = 'closed'), 0) AS cash_cents,
            COALESCE(SUM(card)  FILTER (WHERE status = 'closed'), 0) AS card_cents,
            COALESCE(SUM(other) FILTER (WHERE status = 'closed'), 0) AS other_cents,
-           -- 已结但没记支付方式的单数：日结对账对不上时，先看这个数
+           -- closed but with no payment method recorded: check this first when close of day does not reconcile
            COUNT(*) FILTER (WHERE status = 'closed' AND payment_method IS NULL) AS unpaid_count,
            COUNT(*) FILTER (
                WHERE status = 'closed'
@@ -123,8 +127,9 @@ def daily(
         ).all()
     }
 
-    # 有小费但当天没有账单的情况也要显示 —— 比如系统上线前那几天，
-    # 老板可能只补录了小费。漏掉它们会让月度小费合计对不上。
+    # Days with tips but no checks still have to show up -- before the system
+    # went live the owner may have back-filled tips only, and dropping those
+    # would make the monthly tip total disagree.
     dates = sorted({r["business_date"] for r in rows} | set(tips))
     by_date = {r["business_date"]: r for r in rows}
 
@@ -157,22 +162,22 @@ def daily(
 
 class TipsIn(BaseModel):
     business_date: date
-    # 一天一个总数。不分现金/刷卡，也不按单记 ——
-    # 店里收市时就是把卡机小费和桌上现金加一起报一个数。
+    # One number for the day. Not split by cash/card, not per check --
+    # at close the store adds the card machine's tips to the cash and reports one figure.
     tips_total_cents: int = Field(ge=0)
 
 
 @router.put("/tips", response_model=DayRow, dependencies=[_GUARD])
 def set_tips(body: TipsIn, user: CurrentUser, db: Session = Depends(get_db)):
-    """录入某一天的小费总额（一天一个数）。
+    """Record one day's tip total (one number per day).
 
-    ⚠️ **这是唯一一个不走 /api/sync 的写入。** 理由：
-      - 月报本来就是在线专用（权威数字只能服务端算），没有离线诉求
-      - 小费不在营业流程的关键路径上，失败重试即可
-      - 它写的是"日聚合"，而 sync 的本地镜像里根本没有日聚合这个概念
+    ⚠️ **The only write that does not go through /api/sync.** Why:
+      - reports are online-only anyway (authoritative numbers are server-side)
+      - tips are off the critical path; a failure can just be retried
+      - it writes a daily aggregate, and a local mirror has no such concept
 
-    这是一个**经过权衡的例外**，不是随手开的后门 ——
-    任何会在离线时发生的写入，仍然必须走 sync。
+    This is a **considered exception, not a back door** -- anything that can
+    happen offline still has to go through sync.
     """
     row = db.scalar(
         select(DailyBatch).where(DailyBatch.business_date == body.business_date)
@@ -182,7 +187,7 @@ def set_tips(body: TipsIn, user: CurrentUser, db: Session = Depends(get_db)):
         db.add(row)
 
     row.tips_total_cents = body.tips_total_cents
-    # 小费直接影响员工分账，改动必须能追溯到人
+    # Tips feed staff payout directly, so a change has to be traceable to a person
     row.tips_updated_by = user.id
     row.tips_updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -199,10 +204,11 @@ class MonthRow(BaseModel):
 
 @router.get("/months", response_model=list[MonthRow], dependencies=[_GUARD])
 def months(db: Session = Depends(get_db)):
-    """有数据的月份清单。
+    """The months that have data.
 
-    给月份选择器用 —— 没数据的月份直接灰掉，省得一格格翻着找。
-    同时把每月营业额一并带出来，选之前就能看到大概。
+    For the month picker -- months with nothing are greyed out rather than
+    paged through one by one. Sales come along for the ride, so the owner sees
+    roughly what is there before picking.
     """
     rows = db.execute(
         text(
@@ -240,7 +246,7 @@ def months(db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# 税率设置
+# Tax rate settings
 # ---------------------------------------------------------------------------
 
 
@@ -252,8 +258,9 @@ class TaxOut(BaseModel):
 
 
 class TaxIn(BaseModel):
-    # 百分比，比如 7.1 表示 7.1%。用百分比而不是小数是因为
-    # 人看到的、税务局公布的都是「7.1%」—— 让人去换算成 0.071 只会填错。
+    # A percentage, 7.1 meaning 7.1%. A percentage rather than a fraction
+    # because 7.1% is what people and the county both say -- asking someone to
+    # convert it to 0.071 only produces typos.
     rate_percent: float = Field(ge=0, lt=100)
     effective_from: date
     note: str | None = None
@@ -275,11 +282,11 @@ def get_tax(db: Session = Depends(get_db)):
 
 @router.put("/tax", response_model=TaxOut, dependencies=[_GUARD])
 def set_tax(body: TaxIn, user: CurrentUser, db: Session = Depends(get_db)):
-    """设定税率。设一次基本不用再动。
+    """Set the tax rate. Set once, rarely touched.
 
-    ⚠️ **同一个生效日只保留一条**（覆盖），不同生效日各留一行 ——
-    今天设错了当天改掉是正常操作；但换了生效日就是一次真正的调率，
-    历史账单必须还按旧税率算。
+    ⚠️ **One row per effective date** (overwritten), separate rows for
+    different dates -- fixing a same-day typo is routine, but a new effective
+    date is a real rate change and past checks have to keep the old rate.
     """
     rate = round(body.rate_percent / 100, 5)
     row = db.scalar(
@@ -297,7 +304,7 @@ def set_tax(body: TaxIn, user: CurrentUser, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# 对账告警的下钻：这几单到底是哪几单
+# Drilling into a reconciliation warning: which checks, exactly
 # ---------------------------------------------------------------------------
 
 class DayCheckOut(BaseModel):
@@ -312,24 +319,25 @@ class DayCheckOut(BaseModel):
     payment_method: str | None
     customer_name: str | None
     operator: str | None
-    # 作废才有：原因和记录人
+    # voided only: the reason and who recorded it
     void_reason: str | None
     voided_by: str | None
 
 
-# 单张账单的应收 / 已收。
+# What one check owes and what was collected.
 #
-# ⚠️ 这两个表达式必须和上面 _SQL 里算 mismatch_count 用的**完全一致**。
-#    一个说"有 3 单不符"、点进去列出 2 单，比不给下钻更糟 ——
-#    那会让人开始怀疑所有数字。所以两处共用同一段定义。
+# ⚠️ These two expressions have to be **identical** to the ones _SQL uses for
+#    mismatch_count above. Saying "3 checks do not match" and then listing 2
+#    is worse than not offering the drill-down -- it makes every number
+#    suspect. So both read the same definition.
 _PER_CHECK = """
     SELECT c.id,
            c.client_uuid::text AS check_uuid,
            t.label             AS table_label,
            c.source, c.status, c.opened_at, c.closed_at,
            c.payment_method,
-           -- 客人姓名在 pickup_order 上，不在账单上（PII 原则：能不收就不收，
-           -- 只有自提单才需要姓名核对身份）
+           -- the guest name lives on pickup_order, not on the check (PII: do not
+           -- collect what you do not need; only to-go checks need a name to identify the guest)
            po.customer_name,
            u.display_name      AS operator,
              COALESCE((SELECT SUM(h.qty * h.unit_price_cents) FROM head_charge h
@@ -349,11 +357,11 @@ _PER_CHECK = """
 """
 
 _KIND_WHERE = {
-    # 作废：金额本身不进营业额，但"作废了多少钱"正是老板要看的
+    # Voided: the amount itself is not sales, but "how much got voided" is exactly what the owner wants
     "voided": "status = 'voided'",
-    # 已结但没选支付方式 —— 关单时漏录
+    # Closed with no payment method -- missed at close
     "unpaid": "status = 'closed' AND payment_method IS NULL",
-    # 记了方式但金额对不上 —— 最常见是结账后又改了单
+    # Method recorded but the amount disagrees -- usually the check was edited after collecting
     "mismatch": (
         "status = 'closed' AND payment_method IS NOT NULL"
         " AND paid_cents <> total_cents"
@@ -367,15 +375,15 @@ def day_checks(
     kind: str = Query(),
     db: Session = Depends(get_db),
 ):
-    """某个营业日里，某一类对账告警具体是哪几单。
+    """Which checks are behind one reconciliation warning on a business day.
 
-    月报上只给一个「3 单」的计数，人是没法处理的 ——
-    得知道是哪三单、差多少，才谈得上去改。
+    A count of "3" on the month report is not something a person can act on --
+    fixing it needs to know which three and by how much.
     """
     where = _KIND_WHERE.get(kind)
     if where is None:
         raise HTTPException(
-            status_code=422, detail=f"未知的类别：{kind}（voided/unpaid/mismatch）"
+            status_code=422, detail=f"Unknown kind: {kind} (voided/unpaid/mismatch)"
         )
 
     rows = db.execute(
@@ -386,8 +394,8 @@ def day_checks(
         {"d": d},
     ).mappings().all()
 
-    # 作废原因在 check_exception 里，且**撤销过的不算** ——
-    # 撤销记录绝不删除，所以要按 reverted_at IS NULL 过滤
+    # The void reason is in check_exception, and **undone voids do not count**
+    # -- undo records are never deleted, so filter on reverted_at IS NULL
     reasons: dict[int, tuple[str | None, str | None]] = {}
     if kind == "voided" and rows:
         for r in db.execute(
@@ -428,38 +436,36 @@ def day_checks(
 
 
 # ---------------------------------------------------------------------------
-# 营业日设置：时区 + 日界
+# Business-day settings: time zone and the day boundary
 # ---------------------------------------------------------------------------
 
-# 给设置页选的时区。不给全部 ~600 个 IANA 名字 ——
-# 在 iPad 上翻六百行找不到自己那条，反而更容易选错。
-# 店只可能在美国，列出这几个就够；真需要别的再加。
-TZ_CHOICES: list[tuple[str, str, str]] = [
-    ("America/Los_Angeles", "太平洋时间（加州 / 内华达 / 华盛顿州）",
-     "Pacific (CA / NV / WA)"),
-    ("America/Denver", "山地时间（科罗拉多 / 犹他）", "Mountain (CO / UT)"),
-    ("America/Phoenix", "亚利桑那（不实行夏令时）", "Arizona (no DST)"),
-    ("America/Chicago", "中部时间（德州 / 伊利诺伊）", "Central (TX / IL)"),
-    ("America/New_York", "东部时间（纽约 / 佛州）", "Eastern (NY / FL)"),
-    ("America/Anchorage", "阿拉斯加", "Alaska"),
-    ("Pacific/Honolulu", "夏威夷（不实行夏令时）", "Hawaii (no DST)"),
+# The time zones offered in settings. Not all ~600 IANA names -- scrolling
+# through six hundred rows on an iPad to find yours makes a wrong pick more
+# likely, not less. The store can only be in the US; add more if that changes.
+TZ_CHOICES: list[tuple[str, str]] = [
+    ("America/Los_Angeles", "Pacific (CA / NV / WA)"),
+    ("America/Denver", "Mountain (CO / UT)"),
+    ("America/Phoenix", "Arizona (no DST)"),
+    ("America/Chicago", "Central (TX / IL)"),
+    ("America/New_York", "Eastern (NY / FL)"),
+    ("America/Anchorage", "Alaska"),
+    ("Pacific/Honolulu", "Hawaii (no DST)"),
 ]
 
 
 class TzChoice(BaseModel):
     tz: str
+    # English; the front-end catalogue localises it.
     label: str
-    # 英文名。和菜名、分类一样是数据，不进前端词表。
-    label_en: str
 
 
 class BusinessDayOut(BaseModel):
     tz: str
     business_day_cutoff_hour: int
     updated_by: str | None
-    # 按当前设置算出来的店内此刻时间和营业日。
-    # 设置页把它显示出来 —— 时区选错了，这两个数一眼就不对，
-    # 比任何校验都直观。
+    # The store's current time and business day under these settings.
+    # Settings shows them, so a wrong time zone is obvious at a glance --
+    # more use than any validation.
     store_now: datetime
     business_date: date
     choices: list[TzChoice]
@@ -486,9 +492,7 @@ def _business_day_out(db: Session) -> BusinessDayOut:
         updated_by=updated_by,
         store_now=now_local,
         business_date=clock.business_date(now_local),
-        choices=[
-            TzChoice(tz=t, label=zh, label_en=en) for t, zh, en in TZ_CHOICES
-        ],
+        choices=[TzChoice(tz=t, label=label) for t, label in TZ_CHOICES],
     )
 
 
@@ -499,24 +503,26 @@ def get_business_day(db: Session = Depends(get_db)):
 
 @router.put("/business-day", response_model=BusinessDayOut, dependencies=[_GUARD])
 def set_business_day(body: BusinessDayIn, user: CurrentUser, db: Session = Depends(get_db)):
-    """设定店的时区与营业日分界。
+    """Set the store's time zone and business-day boundary.
 
-    ⚠️ **没有生效日，改了就是全局改**，和税率相反。理由见 models.StoreSetting：
-    税率是事实（历史账单必须冻住），时区是解释规则（设错了就该连
-    过去的账一起重新归属，否则等于把错误永久冻在历史里）。
+    ⚠️ **No effective date; a change applies to everything**, the opposite of
+    the tax rate. Reasoning in models.StoreSetting: a rate is a fact (past
+    checks have to be frozen), a time zone is an interpretation rule (getting
+    it wrong means re-filing the past, not freezing the mistake forever).
 
-    直接后果：改时区会让月报里靠近日界的账单换一天。UI 上要说清楚。
+    The direct consequence: changing it moves checks near the boundary to a
 
-    只接受 TZ_CHOICES 里的名字。不接受任意 IANA 名 ——
-    这是个只有老板会点、一年点不到一次的设置，能选的越少越不会选错；
-    真要加时区，改这里的常量比在生产上手输一个拼错的名字安全。
+    Only names from TZ_CHOICES are accepted, not arbitrary IANA names -- this
+    is a setting only the owner touches, less than once a year, and fewer
+    choices means fewer wrong ones. Adding a zone by editing this constant is
+    safer than typing a misspelled name into production.
     """
-    if body.tz not in {t for t, _, _ in TZ_CHOICES}:
-        raise HTTPException(status_code=422, detail=f"不支持的时区：{body.tz}")
+    if body.tz not in {t for t, _ in TZ_CHOICES}:
+        raise HTTPException(status_code=422, detail=f"Unsupported time zone: {body.tz}")
 
     row = db.get(StoreSetting, 1)
     if row is None:
-        # 迁移已经插了这一行，正常到不了这里。留着是为了万一。
+        # The migration already inserted this row; getting here should be impossible. Kept just in case.
         row = StoreSetting(id=1)
         db.add(row)
     row.tz = body.tz

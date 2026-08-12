@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getLang, locale, tr } from './i18n'
+import { locale, tr } from './i18n'
 import { authFetch } from './auth'
 import { money } from './catalog'
 import { getMeta, setMeta } from './db'
@@ -25,10 +25,10 @@ export interface DayRow {
   tips_updated_by: string | null
 }
 
-/** 对账告警的三类。和服务端 _KIND_WHERE 的键一一对应。 */
+/** The three kinds of reconciliation warning. One per key in the server's _KIND_WHERE. */
 export type DrillKind = 'voided' | 'unpaid' | 'mismatch'
 
-/** 下钻列表里的一张账单。 */
+/** One check in a drill-down list. */
 export interface DayCheck {
   check_uuid: string | null
   table_label: string | null
@@ -46,17 +46,19 @@ export interface DayCheck {
 }
 
 const SOURCE_LABEL: Record<string, string> = {
-  dine_in: '堂食',
-  buffet_togo: '自助打包',
-  phone_order: '电话单',
+  dine_in: 'Dine-in',
+  buffet_togo: 'Buffet to go',
+  phone_order: 'Phone order',
 }
 
-const MONTH_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+/** Weekday initials, Monday first, in whichever language is on. */
+function weekdayHeads(): string[] {
+  const f = new Intl.DateTimeFormat(locale(), { weekday: 'short' })
+  // 2024-01-01 was a Monday; any Monday would do
+  return Array.from({ length: 7 }, (_, i) => f.format(new Date(2024, 0, 1 + i)))
+}
 
-const WEEK_ZH = ['一', '二', '三', '四', '五', '六', '日']
-const WEEK_EN = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
-
-/** 缓存最近一次拉到的月报，离线时至少能看到上次的数字。 */
+/** Cache the last month report fetched, so offline at least shows the previous numbers. */
 const cacheKey = (y: number, m: number) => `report_${y}_${m}`
 
 export default function MonthView() {
@@ -70,9 +72,9 @@ export default function MonthView() {
   const [savingTip, setSavingTip] = useState(false)
   const [tipErr, setTipErr] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
-  /** 正在下钻看哪一类告警的明细 */
+  /** Which warning's detail is currently open */
   const [drill, setDrill] = useState<DrillKind | null>(null)
-  // 从「跳到某一天」进来时，加载完自动打开那天的明细
+  // Arriving from "jump to a day", open that day's detail once it has loaded
   const [pendingDay, setPendingDay] = useState<string | null>(null)
 
   const load = useCallback(async (y: number, m: number) => {
@@ -88,7 +90,7 @@ export default function MonthView() {
       await setMeta(cacheKey(y, m), data)
       setState('live')
     } catch {
-      // 月报**不是关键路径** —— 拿不到就用上次缓存的，别把页面变成错误页
+      // The month report **is not the critical path** -- fall back to the last cache rather than turning the page into an error
       const cached = await getMeta<DayRow[] | null>(cacheKey(y, m), null)
       setRows(cached ?? [])
       setState(cached ? 'cached' : 'error')
@@ -99,7 +101,7 @@ export default function MonthView() {
     void load(year, month)
   }, [load, year, month])
 
-  // 数据到位后再打开目标日期的明细 —— 直接在选择时打开会拿到上个月的数据
+  // Open the target day only after the data is in -- opening it at selection time would show last month's numbers
   useEffect(() => {
     if (!pendingDay || state === 'loading') return
     const r = rows.find((x) => x.business_date === pendingDay)
@@ -111,8 +113,8 @@ export default function MonthView() {
     setPendingDay(null)
   }, [pendingDay, rows, state])
 
-  // 换一天（或关掉日详情）时把下钻也收起来，
-  // 否则下次点开另一天会直接弹出上一天的明细
+  // Changing day (or closing the detail) also closes the drill-down,
+  // or opening another day would immediately show the previous day's list
   useEffect(() => {
     setDrill(null)
   }, [pick?.business_date])
@@ -137,8 +139,8 @@ export default function MonthView() {
         rs.map((x) => (x.business_date === updated.business_date ? updated : x)),
       )
     } catch {
-      // 月报是在线专用的，录不上就明说，不要假装成功
-      setTipErr('保存失败，检查网络后重试')
+      // The month report is online-only, so say so rather than pretending it saved
+      setTipErr(tr('Save failed, check the connection and retry'))
     } finally {
       setSavingTip(false)
     }
@@ -153,7 +155,7 @@ export default function MonthView() {
 
   const byDate = new Map(rows.map((r) => [r.business_date, r]))
   const daysInMonth = new Date(year, month, 0).getDate()
-  // 周一开头：把 JS 的 0=周日 转成 0=周一
+  // Weeks start on Monday: turn JS's 0=Sunday into 0=Monday
   const firstWeekday = (new Date(year, month - 1, 1).getDay() + 6) % 7
 
   const sum = rows.reduce(
@@ -191,56 +193,58 @@ export default function MonthView() {
     <>
       <div className="month-head">
         <button onClick={() => shift(-1)}>‹</button>
-        {/* 标题可点 —— 一格格翻着找去年同期太慢了 */}
+        {/* The title is tappable -- paging month by month to last year is far too slow */}
         <button className="mtitle tappable" onClick={() => setPicking(true)}>
-          {getLang() === 'zh' ? `${year} 年 ${month} 月` : `${MONTH_EN[month - 1]} ${year}`} ▾
+          {new Intl.DateTimeFormat(locale(), { year: 'numeric', month: 'long' }).format(
+            new Date(year, month - 1, 1),
+          )} ▾
         </button>
         <button onClick={() => shift(1)}>›</button>
-        {state === 'cached' && <span className="tag warn">{tr('离线·上次数据')}</span>}
-        {state === 'loading' && <span className="dim small">{tr('载入中…')}</span>}
-        {state === 'error' && <span className="tag bad">{tr('需要联网')}</span>}
+        {state === 'cached' && <span className="tag warn">{tr('Offline · last data')}</span>}
+        {state === 'loading' && <span className="dim small">{tr('Loading…')}</span>}
+        {state === 'error' && <span className="tag bad">{tr('Needs a connection')}</span>}
       </div>
 
       <div className="list-head">
         <div className="stats">
-          <Stat label={tr('本月营业额')} value={money(sum.revenue)} big />
-          <Stat label={tr('营业天数')} value={String(openDays)} />
-          <Stat label={tr('客流')} value={String(sum.guests)} />
-          <Stat label={tr('饮料份数')} value={String(sum.drinks)} />
-          <Stat label={tr('单数')} value={String(sum.checks)} />
+          <Stat label={tr('Revenue this month')} value={money(sum.revenue)} big />
+          <Stat label={tr('Days open')} value={String(openDays)} />
+          <Stat label={tr('Guest count')} value={String(sum.guests)} />
+          <Stat label={tr('Drink count')} value={String(sum.drinks)} />
+          <Stat label={tr('Check count')} value={String(sum.checks)} />
           <Stat
-            label={tr('日均')}
+            label={tr('Daily average')}
             value={money(openDays ? Math.round(sum.revenue / openDays) : 0)}
           />
           <Stat
-            label={tr('客单价')}
+            label={tr('Per guest')}
             value={money(sum.guests ? Math.round(sum.revenue / sum.guests) : 0)}
           />
-          {sum.service > 0 && <Stat label={tr('大桌服务费')} value={money(sum.service)} />}
-          {sum.tax > 0 && <Stat label={tr('税')} value={money(sum.tax)} />}
+          {sum.service > 0 && <Stat label={tr('Large-party fee')} value={money(sum.service)} />}
+          {sum.tax > 0 && <Stat label={tr('Tax')} value={money(sum.tax)} />}
           <Stat
-            label={`${tr('本月小费')}${sum.revenue ? `（${((sum.tips / sum.revenue) * 100).toFixed(1)}%）` : ''}`}
+            label={`${tr('Tips this month')}${sum.revenue ? `（${((sum.tips / sum.revenue) * 100).toFixed(1)}%）` : ''}`}
             value={money(sum.tips)}
           />
         </div>
       </div>
 
       <div className="stats payline">
-        <Stat label={tr('现金')} value={money(sum.cash)} />
-        <Stat label={tr('刷卡')} value={money(sum.card)} />
-        <Stat label={tr('其它')} value={money(sum.other)} />
+        <Stat label={tr('Cash')} value={money(sum.cash)} />
+        <Stat label={tr('Card')} value={money(sum.card)} />
+        <Stat label={tr('Other')} value={money(sum.other)} />
         {sum.voided > 0 && (
-          <Stat label={tr('作废')} value={money(sum.voided)} bad />
+          <Stat label={tr('Void')} value={money(sum.voided)} bad />
         )}
-        {/* 这两个数不为零就是对账会出问题的地方，必须放在显眼位置 */}
-        {sum.unpaid > 0 && <Stat label={tr('未记支付方式')} value={`${sum.unpaid} ${tr('单')}`} bad />}
+        {/* Non-zero here is where reconciliation will go wrong, so it goes somewhere prominent */}
+        {sum.unpaid > 0 && <Stat label={tr('No payment method')} value={`${sum.unpaid} ${tr('checks')}`} bad />}
         {sum.mismatch > 0 && (
-          <Stat label={tr('支付与账单不符')} value={`${sum.mismatch} ${tr('单')}`} bad />
+          <Stat label={tr('Payment does not match')} value={`${sum.mismatch} ${tr('checks')}`} bad />
         )}
       </div>
 
       <div className="cal">
-        {(getLang() === 'zh' ? WEEK_ZH : WEEK_EN).map((w) => (
+        {weekdayHeads().map((w) => (
           <div key={w} className="cal-h">
             {w}
           </div>
@@ -269,9 +273,9 @@ export default function MonthView() {
                 <>
                   <span className="v">{money(r.revenue_cents)}</span>
                   {r.tips_total_cents > 0 && (
-                    <span className="tip">{tr('小费')} {money(r.tips_total_cents)}</span>
+                    <span className="tip">{tr('Tips')} {money(r.tips_total_cents)}</span>
                   )}
-                  {/* 用条形长度表示相对高低 —— 一眼看出哪几天忙 */}
+                  {/* Bar length shows relative size -- which days were busy, at a glance */}
                   <span className="bar" style={{ width: `${Math.round(ratio * 100)}%` }} />
                   {(r.unpaid_count > 0 || r.mismatch_count > 0 || r.voided_count > 0) && (
                     <span className="flag" />
@@ -284,7 +288,7 @@ export default function MonthView() {
       </div>
 
       {rows.length === 0 && state !== 'loading' && (
-        <p className="hint">{tr('这个月还没有营业数据。')}</p>
+        <p className="hint">{tr('No business recorded this month.')}</p>
       )}
 
       {picking && (
@@ -309,9 +313,10 @@ export default function MonthView() {
 
       {pick && (
         <div className="sheet-back" onClick={() => setPick(null)}>
-          {/* 左右分栏：左边数字、右边小费键盘。
-              竖着排的话，键盘把弹层撑满整屏，「保存小费」被挤到屏幕外，
-              每次录小费都要先滚一下 —— 和结账弹层当初一个毛病，用同一个解法。 */}
+          {/* Two columns: numbers on the left, the tip keypad on the right.
+              Stacked, the keypad fills the sheet and "Save tips" is pushed off
+              screen, so entering tips means scrolling first -- the same fault the
+              collect sheet had, with the same fix. */}
           <div className="sheet pay-wide day-sheet" onClick={(e) => e.stopPropagation()}>
             <h2>{pick.business_date}</h2>
             <div className="pay-split">
@@ -319,45 +324,45 @@ export default function MonthView() {
                 <p className="total">{money(pick.revenue_cents)}</p>
                 <table className="kv">
                   <tbody>
-                    <Row k="单数" v={String(pick.check_count)} />
-                    <Row k="Buffet 客流" v={String(pick.guests)} />
-                    <Row k="饮料份数" v={String(pick.drinks)} />
-                    <Row k="大桌服务费" v={money(pick.service_cents)} />
-                    <Row k="税" v={money(pick.tax_cents)} />
-                    <Row k="现金" v={money(pick.cash_cents)} />
-                    <Row k="刷卡" v={money(pick.card_cents)} />
-                    <Row k="其它" v={money(pick.other_cents)} />
+                    <Row k={tr('Check count')} v={String(pick.check_count)} />
+                    <Row k={tr('Buffet guests')} v={String(pick.guests)} />
+                    <Row k={tr('Drink count')} v={String(pick.drinks)} />
+                    <Row k={tr('Large-party fee')} v={money(pick.service_cents)} />
+                    <Row k={tr('Tax')} v={money(pick.tax_cents)} />
+                    <Row k={tr('Cash')} v={money(pick.cash_cents)} />
+                    <Row k={tr('Card')} v={money(pick.card_cents)} />
+                    <Row k={tr('Other')} v={money(pick.other_cents)} />
                     <Row
-                      k="小费"
+                      k={tr('Tips')}
                       v={
                         pick.tips_total_cents > 0 && pick.revenue_cents > 0
                           ? `${money(pick.tips_total_cents)}（${((pick.tips_total_cents / pick.revenue_cents) * 100).toFixed(1)}%）`
                           : money(pick.tips_total_cents)
                       }
                     />
-                    {/* 这三行都可以点开看是哪几单。
-                        只给一个「3 单」的计数，人是没法处理的 ——
-                        得知道是哪三单、差多少，才谈得上去改。 */}
+                    {/* All three open to show which checks they are.
+                        A count of "3" is not something a person can act on -- fixing
+                        it means knowing which three and by how much. */}
                     {pick.voided_count > 0 && (
                       <Row
-                        k="作废"
-                        v={`${pick.voided_count} ${tr('单')} · ${money(pick.voided_cents)}`}
+                        k={tr('Voided')}
+                        v={`${pick.voided_count} ${tr('checks')} · ${money(pick.voided_cents)}`}
                         bad
                         onOpen={() => setDrill('voided')}
                       />
                     )}
                     {pick.unpaid_count > 0 && (
                       <Row
-                        k="未记支付方式"
-                        v={`${pick.unpaid_count} ${tr('单')}`}
+                        k={tr('No payment method')}
+                        v={`${pick.unpaid_count} ${tr('checks')}`}
                         bad
                         onOpen={() => setDrill('unpaid')}
                       />
                     )}
                     {pick.mismatch_count > 0 && (
                       <Row
-                        k="支付与账单不符"
-                        v={`${pick.mismatch_count} ${tr('单')}`}
+                        k={tr('Payment does not match')}
+                        v={`${pick.mismatch_count} ${tr('checks')}`}
                         bad
                         onOpen={() => setDrill('mismatch')}
                       />
@@ -365,35 +370,38 @@ export default function MonthView() {
                   </tbody>
                 </table>
 
-                {/* 脚注放左栏底部，不占竖向堆叠的高度。
-                    分界时间是设置项，这里不写死具体几点 —— 以前这句写着
-                    「凌晨 2 点前的单算前一天」，改成 0 点后就成了假的。
-                    过时的说明比没有说明更糟。 */}
+                {/* The footnote sits at the bottom of the left column so it does not
+                    add height to the stacked layout.
+                    The boundary is a setting, so no specific hour is written here --
+                    this used to say "before 2 AM counts as the previous day", which
+                    became false the moment it moved to midnight.
+                    An out-of-date explanation is worse than none. */}
                 <p className="hint">
-                  数字来自服务端，按<b>{tr('营业日')}</b>{tr('归集（分界时间见 ⚙︎ 设置）。')}</p>
+                  {tr('The numbers come from the server,')} <b>{tr('business day')}</b>{tr('grouped by business day (cutoff in Settings).')}</p>
               </div>
 
               <div className="pay-right">
                 <div className="tipbox">
-                  <div className="tiplabel">{tr('当日小费总额')}</div>
+                  <div className="tiplabel">{tr("Today's tips")}</div>
                   <NumPad value={tipCents} onChange={setTipCents} />
                   <p className="hint">
-                    一天录一个总数 —— 卡机小费和桌上现金加一起。
-                    {pick.tips_updated_by && ` 上次由 ${pick.tips_updated_by} 录入。`}
+                    {tr('One number per day -- card machine tips plus the cash on the tables.')}
+                    {pick.tips_updated_by && ` ${tr('Last entered by')} ${tr(pick.tips_updated_by)}.`}
                   </p>
                   {tipErr && <p className="err">{tipErr}</p>}
                 </div>
               </div>
             </div>
 
-            {/* 「保存小费」是这一屏的主操作，放底部固定的动作条。
-                以前它是小费框里一个 linkbtn，而底部只有「关闭」——
-                和设置页当初一样的毛病：显眼的按钮不是你要按的那个，
-                而且键盘一高就把它挤到屏幕外，每次都得先滚一下。 */}
+            {/* "Save tips" is this screen's main action, so it lives in the fixed
+                action bar. It used to be a link inside the tip box while the bottom
+                bar only had "Close" -- the same fault the settings sheet had: the
+                prominent button is not the one you want, and a tall keypad pushes
+                the real one off screen, so every entry starts with a scroll. */}
             <div className="sheet-actions">
-              <button onClick={() => setPick(null)}>{tr('关闭')}</button>
+              <button onClick={() => setPick(null)}>{tr('Close')}</button>
               <button className="primary" disabled={savingTip} onClick={saveTip}>
-                {savingTip ? '保存中…' : '保存小费'}
+                {savingTip ? tr('Saving…') : tr('Save tips')}
               </button>
             </div>
           </div>
@@ -415,7 +423,7 @@ function Row({
   k,
   v,
   bad,
-  /** 传了就变成可点的行 —— 点开看这个数字是由哪几单构成的 */
+  /** Pass it and the row becomes tappable -- it opens which checks make up the number */
   onOpen,
 }: {
   k: string
@@ -440,23 +448,23 @@ function Row({
 }
 
 const DRILL_TITLE: Record<DrillKind, string> = {
-  voided: '作废的账单',
-  unpaid: '未记支付方式',
-  mismatch: '支付与账单不符',
+  voided: 'Voided checks',
+  unpaid: 'No payment method',
+  mismatch: 'Payment does not match',
 }
 
 const DRILL_HINT: Record<DrillKind, string> = {
-  voided: '作废的金额不计入营业额，但「作废了多少钱」正是要盯的数。',
-  unpaid: '已经关单、但没选支付方式。日结对不上时先补这些。',
+  voided: 'A voided amount is not sales, but "how much got voided" is the number to watch.',
+  unpaid: 'Closed without a payment method. Fill these in first when close of day does not reconcile.',
   mismatch:
-    '记了支付方式，但收的钱和账单金额对不上。最常见的成因是结账之后又改了单 —— 到账单详情里「补收差额」即可。',
+    'A payment method was recorded but the amount does not match the check. Usually the check was edited after collecting -- use "top up" on the check.',
 }
 
 /**
- * 某一类对账告警具体是哪几单。
+ * Which checks are behind one kind of reconciliation warning.
  *
- * 服务端用**和聚合计数完全同一段谓词**筛出来 ——
- * 报表说 3 单、点进去只列 2 单的话，人会开始怀疑所有数字。
+ * The server filters them with **exactly the predicate the count uses** -- a
+ * report that says 3 and lists 2 makes every other number suspect.
  */
 function DayCheckList({
   date,
@@ -474,9 +482,9 @@ function DayCheckList({
     authFetch(`/api/reports/day-checks?date=${date}&kind=${kind}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then(setRows)
-      // 月报是在线专用的 —— 拿不到就明说，不要显示一个空列表
-      // 让人以为"没有问题单"
-      .catch(() => setErr('需要联网才能查看明细'))
+      // The month report is online-only -- say so rather than showing an empty
+      // list that reads as "no problem checks"
+      .catch(() => setErr(tr('Needs a connection to load this')))
   }, [date, kind])
 
   return (
@@ -489,8 +497,8 @@ function DayCheckList({
         <p className="hint">{tr(DRILL_HINT[kind])}</p>
 
         {err && <p className="err">{err}</p>}
-        {!rows && !err && <p className="hint">{tr('载入中…')}</p>}
-        {rows?.length === 0 && <p className="hint">{tr('这一天没有这类账单。')}</p>}
+        {!rows && !err && <p className="hint">{tr('Loading…')}</p>}
+        {rows?.length === 0 && <p className="hint">{tr('No checks of this kind on this day.')}</p>}
 
         <div className="carry-list">
           {rows?.map((r) => {
@@ -505,17 +513,17 @@ function DayCheckList({
                   })}
                 </span>
                 <span className="cr-table">
-                  {r.table_label ?? r.customer_name ?? SOURCE_LABEL[r.source] ?? '自提'}
+                  {r.table_label ?? r.customer_name ?? tr(SOURCE_LABEL[r.source] ?? 'To go')}
                 </span>
                 <span className="cr-money">
                   {money(r.total_cents)}
                   {kind !== 'voided' && (
-                    <span className="dim"> · {tr('已收')} {money(r.paid_cents)}</span>
+                    <span className="dim"> · {tr('Collected')} {money(r.paid_cents)}</span>
                   )}
                 </span>
                 {kind === 'mismatch' && (
                   <span className={due > 0 ? 'warnText' : 'badText'}>
-                    {due > 0 ? `待收 ${money(due)}` : `多收 ${money(-due)}`}
+                    {due > 0 ? `${tr('Outstanding')} ${money(due)}` : `${tr('Overpaid')} ${money(-due)}`}
                   </span>
                 )}
                 <span className="cr-who">{r.operator ?? '—'}</span>
@@ -531,7 +539,7 @@ function DayCheckList({
         </div>
 
         <div className="sheet-actions">
-          <button onClick={onClose}>{tr('关闭')}</button>
+          <button onClick={onClose}>{tr('Close')}</button>
         </div>
       </div>
     </div>

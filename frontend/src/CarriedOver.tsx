@@ -19,13 +19,14 @@ import CheckDetail, { operatorText } from './CheckDetail'
 import type { LocalCheck } from './db'
 
 /**
- * 跨天未结账单。
+ * Checks carried over from an earlier day.
  *
- * 楼面每天从干净的开始 —— 但**清空的只是楼面，不是账**。
- * 开了桌、有应收、没结账，就是钱还没收到；这套系统是店里唯一的
- * 主记录，从界面上消失就等于这笔钱再也没人会想起来。
+ * The floor starts clean every day -- but **what is cleared is the floor, not the books**.
+ * A table was opened, an amount is owed and nothing was collected, so that is
+ * money not yet received; this system is the store's only record, and
+ * disappearing from the screen means nobody will ever think of it again.
  *
- * 所以横幅一直挂着直到处理完，而不是弹一次就算通知过了。
+ * So the banner stays until it is dealt with, rather than appearing once as a notification.
  */
 
 function useCarried(): {
@@ -43,8 +44,8 @@ function useCarried(): {
   const reload = useCallback(async () => {
     const c = await loadCatalog()
     const cutoff = cutoffHourOf(c)
-    // 每次都重新算 —— 这台 iPad 可能整夜停在这一屏没重新加载过，
-    // 过了零点要自己发现
+    // Recomputed every time -- this iPad may sit on this screen all night without
+    // reloading, and it has to notice midnight itself
     const bd = currentBusinessDate(cutoff)
     setCat(c)
     setToday(bd)
@@ -62,11 +63,12 @@ function useCarried(): {
 }
 
 /**
- * 设备时区和店里对不上的告警。
+ * The warning that the device's time zone does not match the store's.
  *
- * 这台设备算营业日用的是**它自己的时钟**（离线时没有别的可用）。
- * 时区设错的话，每天靠近日界的那几个小时会把账单归到错误的营业日 ——
- * 静默地错，界面上一切正常。所以一旦偏了就一直挂着。
+ * This device works out the business day from **its own clock** (offline there
+ * is nothing else). With the wrong time zone, the few hours near the boundary
+ * file checks on the wrong business day every day -- silently, with everything
+ * looking normal. So once it is out, the warning stays.
  */
 export function ClockDriftBanner() {
   const [drift, setDrift] = useState<ReturnType<typeof clockDrift>>(null)
@@ -74,11 +76,12 @@ export function ClockDriftBanner() {
   useEffect(() => {
     const check = () => void loadCatalog().then((c) => setDrift(clockDrift(c)))
     check()
-    // 10 秒一次。看着有点密，但读的是本地 IndexedDB，几乎不花钱。
-    // 曾经设成 60 秒：冷启动那一下缓存里还是**上一版**的 catalog
-    // （没有 store_utc_offset_minutes），于是判定为不偏；等 FloorPlan
-    // 把 catalog 刷新回来之后，这里还要再等将近一分钟才发现 ——
-    // 而这一分钟正好是员工刚打开 iPad、最可能开第一桌的时候。
+    // Every 10 seconds. That looks frequent, but it reads local IndexedDB and costs almost nothing.
+    // It was 60 once: on a cold start the cache still holds the **previous**
+    // catalog (without store_utc_offset_minutes), so it decides there is no
+    // drift; once FloorPlan refreshes the catalog, this would still take another
+    // minute to notice -- and that minute is exactly when someone has just opened
+    // the iPad and is most likely to seat the first table.
     const t = window.setInterval(check, 10_000)
     return () => window.clearInterval(t)
   }, [])
@@ -89,12 +92,12 @@ export function ClockDriftBanner() {
     <div className="carry-banner bad" role="alert">
       <span className="cb-n">⚠</span>
       <span className="cb-txt">
-        {tr('这台设备的时区和店里不一致')}
+        {tr("This device's time zone differs from the store's")}
         <small>
-          {tr('店里')} {offsetText(drift.storeMinutes)} · {tr('本机')}{' '}
+          {tr('Store')} {offsetText(drift.storeMinutes)} · {tr('This device')}{' '}
           {offsetText(drift.deviceMinutes)}（{deviceTzName()}）
           <br />
-          {tr('账单可能被算到错误的营业日。请到 iPad 的系统设置里把时区改成店里的。')}
+          {tr("Checks may land on the wrong business day. Set this iPad's time zone to the store's in iOS Settings.")}
         </small>
       </span>
     </div>
@@ -105,11 +108,11 @@ function deviceTzName(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone
   } catch {
-    return tr('未知')
+    return tr('unknown')
   }
 }
 
-/** 横幅：没有跨天未结单时**什么都不渲染**，不占位、不干扰。 */
+/** The banner **renders nothing** when there is nothing carried over: no space taken, no noise. */
 export function CarriedOverBanner({ role }: { role: Role }) {
   const [open, setOpen] = useState(false)
   const { rows, cat, reload, pending } = useCarried()
@@ -123,8 +126,8 @@ export function CarriedOverBanner({ role }: { role: Role }) {
       <button className="carry-banner" onClick={() => setOpen(true)}>
         <span className="cb-n">{rows.length}</span>
         <span className="cb-txt">
-          {tr('张跨天未结账单')} · {money(total)}
-          <small>{tr('楼面已翻到新的一天，这些还没结 —— 点开处理')}</small>
+          {tr(' checks carried over')} · {money(total)}
+          <small>{tr('The floor has moved to a new day. These are still unpaid — tap to handle.')}</small>
         </span>
         <span className="cb-go">›</span>
       </button>
@@ -161,8 +164,8 @@ function CarriedOverSheet({
   const [pick, setPick] = useState<LocalCheck | null>(null)
   const cutoff = cutoffHourOf(cat)
 
-  // 详情开着时底下可能被别的设备结掉了 —— 跟着刷新，
-  // 否则会拿着一张已经不存在的单去操作
+  // While the detail is open another device may have collected it -- refresh
+  // along, or someone acts on a check that no longer exists
   const live = pick
     ? (rows.find((r) => r.check_uuid === pick.check_uuid) ?? null)
     : null
@@ -170,9 +173,9 @@ function CarriedOverSheet({
   return (
     <div className="sheet-back" onClick={onClose}>
       <div className="sheet wide" onClick={(e) => e.stopPropagation()}>
-        <h2>{tr('跨天未结账单')} {rows.length}</h2>
+        <h2>{tr('Checks carried over')} {rows.length}</h2>
         <p className="hint">
-          {tr('这些单开在今天之前还没结账。每一张都是开了桌但没收到的钱 —— 结掉或作废后才会从这里消失。')}
+          {tr('These were opened before today and never settled. Each one is money that was never collected — settle or void them to clear this list.')}
         </p>
 
         <div className="carry-list">
@@ -184,13 +187,13 @@ function CarriedOverSheet({
                 className="carry-row"
                 onClick={() => setPick(c)}
               >
-                <span className="cr-day">{bd ? businessDateLabel(bd) : tr('时间异常')}</span>
+                <span className="cr-day">{bd ? businessDateLabel(bd) : tr('Bad timestamp')}</span>
                 <span className="cr-table">
-                  {isTogo(c) ? (c.customer_name || tr('自提')) : c.table_label}
+                  {isTogo(c) ? (c.customer_name || tr('To go')) : c.table_label}
                 </span>
                 <span className="cr-money">{money(c.est_cents)}</span>
                 <span className="cr-who">{operatorText(c)}</span>
-                {pending.has(c.check_uuid) && <span className="tag warn">{tr('未上传')}</span>}
+                {pending.has(c.check_uuid) && <span className="tag warn">{tr('Pending')}</span>}
                 <span className="cb-go">›</span>
               </button>
             )
@@ -198,11 +201,11 @@ function CarriedOverSheet({
         </div>
 
         <p className="hint">
-          {tr('⚠️ 同一张桌今天开不了新单 —— 一张桌同时只能有一张未结账单。先把这里处理完。')}
+          {tr('⚠️ You cannot open that table today — one open check per table. Settle these first.')}
         </p>
 
         <div className="sheet-actions">
-          <button onClick={onClose}>{tr('知道了')}</button>
+          <button onClick={onClose}>{tr('Got it')}</button>
         </div>
       </div>
 

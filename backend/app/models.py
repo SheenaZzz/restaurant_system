@@ -1,10 +1,10 @@
-"""SQLAlchemy 模型 —— schema 的单一事实来源。
+"""SQLAlchemy models -- the single source of truth for the schema.
 
-对应 DESIGN.md 第 4 节。Alembic 迁移由这里 autogenerate。
+Matches section 4 of DESIGN.md. Alembic autogenerates migrations from here.
 
-命名上的两处偏离 DESIGN.md（都是为了避开 SQL 关键字/歧义）：
-  check   → dining_check   （`check` 是 SQL 保留字，到处加引号很难受）
-  session → auth_session   （`session` 和 SQLAlchemy 的 Session 撞名）
+Two names deviate from DESIGN.md, both to avoid SQL keywords or ambiguity:
+  check   -> dining_check   (`check` is reserved; quoting it everywhere hurts)
+  session -> auth_session   (`session` collides with SQLAlchemy's Session)
 """
 
 from __future__ import annotations
@@ -36,13 +36,13 @@ class Base(DeclarativeBase):
     pass
 
 
-# 全库统一用 timestamptz。绝不用 naive datetime ——
-# 餐馆跨午市/晚市、还有夏令时，时区歧义会直接毁掉营业统计。
+# timestamptz everywhere. Never a naive datetime -- the store spans lunch and
+# dinner and observes DST, and a time zone ambiguity ruins the sales figures.
 TZDateTime = DateTime(timezone=True)
 
 
 # ---------------------------------------------------------------------------
-# 菜单与价格
+# Menu and prices
 # ---------------------------------------------------------------------------
 
 
@@ -53,16 +53,16 @@ class MenuItem(Base):
     name_en: Mapped[str] = mapped_column(Text, nullable=False)
     name_zh: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str] = mapped_column(Text, nullable=False)
-    # buffet 台上的菜没有单价
+    # dishes on the buffet have no unit price
     price_cents: Mapped[int | None] = mapped_column(Integer)
     is_buffet_dish: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # 'wok' / 'fryer' / 'cold' / 'drink' / 'none'
-    # 'none' 和 'drink' 不进后厨队列 —— 这是"要不要出票"的唯一判据
+    # 'none' and 'drink' never reach the kitchen queue -- this is the only test for "does it print a ticket"
     station: Mapped[str] = mapped_column(Text, nullable=False, default="none")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    # 开放价：金额由前台当场输入，不看 price_cents。
-    # Buffet To Go 是按重量称的 —— 秤上直接出金额，系统只负责记账。
+    # Open price: the front types the amount in; price_cents is ignored.
+    # Buffet To Go is sold by weight -- the scale gives the amount, the system only records it.
     open_price: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
@@ -77,7 +77,7 @@ class MenuItem(Base):
 
 
 class ServicePeriod(Base):
-    """一个营业时段（某天的午市或晚市）。所有单据都挂在它下面。"""
+    """One service period (a given day's lunch or dinner). Every check hangs off one."""
 
     __tablename__ = "service_period"
 
@@ -94,17 +94,17 @@ class ServicePeriod(Base):
 
 
 class BuffetPrice(Base):
-    """人头价。改价用新增一行 + effective_from，**不覆盖历史** ——
-    否则改一次价，之前所有账单的金额就跟着变了。"""
+    """Per-head prices. A price change is a new row with a new effective_from,
+    **never an overwrite** -- overwriting would restate every past check."""
 
     __tablename__ = "buffet_price"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     period_kind: Mapped[str] = mapped_column(Text, nullable=False)
     charge_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    # 两种计费都按 guest_type 分档。
-    # 注意 drink 只有 adult / child 两档 —— 长者饮料按成人价，
-    # 这是店里的实际做法，不是简化。
+    # Both kinds are tiered by guest_type.
+    # Note that drink has adult / child only -- seniors pay the adult price,
+    # which is what the store actually does, not a simplification.
     guest_type: Mapped[str] = mapped_column(Text, nullable=False)
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
@@ -115,7 +115,7 @@ class BuffetPrice(Base):
         CheckConstraint(
             "guest_type IN ('adult','child','senior')", name="ck_bp_guest_type"
         ),
-        # 饮料只有成人/儿童两档；长者饮料按成人价
+        # drinks have adult/child only; seniors pay the adult price
         CheckConstraint(
             "charge_kind <> 'drink' OR guest_type IN ('adult','child')",
             name="ck_bp_drink_tier",
@@ -125,7 +125,7 @@ class BuffetPrice(Base):
 
 
 # ---------------------------------------------------------------------------
-# 桌与账单
+# Tables and checks
 # ---------------------------------------------------------------------------
 
 
@@ -141,25 +141,27 @@ class DiningTable(Base):
 
 
 class DiningCheck(Base):
-    """一张账单。DESIGN.md 里叫 `check`（SQL 保留字，这里改名）。
+    """One check. DESIGN.md calls it `check`; renamed here (SQL keyword).
 
-    **核心建模点**：同一张账单下同时挂 head_charge（人头）和
-    order_line（单品）—— 一家人吃 buffet 另点一份海鲜就是这个形态。
+    **The modelling point**: one check carries head_charge (per person) and
+    order_line (per dish) at once -- a family on the buffet plus one seafood
+    dish is exactly that shape.
     """
 
     __tablename__ = "dining_check"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    # 客户端生成的身份（就是创建它那条 op 的 op_id）。
+    # Client-generated identity (the op_id of the op that created it).
     #
-    # 为什么需要它：开桌必须离线可用，但主键 id 是数据库生成的，
-    # 客户端离线时拿不到。于是后续操作（加菜、结账）没法引用这张单。
-    # 解法是让客户端自己生成一个 UUID 作为对外标识，
-    # 服务端的 bigint 主键只在服务端内部用。
+    # Why it exists: opening a check has to work offline, but the bigint
+    # primary key comes from the database, which an offline client cannot
+    # reach -- later ops (add dishes, collect) would have nothing to reference.
+    # So the client mints a UUID for the outside world and the server's key
+    # stays internal.
     client_uuid: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), unique=True
     )
-    # pickup 单没有桌号
+    # pickup checks have no table
     table_id: Mapped[int | None] = mapped_column(ForeignKey("dining_table.id"))
     period_id: Mapped[int] = mapped_column(
         ForeignKey("service_period.id"), nullable=False
@@ -170,41 +172,43 @@ class DiningCheck(Base):
     closed_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     opened_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
 
-    # 作废是**可撤销**的，所以它不能复用 closed_at ——
-    # 否则恢复一张「已结 → 作废」的单时，原本的结账时间就永久丢了。
+    # A void is **reversible**, so it cannot reuse closed_at -- restoring a
+    # check that went closed -> voided would otherwise lose the collect time.
     voided_at: Mapped[datetime | None] = mapped_column(TZDateTime)
-    # 作废前是什么状态，撤销时恢复成它
+    # what it was before the void; undo puts it back
     pre_void_status: Mapped[str | None] = mapped_column(Text)
 
-    # 并桌：这张单被并进了哪一张。明细已搬走，它自己不再计入营业额。
+    # Merge: which check this one was folded into. Its lines have moved, and
+    # it no longer counts toward sales.
     merged_into: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
 
-    # --- 大桌服务费 ---
-    # 派生值，但**必须落库**：费率会变，历史账单要按当时的费率算。
-    # 每次人数变动（开桌/改单/并桌）后重算。
+    # --- large-party service charge ---
+    # Derived, but it **has to be stored**: the rate changes, and past checks
+    # have to keep the rate they were charged. Recomputed whenever the party
+    # size changes (open, edit, merge).
     service_charge_cents: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0"
     )
-    # 当时适用的费率快照，0.100 = 10%
+    # snapshot of the rate that applied, 0.100 = 10%
     service_charge_rate: Mapped[float | None] = mapped_column(Numeric(4, 3))
 
-    # --- 税 ---
-    # 同样是派生值但必须落库：税率会变，历史账单要按当时的税率算。
+    # --- tax ---
+    # Derived and stored for the same reason: the rate changes, past checks keep theirs.
     tax_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     tax_rate: Mapped[float | None] = mapped_column(Numeric(6, 5))
 
-    # --- 支付方式：**只是记录**，系统不处理收款 ---
-    # 之所以要记：日结时拿它和卡机/钱箱对账，差额才有意义。
+    # --- payment method: **recorded only**, the system does not take money ---
+    # Why record it: at close of day it is what the card machine and the drawer get reconciled against.
     payment_method: Mapped[str | None] = mapped_column(Text)
     paid_cash_cents: Mapped[int | None] = mapped_column(Integer)
     paid_card_cents: Mapped[int | None] = mapped_column(Integer)
     paid_other_cents: Mapped[int | None] = mapped_column(Integer)
-    # other 的说明，比如 "gift card"
+    # a note for other, "gift card" for instance
     payment_note: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
-        # togo = buffet 外带，按重量称重、柜台即付。没有桌号、没有人头，
-        # 只有一个金额（秤已经算好了）。
+        # togo = buffet takeout, weighed and paid at the counter. No table, no
+        # head count, just an amount (the scale already did the arithmetic).
         CheckConstraint(
             "source IN ('dine_in','pickup','togo')", name="ck_check_source"
         ),
@@ -216,17 +220,18 @@ class DiningCheck(Base):
             " OR payment_method IN ('cash','card','mixed','other')",
             name="ck_check_payment_method",
         ),
-        # 堂食必须有桌号；自取和外带都没有
+        # dine-in has to have a table; pickup and takeout never do
         CheckConstraint(
             "(source = 'dine_in' AND table_id IS NOT NULL)"
             " OR (source IN ('pickup','togo') AND table_id IS NULL)",
             name="ck_check_table_matches_source",
         ),
         Index("ix_check_period_status", "period_id", "status"),
-        # **一张桌同时只能有一张未结账单**。
-        # 两个服务员离线时都以为 A7 是空的、各开一单 —— 恢复后
-        # 第二条会撞这个约束被拒，进死信队列，UI 上以红色"失败"暴露，
-        # 由人来决定合并还是重开。这类冲突不该被静默吞掉。
+        # **One table can hold only one open check.**
+        # Two servers offline both think A7 is free and each open one -- on
+        # reconnect the second hits this constraint, is rejected into the dead
+        # letter queue and shows up red in the UI, for a person to decide
+        # whether to merge or re-open. That conflict must not be swallowed.
         Index(
             "uq_check_open_per_table",
             "table_id",
@@ -237,10 +242,10 @@ class DiningCheck(Base):
 
 
 class HeadCharge(Base):
-    """人头计费：buffet 入场费 + 饮料（按人无限续杯）。
+    """Per-head charges: buffet admission plus drinks (per person, free refills).
 
-    饮料按人收费，所以它**不是** order_line —— 它和入场费一样是
-    "按人头一次性收"，只是 kind 不同。
+    Drinks are charged per person, so they are **not** an order_line -- like
+    admission they are charged once per head, only with a different kind.
     """
 
     __tablename__ = "head_charge"
@@ -250,7 +255,7 @@ class HeadCharge(Base):
         ForeignKey("dining_check.id", ondelete="CASCADE"), nullable=False
     )
     kind: Mapped[str] = mapped_column(Text, nullable=False)
-    # 两种计费都必须分档 —— 饮料也要，因为儿童饮料另有价格
+    # Both kinds have to be tiered -- drinks too, since a child drink is priced separately
     guest_type: Mapped[str] = mapped_column(Text, nullable=False)
     qty: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -260,7 +265,7 @@ class HeadCharge(Base):
         CheckConstraint(
             "guest_type IN ('adult','child','senior')", name="ck_head_guest_type"
         ),
-        # 饮料只有成人/儿童两档；长者饮料按成人价
+        # drinks have adult/child only; seniors pay the adult price
         CheckConstraint(
             "kind <> 'drink' OR guest_type IN ('adult','child')",
             name="ck_head_drink_tier",
@@ -272,7 +277,7 @@ class HeadCharge(Base):
 
 
 class OrderLine(Base):
-    """单品计费：堂食单点 + pickup。饮料不走这里。"""
+    """Per-dish charges: dine-in a la carte and pickup. Drinks never come here."""
 
     __tablename__ = "order_line"
 
@@ -282,8 +287,8 @@ class OrderLine(Base):
     )
     menu_item_id: Mapped[int] = mapped_column(ForeignKey("menu_item.id"), nullable=False)
     qty: Mapped[int] = mapped_column(Integer, nullable=False)
-    # 下单当时的价格快照 —— 不能 join menu_item 取现价，
-    # 否则改一次菜单，历史账单金额全变
+    # Price snapshot from when it was ordered -- joining menu_item for the
+    # current price would restate every past check the moment the menu changes
     unit_price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="placed")
@@ -299,15 +304,15 @@ class OrderLine(Base):
         CheckConstraint("qty > 0", name="ck_line_qty_pos"),
         CheckConstraint("unit_price_cents >= 0", name="ck_line_price_nonneg"),
         Index("ix_order_line_check", "check_id"),
-        # 后厨队列的查询路径
+        # the kitchen queue's query path
         Index("ix_order_line_open", "status", "placed_at"),
     )
 
 
 class PickupOrder(Base):
-    """电话自取单。
+    """A phone pickup order.
 
-    PII 原则：**只存手机号后四位**，够核对身份就行。
+    PII: **only the last four digits of the phone number**, enough to identify the guest.
     """
 
     __tablename__ = "pickup_order"
@@ -318,10 +323,11 @@ class PickupOrder(Base):
     )
     customer_name: Mapped[str | None] = mapped_column(Text)
     phone_last4: Mapped[str | None] = mapped_column(String(4))
-    # 客人说的到店时间
+    # the time the guest said they would come
     promised_at: Mapped[datetime | None] = mapped_column(TZDateTime)
-    # 实际到店 / 实际取走 —— 两者之差就是"人等餐"，
-    # promised 与 arrived 之差是估计偏差，都是后面做出餐时机调度的输入
+    # actually arrived / actually picked up -- the gap between them is the
+    # guest waiting, and promised vs arrived is how wrong the estimate was.
+    # Both feed the timing work later on.
     arrived_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     picked_up_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="placed")
@@ -339,32 +345,35 @@ class PickupOrder(Base):
 
 
 # ---------------------------------------------------------------------------
-# Buffet 补菜事件 —— 后续所有预测的唯一数据源
+# Buffet refill events -- the only source for everything predicted later
 # ---------------------------------------------------------------------------
 
 
 class BuffetDish(Base):
-    """自助餐台上的一格。
+    """One slot on the buffet.
 
-    **和 menu_item 是两回事**，别合并：
-    menu_item 是能点、有价、上账单的东西；自助台上的菜不单独收费，
-    它只有"位置"和"消耗速度"。而且台上的菜远多于菜单里那 12 道
-    `is_buffet_dish`，老板要能随时改。
+    **Not the same thing as menu_item**, and they must not be merged:
+    a menu_item can be ordered, has a price and goes on a check; a dish on the
+    buffet is not charged for on its own -- it only has a position and a rate
+    of consumption. And there are far more of them than the twelve menu rows
+    flagged is_buffet_dish, with the owner changing them whenever.
 
-    位置就是身份的一部分：午市和晚市各一块板，各 3 页 × 10 格。
-    同一道菜午市晚市各占一行 —— 它们是两个不同的消耗过程
-    （客人构成、时长、补菜节奏都不一样），本来就该分开建模。
+    Position is part of the identity: one board for lunch and one for dinner,
+    three pages of ten each. The same dish takes a row in each -- they are two
+    different consumption processes (different crowd, length and refill pace)
+    and belong apart.
 
-    ⚠️ 改名 = 同一道菜换个写法，历史接得上；
-       **换成另一道菜要删掉这行再加一行**，否则消耗历史会接到新菜身上。
-       删除是停用（active=False）—— tray_event 指着它。
+    ⚠️ Renaming = the same dish written differently, history carries over.
+       **Putting a different dish in a slot means deleting the row and adding
+       one**, or the new dish inherits the old one's history. Deleting is
+       deactivating (active=False) -- tray_event points at it.
     """
 
     __tablename__ = "buffet_dish"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     period_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    # 第几页（1–3）和页内第几格（1–10）。顺序即布局。
+    # Which page (1-3) and which slot on it (1-10). The order is the layout.
     page: Mapped[int] = mapped_column(Integer, nullable=False)
     pos: Mapped[int] = mapped_column(Integer, nullable=False)
     name_zh: Mapped[str] = mapped_column(Text, nullable=False)
@@ -380,15 +389,17 @@ class BuffetDish(Base):
 
 
 class TrayEvent(Base):
-    """补菜/见底事件。append-only。
+    """A refill / ran-empty event. Append-only.
 
-    这张表是整个项目的技术内核：buffet 消耗量**不可直接观测**，
-    只有 t1 补满、t2 发现空了 这样的**区间截尾事件**，
-    而且"发现空了"本身还是延迟的。要从这些稀疏事件反推消耗速率。
+    This table is the technical core of the project: buffet consumption is
+    **not directly observable**. All there is are interval-censored events --
+    filled at t1, found empty at t2 -- and "found empty" is itself late.
+    The rate has to be inferred from those sparse events.
 
-    ⚠️ `observed_at` 是**客户端报的观察时刻**，不是服务端收到的时刻。
-       离线补记、事后补记都会让这两个差很远，而模型要的是前者 ——
-       区间截尾的区间宽度直接由它决定，用"收到的时刻"等于把误差喂进模型。
+    ⚠️ `observed_at` is **when the client says it happened**, not when the
+       server heard about it. Offline entry and late entry pull those far
+       apart, and the model wants the former -- it sets the width of the
+       censoring interval, so using the arrival time feeds error into the model.
     """
 
     __tablename__ = "tray_event"
@@ -398,9 +409,10 @@ class TrayEvent(Base):
         ForeignKey("buffet_dish.id"), nullable=False
     )
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    # 0.0–1.0，refill / discard 时记录。
-    # 现在一律留空：台前只有补/半/空三个按钮 —— 多一个滑块，高峰期就没人点了，
-    # 而"没记录"比"记录得不够精细"损失大得多。
+    # 0.0-1.0, recorded on refill / discard.
+    # Always empty for now: the board has three buttons only. One more slider
+    # and nobody taps anything at peak, and "no record" costs far more than
+    # "a coarse record".
     fill_level: Mapped[float | None] = mapped_column(Numeric(3, 2))
     observed_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
     recorded_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
@@ -418,12 +430,12 @@ class TrayEvent(Base):
 
 
 # ---------------------------------------------------------------------------
-# 异常与日结
+# Exceptions and close of day
 # ---------------------------------------------------------------------------
 
 
 class CheckException(Base):
-    """逃单 / 免单 / 退菜。**这是钱漏掉的地方，也是唯一需要内控的路径。**"""
+    """Walkout / comp / returned dish. **This is where money leaks, and the only path that needs internal control.**"""
 
     __tablename__ = "check_exception"
 
@@ -431,17 +443,17 @@ class CheckException(Base):
     check_id: Mapped[int] = mapped_column(ForeignKey("dining_check.id"), nullable=False)
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    # 必填，不许空 —— 没有原因的免单就是没有内控
+    # Required, never blank -- a comp with no reason is no control at all
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     recorded_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"), nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
-    # 超过阈值需 admin 事后追认
+    # over a threshold it needs an admin to sign off afterwards
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     approved_at: Mapped[datetime | None] = mapped_column(TZDateTime)
 
-    # 撤销痕迹。**绝不删除原记录** —— "先作废一张 $120 的单、
-    # 十分钟后又恢复" 本身就是老板该看见的信号。
-    # 删掉就等于把这个信号也删了。
+    # Undo trace. **The original row is never deleted** -- "voided a $120
+    # check and restored it ten minutes later" is itself something the owner
+    # should see, and deleting the row deletes that signal.
     reverted_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     reverted_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     revert_reason: Mapped[str | None] = mapped_column(Text)
@@ -457,11 +469,12 @@ class CheckException(Base):
 
 
 class DailyBatch(Base):
-    """日结。核心不是"算营业额"，是**对账**：
-    系统算出的应收 vs 卡机/钱箱里实际的钱，差多少。
+    """Close of day. The point is not the sales total, it is **reconciliation**:
+    what the system says is owed against what is actually in the card machine
+    and the drawer.
 
-    系统不碰支付，所以 reported_* 全靠手工录入 ——
-    正是这个"计算值 vs 上报值"的差额，才是日结真正的价值。
+    The system never touches payment, so every reported_* number is typed in
+    by hand -- and that gap between computed and reported is the whole value.
     """
 
     __tablename__ = "daily_batch"
@@ -469,9 +482,10 @@ class DailyBatch(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     business_date: Mapped[date] = mapped_column(Date, nullable=False, unique=True)
 
-    # 系统算出来的。**全部可空** —— 它们是"日结那一刻"的快照，
-    # 只有真正日结时才有意义。一天没结束就填进去，等于存了个会过期的数字，
-    # 之后再有单进来就对不上了。日常查询一律实时算（见 reports.py）。
+    # Computed by the system. **All nullable** -- they are a snapshot of the
+    # moment the day was closed, and only mean anything then. Filling them in
+    # before the day ends stores a number that goes stale the next check in.
+    # Day-to-day queries always compute live (see reports.py).
     computed_admission_cents: Mapped[int | None] = mapped_column(Integer)
     computed_drink_cents: Mapped[int | None] = mapped_column(Integer)
     computed_item_cents: Mapped[int | None] = mapped_column(Integer)
@@ -482,20 +496,21 @@ class DailyBatch(Base):
     check_count: Mapped[int | None] = mapped_column(Integer)
     exception_total_cents: Mapped[int | None] = mapped_column(Integer)
 
-    # 手工录入（来自信用卡机和钱箱）
+    # Typed in by hand, from the card machine and the drawer
     reported_card_cents: Mapped[int | None] = mapped_column(Integer)
     reported_cash_cents: Mapped[int | None] = mapped_column(Integer)
 
-    # 小费：**一天一个总数**，不分现金/刷卡，也不按单记。
-    # 店里的实际做法就是收市时把卡机小费和桌上现金加一起报一个数 ——
-    # 让系统去要更细的拆分，只会导致没人愿意录。
+    # Tips: **one number for the day**, not split by cash/card and not per
+    # check. What the store actually does at close is add the card machine's
+    # tips to the cash on the tables and report one figure -- asking the
+    # system for a finer split just means nobody enters anything.
     tips_total_cents: Mapped[int | None] = mapped_column(Integer)
 
     variance_cents: Mapped[int | None] = mapped_column(Integer)
-    # 小费最后一次是谁改的 —— 它直接影响员工分账，必须能追溯
+    # Who last changed the tips -- it feeds staff payout, so it has to be traceable
     tips_updated_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     tips_updated_at: Mapped[datetime | None] = mapped_column(TZDateTime)
-    # 录入与确认分离 —— 最基本的内控
+    # Entry and approval are separate -- the most basic control there is
     closed_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     closed_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
@@ -504,7 +519,7 @@ class DailyBatch(Base):
 
 
 # ---------------------------------------------------------------------------
-# 账号、设备、会话
+# Accounts, devices, sessions
 # ---------------------------------------------------------------------------
 
 
@@ -516,7 +531,8 @@ class AppUser(Base):
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    # 4 位 PIN 的哈希，用于同一设备上快速切换账号（归属到人，不是安全边界）
+    # Hash of a 4-digit PIN, for switching accounts quickly on one device
+    # (it attributes actions to a person; it is not a security boundary)
     pin_hash: Mapped[str | None] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -524,10 +540,11 @@ class AppUser(Base):
     )
 
     __table_args__ = (
-        # front 拆成两级：
-        #   front_employee —— 开桌、关单（日常操作）
-        #   front_manager  —— 额外可以改单、作废
-        # 改单和作废是**能让钱消失**的操作，必须和日常操作分开授权。
+        # front is split in two:
+        #   front_employee -- open and close checks (the daily work)
+        #   front_manager  -- may also edit and void
+        # Editing and voiding are the operations that **make money disappear**,
+        # so they have to be authorised separately from the daily work.
         CheckConstraint(
             "role IN ('front_employee','front_manager','kitchen','admin')",
             name="ck_user_role",
@@ -536,7 +553,7 @@ class AppUser(Base):
 
 
 class Device(Base):
-    """设备只用于同步游标与审计，**不是授权主体** —— 身份属于账号。"""
+    """A device only carries a sync cursor and an audit trail. **It is not a principal** -- identity belongs to the account."""
 
     __tablename__ = "device"
 
@@ -565,19 +582,20 @@ class AuthSession(Base):
 
 
 # ---------------------------------------------------------------------------
-# 同步
+# Sync
 # ---------------------------------------------------------------------------
 
 
 class SyncOp(Base):
-    """同步日志。既是幂等键的载体，也是全量审计轨迹。"""
+    """The sync log. It carries the idempotency key and doubles as the full audit trail."""
 
     __tablename__ = "sync_op"
 
     op_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
-    # ⚠️ 必须显式 Identity()。SQLAlchemy 的 autoincrement=True 只对**主键**
-    #    生效，非主键列不会生成序列 —— 建出来就是裸的 NOT NULL 无默认值，
-    #    插入时直接 NotNullViolation。原来手写 DDL 用的是 BIGSERIAL。
+    # ⚠️ Identity() has to be explicit. SQLAlchemy's autoincrement=True only
+    #    applies to a **primary key**; a non-key column gets no sequence and
+    #    lands as a bare NOT NULL with no default, so inserts hit a
+    #    NotNullViolation. The hand-written DDL used BIGSERIAL.
     seq: Mapped[int] = mapped_column(
         BigInteger, Identity(), nullable=False, unique=True
     )
@@ -587,9 +605,9 @@ class SyncOp(Base):
     op_type: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     client_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    # 客户端时间：离线期间的真实发生时刻（不可信，仅作参考）
+    # Client clock: when it really happened offline (untrusted, for reference)
     client_ts: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
-    # 服务端时间：权威时序，冲突解决以它为准
+    # Server clock: the authoritative ordering, and what conflicts resolve on
     received_at: Mapped[datetime] = mapped_column(
         TZDateTime, nullable=False, server_default=func.now()
     )
@@ -605,13 +623,13 @@ class SyncOp(Base):
 
 
 class PingEvent(Base):
-    """⚠️ Walking Skeleton 的探针表。Step 4 接入真实业务后删除。"""
+    """⚠️ Walking-skeleton probe table. Removed once Step 4 wired up real work."""
 
     __tablename__ = "ping_event"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    # 第二道防线：即使 sync_op 的幂等判断被绕过，
-    # 这个 UNIQUE 约束仍让重复写入在数据库层失败
+    # Second line of defence: even if sync_op's idempotency check were
+    # bypassed, this UNIQUE constraint still fails the duplicate write
     op_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("sync_op.op_id", ondelete="CASCADE"),
@@ -623,13 +641,15 @@ class PingEvent(Base):
 
 
 class TaxRate(Base):
-    """销售税率。
+    """Sales tax rate.
 
-    **改税率是新增一行 + 新的 effective_from，不覆盖旧行** ——
-    和 buffet_price 一个道理：覆盖了的话，历史账单重算就会用上新税率，
-    以前开的票和账就对不上了。
+    **A rate change is a new row with a new effective_from, never an**
+    **overwrite** -- same reasoning as buffet_price: overwrite it and
+    recomputing a past check would use the new rate, so old receipts and the
+    books stop agreeing.
 
-    设一次基本不用再动，但税率确实会变（州/县调整），所以必须留改的口子。
+    Set once and rarely touched, but rates do change (state or county), so
+    there has to be a way to change it.
     """
 
     __tablename__ = "tax_rate"
@@ -651,12 +671,13 @@ class TaxRate(Base):
 
 
 class MenuModifier(Base):
-    """加料 / 特殊要求的目录（加辣、加牛、加虾、加蔬菜…）。
+    """Catalogue of add-ons / special requests (extra spicy, add beef, add shrimp...).
 
-    价格在这里，**不由客户端传** —— 和菜价一个道理：
-    信客户端传的金额，等于谁都能给自己打折。
-    唯一的例外是前台手写的那种要求（客人提的怪需求），
-    金额只能当场谈、当场输，和 Buffet To Go 按重量称是同一类例外。
+    The price lives here and is **never taken from the client** -- same as
+    dish prices: trusting a client-sent amount lets anyone discount themselves.
+    The one exception is a request the front types in (some odd thing a guest
+    asked for), where the amount can only be agreed and entered on the spot --
+    the same class of exception as weighing Buffet To Go.
     """
 
     __tablename__ = "menu_modifier"
@@ -664,7 +685,7 @@ class MenuModifier(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     name_zh: Mapped[str] = mapped_column(Text, nullable=False)
     name_en: Mapped[str] = mapped_column(Text, nullable=False)
-    # 0 = 免费（比如加辣）。按**份**收 —— 点两份都加虾就是两份的钱。
+    # 0 = free (extra spicy, say). Charged **per portion** -- two dishes with shrimp is twice the money.
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -675,18 +696,21 @@ class MenuModifier(Base):
 
 
 class OrderLineModifier(Base):
-    """某一道菜上实际加了什么。
+    """What was actually added to one dish.
 
-    ⚠️ **加料的钱已经折进 order_line.unit_price_cents 了**，这张表不参与算钱。
-       这样做的理由：所有金额计算（应收合计、服务费基数、税基、月报）
-       都是 SUM(qty × unit_price_cents)，折进单价之后它们一行都不用改，
-       也不可能漏改其中一处 —— 漏改一处就是一个只有对账时才会发现的洞。
+    ⚠️ **The add-on money is already folded into order_line.unit_price_cents**;
+       this table takes no part in the arithmetic. Why: every money
+       calculation (total due, service charge base, tax base, month report) is
+       SUM(qty x unit_price_cents), so folding it in means none of them change
+       and none of them can be missed -- and a missed one is a hole that only
 
-       那这张表干什么用：① 账单和后厨要看到客人到底要了什么；
-       ② 将来能查"多少客人加虾"，这是折进单价之后会丢掉的信息。
+       shows up at reconciliation.
+       What this table is for, then: (1) the check and the kitchen have to see
+       what the guest actually asked for; (2) "how many guests add shrimp" is
 
-    label 和 price_cents 都是**快照** —— 和菜价、税率一个规矩，
-    改了目录不影响历史账单。
+       answerable later, which folding the price in would otherwise lose.
+    label and price_cents are both **snapshots** -- same rule as dish prices
+    and tax rates: changing the catalogue never changes a past check.
     """
 
     __tablename__ = "order_line_modifier"
@@ -695,7 +719,7 @@ class OrderLineModifier(Base):
     order_line_id: Mapped[int] = mapped_column(
         ForeignKey("order_line.id", ondelete="CASCADE"), nullable=False
     )
-    # NULL = 前台手写的要求，不在目录里
+    # NULL = typed by the front, not in the catalogue
     modifier_id: Mapped[int | None] = mapped_column(ForeignKey("menu_modifier.id"))
     label: Mapped[str] = mapped_column(Text, nullable=False)
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -707,36 +731,42 @@ class OrderLineModifier(Base):
 
 
 class StoreSetting(Base):
-    """店的时间口径：所在时区 + 营业日的分界。
+    """The store's clock: its time zone and where its business day starts.
 
-    **单行表**（id 恒为 1）。约束写在数据库上而不是靠应用层自觉 ——
-    多出来的第二行会让"店在哪个时区"变成一个有两个答案的问题。
+    **A single-row table** (id is always 1). The constraint is in the database
+    rather than left to the application -- a second row would make "which time
+    zone is the store in" a question with two answers.
 
-    ⚠️ 和 TaxRate 相反：**这里没有 effective_from，改了就是全局改。**
+    ⚠️ The opposite of TaxRate: **there is no effective_from here. A change is
+       global.**
 
-    看着不一致，其实是两种东西：
-      · 税率、菜价是**事实** —— 那天就是按 7.1% 收的，历史账单必须冻住，
-        所以要留生效日、要保快照。
-      · 时区、营业日分界是**解释规则** —— 它回答"这个时间戳属于哪一天"。
-        规则一旦发现设错了（比如原来写死 UTC-5，而店在太平洋时区），
-        正确的做法是**连同过去的账一起重新归属**，而不是把错误冻在历史里。
-        留生效日反而会让错误永久留存，且再也说不清哪段是对的。
+    That looks inconsistent, but they are different kinds of thing:
+      - A tax rate or a dish price is a **fact** -- that day really was charged
+        at 7.1%, so past checks have to be frozen, which needs effective dates
+        and snapshots.
+      - A time zone or a day boundary is an **interpretation rule** -- it
+        answers "which day does this timestamp belong to". Once a rule turns
+        out to be wrong (it used to be hard-coded UTC-5 while the store is on
+        Pacific), the right move is to **re-file the past along with it**, not
 
-    代价是：改时区会让月报里某些账单换一天。所以 UI 上必须明确警告。
+        to freeze the mistake. An effective date would preserve the error
+        forever and make it impossible to say which stretch was right.
+    The cost: changing the time zone moves some checks to a different day in
+    the month report. The UI has to say so.
     """
 
     __tablename__ = "store_setting"
 
-    # autoincrement=False：这是固定的 1，不要序列。
-    # 留着序列的话，第二次 INSERT 会拿到 id=2 撞上 CHECK，
-    # 报出来的是约束违反而不是"你不该插第二行"。
+    # autoincrement=False: this is a fixed 1, it does not want a sequence.
+    # With one, a second INSERT would get id=2 and hit the CHECK, reported as
+    # a constraint violation rather than "there should not be a second row".
     id: Mapped[int] = mapped_column(
         Integer, primary_key=True, autoincrement=False, default=1
     )
-    # IANA 时区名，如 'America/Los_Angeles'。
-    # 不存固定偏移 —— 偏移在夏令时切换那两天是错的。
+    # IANA time zone name, 'America/Los_Angeles' for instance.
+    # Not a fixed offset -- an offset is wrong on the two DST changeover days.
     tz: Mapped[str] = mapped_column(Text, nullable=False)
-    # 营业日的分界（店内本地时间，整点）。0 = 过午夜即新的一天。
+    # Where the business day starts (store local time, on the hour). 0 = midnight.
     business_day_cutoff_hour: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     updated_at: Mapped[datetime] = mapped_column(

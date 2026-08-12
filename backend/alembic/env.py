@@ -8,7 +8,7 @@ from app.models import Base
 
 config = context.config
 
-# 数据库地址来自环境变量，绝不写进 alembic.ini（那会进版本库）
+# The database URL comes from the environment, never from alembic.ini (that would be committed)
 config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
 
 if config.config_file_name is not None:
@@ -38,7 +38,7 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            # 让 autogenerate 能察觉类型变更
+            # let autogenerate notice type changes
             compare_type=True,
             compare_server_default=True,
         )

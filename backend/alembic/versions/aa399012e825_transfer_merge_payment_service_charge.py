@@ -28,10 +28,10 @@ def upgrade() -> None:
     op.add_column('dining_check', sa.Column('payment_note', sa.Text(), nullable=True))
     op.create_check_constraint('ck_check_payment_method', 'dining_check', "payment_method IS NULL OR payment_method IN ('cash','card','mixed','other')")
 
-    # ⚠️ 第三次踩同一个坑：autogenerate **检测不到 ck_check_status 的变化**
-    #    —— 约束名没变、只有表达式里多了 'merged'。必须手写。
-    #    这次是**放宽**约束（多一个允许值），所以只需 drop + create，
-    #    不需要数据迁移（现有数据本来就合法）。
+    # ⚠️ Third time in the same hole: autogenerate **cannot see ck_check_status
+    #    change** -- the name stayed and only 'merged' was added to the
+    #    expression. Hand-written. This one **relaxes** the constraint (one
+    #    more allowed value), so drop and create is enough and no data migration is needed.
     op.drop_constraint("ck_check_status", "dining_check", type_="check")
     op.create_check_constraint(
         "ck_check_status",

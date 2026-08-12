@@ -26,15 +26,17 @@ export interface Guests {
 }
 
 /**
- * 把一条下单 payload 变成本地镜像里的一行。
+ * Turn one order payload into a row in the local mirror.
  *
- * ⚠️ 加料的钱必须**折进 unit_price_cents**，和服务端 _add_lines 一模一样。
- *    两边算法一旦有出入，界面上的金额就和落库金额对不上 ——
- *    结完账那张单会永远挂在月报的「支付与账单不符」里。
- *    （加菜的税率就这么错过一次，见 recalcEst 的注释。）
+ * ⚠️ Add-on money has to be **folded into unit_price_cents**, exactly as the
+ *    server's _add_lines does. The moment the two disagree, the amount on
+ *    screen stops matching the amount stored -- and a check collected that way
+ *    hangs in the month report's "payment does not match" list forever.
+ *    (The tax rate on added dishes got this wrong once; see recalcEst.)
  *
- * 目录里的加料按**本地缓存的价格**估算显示；服务端落库时会按它自己那份
- * 目录重算，所以缓存过期只影响显示，不影响记账。
+ * Catalogue add-ons are estimated from **the locally cached price**; the server
+ * recomputes from its own catalogue on write, so a stale cache only affects
+ * what is displayed, never what is recorded.
  */
 function buildLocalLine(
   l: any,
@@ -54,8 +56,8 @@ function buildLocalLine(
   ).map((p) => {
     if (p.modifier_id !== undefined) {
       const m = byId.get(p.modifier_id)
-      // 目录里查不到（缓存太旧）：先按 0 显示，落库以服务端为准。
-      // 不能猜一个价 —— 猜错就是界面和账本对不上。
+      // Not in the catalogue (the cache is too old): show 0 for now and let the
+      // server decide. Never guess a price -- a wrong guess is the screen and the books disagreeing.
       return {
         label: m?.name_zh ?? `#${p.modifier_id}`,
         label_en: m?.name_en,
@@ -80,11 +82,11 @@ function buildLocalLine(
 }
 
 /**
- * 把一条 open_check / close_check 应用到**本地镜像**。
+ * Apply one op to the **local mirror**.
  *
- * 自己产生的 op 和从 changes 拉到的别人的 op 走**同一个函数** ——
- * 这是事件溯源的好处：本地状态永远是"把所有事件按顺序放一遍"的结果，
- * 不存在两套逻辑漂移的可能。
+ * Ops this device produced and ops pulled from other devices go through the
+ * **same function** -- that is what event sourcing buys: local state is always
+ * "every event replayed in order", so two code paths cannot drift apart.
  */
 export async function applyCheckOp(
   entity: string,
@@ -100,7 +102,7 @@ export async function applyCheckOp(
       child: g.child ?? 0,
       senior: g.senior ?? 0,
     }
-    // 兼容旧格式：升级前排队的 op 里 drinks 是个整数
+    // Old shape: before the upgrade, drinks was a plain integer
     const rawD = payload.drinks
     const drinks: Drinks =
       typeof rawD === 'number'
@@ -116,8 +118,8 @@ export async function applyCheckOp(
     const tax = taxCents(sub, svc, cat?.tax_rate ?? 0)
 
     await db.checks.put({
-      // 账单的身份就是创建它那条 op 的 op_id ——
-      // 客户端离线时拿不到数据库主键，只能自己生成标识
+      // A check's identity is the op_id of the op that created it --
+      // an offline client cannot get a database key, so it mints its own
       check_uuid: opId,
       source: 'dine_in',
       lines: mapLines(payload.lines, await loadCatalog()),
@@ -180,8 +182,8 @@ export async function applyCheckOp(
     if (row && row.status !== 'voided' && row.status !== 'merged') {
       await db.checks.put({
         ...row,
-        // 记下作废前的状态 —— 撤销时要恢复成它，
-        // 否则一张"已结→作废"的单撤销后会变回"未结"，桌子凭空又占上了
+        // Remember the status before the void -- undo restores it, or a check
+        // that went closed -> voided comes back as open and the table is occupied again
         pre_void_status: row.status,
         status: 'voided',
         void_reason: String(payload.reason ?? ''),
@@ -190,14 +192,14 @@ export async function applyCheckOp(
   } else if (entity === 'open_togo_check') {
     const cat = await loadCatalog()
     const menu = new Map((cat?.menu ?? []).map((m) => [m.id, m]))
-    // 电话点菜也要能加料 —— 走同一个构造函数，两条路不可能算出不同的价
+    // Phone orders take add-ons too -- same builder, so the two paths cannot price differently
     const lines: LocalLine[] = ((payload.lines ?? []) as any[]).map((l) =>
       buildLocalLine(l, menu, cat?.modifiers ?? []),
     )
     await db.checks.put({
       check_uuid: opId,
       source: payload.source === 'buffet_togo' ? 'buffet_togo' : 'phone_order',
-      table_label: payload.source === 'buffet_togo' ? '自助打包' : '电话单',
+      table_label: payload.source === 'buffet_togo' ? 'Buffet to go' : 'Phone order',
       lines,
       customer_name: payload.customer_name as string | undefined,
       phone_last4: payload.phone_last4
@@ -206,7 +208,7 @@ export async function applyCheckOp(
       status: 'open',
       opened_at: clientTs,
       adult: 0, child: 0, senior: 0, drink_adult: 0, drink_child: 0,
-      // 自提单没有人头，不触发大桌服务费 —— 但一样要收税
+      // A to-go check has no heads, so no large-party charge -- but it is still taxed
       service_cents: 0,
       tax_cents: taxCents(
         lines.reduce((a, l) => a + l.qty * l.unit_price_cents, 0),
@@ -236,8 +238,9 @@ export async function applyCheckOp(
       await db.checks.put({
         ...row,
         lines,
-        // 服务费和税必须一起写回去，只更新 est_cents 会让详情页那两行
-        // 停在旧值，下一次加菜再拿旧值反推就会累积误差
+        // Service charge and tax have to be written back together: updating only
+        // est_cents leaves those two rows on the detail page stale, and the next
+        // added dish derives from the stale values, so the error accumulates
         ...recalcEst(row, lines, cat?.tax_rate ?? 0),
         last_by: opts.who ?? row.last_by,
         ...opts,
@@ -281,7 +284,7 @@ export async function applyCheckOp(
       const sub = estimateCents(
         cat?.prices ?? [], cat?.current_period_kind ?? 'dinner', g, d,
       )
-      // 并完人数变了，服务费可能从 0 变成有 —— 这是并桌最容易忽略的后果
+      // The party grew, so the service charge may go from 0 to something -- the consequence of merging people forget
       const svc = serviceCents(sub, partySize(g, d))
       const tax = taxCents(sub, svc, cat?.tax_rate ?? 0)
       await db.checks.put({
@@ -300,15 +303,15 @@ export async function applyCheckOp(
     const row = await db.checks.get(String(payload.check_uuid ?? ''))
     if (row) await db.checks.put({ ...row, ...payFields(payload.payment), ...opts })
   } else if (entity === 'add_payment') {
-    // 补收：**累加**，不是替换。必须和服务端 add_payment 同样的算法 ——
-    // 本地镜像算出来的待收金额如果和服务端不一致，员工会照着错的数收钱。
+    // A top-up **adds**, it does not replace. It has to match the server's
+    // add_payment exactly -- if the mirror's outstanding amount disagrees, staff collect the wrong number.
     const row = await db.checks.get(String(payload.check_uuid ?? ''))
     if (row) {
       const p = (payload.payment ?? {}) as Partial<Payment>
       const cash = (row.pay_cash ?? 0) + (p.cash_cents ?? 0)
       const card = (row.pay_card ?? 0) + (p.card_cents ?? 0)
       const other = (row.pay_other ?? 0) + (p.other_cents ?? 0)
-      // 方式由三个桶推导，不用 payload 里的 —— 一笔刷卡加一笔现金合起来是 mixed
+      // The method is derived from the three buckets, not taken from the payload -- one card plus one cash is mixed
       const nonzero = [cash, card, other].filter((v) => v > 0).length
       const method: PayMethod | undefined =
         nonzero > 1 ? 'mixed' : cash > 0 ? 'cash' : card > 0 ? 'card' : other > 0 ? 'other' : undefined
@@ -319,7 +322,7 @@ export async function applyCheckOp(
         pay_card: card,
         pay_other: other,
         pay_method: method ?? row.pay_method,
-        // 说明**追加**不覆盖：原来那笔的说明同样要留着
+        // The note **appends** rather than overwrites: the first one stays too
         pay_note: note ? (row.pay_note ? `${row.pay_note} / ${note}` : note) : row.pay_note,
         ...opts,
       })
@@ -338,7 +341,7 @@ export async function applyCheckOp(
   }
 }
 
-/** 撤销作废，恢复回作废前的状态。原因选填。 */
+/** Undo a void and restore the previous status. The reason is optional. */
 export async function restoreTable(checkUuid: string, reason?: string): Promise<void> {
   const payload = { check_uuid: checkUuid, reason: reason ?? '' }
   const opId = uuid()
@@ -350,7 +353,7 @@ export async function restoreTable(checkUuid: string, reason?: string): Promise<
   })
 }
 
-/** 改单：**整体替换**人数与饮料（不是增量），重放安全。 */
+/** Edit a check: **replace** guests and drinks wholesale (never a delta), which is replay-safe. */
 export async function modifyTable(
   checkUuid: string,
   guests: Guests,
@@ -366,7 +369,7 @@ export async function modifyTable(
   })
 }
 
-/** 作废整张单。**原因必填** —— 这是唯一能让一整张单的钱消失的操作。 */
+/** Void a whole check. **The reason is required** -- this is the only operation that makes a check's money disappear. */
 export async function voidTable(checkUuid: string, reason: string): Promise<void> {
   const payload = { check_uuid: checkUuid, reason }
   const opId = uuid()
@@ -378,23 +381,23 @@ export async function voidTable(checkUuid: string, reason: string): Promise<void
   })
 }
 
-/** 全部账单（含已结、已作废），按开台时间倒序。**不分营业日** —— 只给需要跨天看的地方用。 */
+/** Every check (closed and voided included), newest first. **Not scoped to a business day** -- only for the places that need to look across days. */
 export async function allChecks(): Promise<LocalCheck[]> {
   const rows = await db.checks.toArray()
   return rows.sort((a, b) => b.opened_at.localeCompare(a.opened_at))
 }
 
-/** 这张单属于哪个营业日。 */
+/** Which business day this check belongs to. */
 export function checkBusinessDate(c: LocalCheck, cutoffHour: number): string {
   return businessDateOf(c.opened_at, cutoffHour)
 }
 
 /**
- * 某个营业日的全部账单，按开台时间倒序。
+ * Every check on one business day, newest first.
  *
- * 清单页和「当日汇总」都必须走这个，不能用 allChecks() ——
- * 原来头部时钟显示今天、下面的营业额却是开业至今累计。
- * 那个组合比没有汇总更危险：它看起来是对的。
+ * The check list and the day summary both have to use this rather than
+ * allChecks() -- the header used to show today while the sales figure below was
+ * everything since opening day. That combination is worse than no summary: it looks right.
  */
 export async function checksOfDay(
   bdate: string,
@@ -407,22 +410,23 @@ export async function checksOfDay(
 }
 
 /**
- * 跨天未结的账单 —— 不属于当前营业日、但还没结账的单。
+ * Checks carried over -- not on the current business day, and not collected.
  *
- * ⚠️ 这些单**绝不能只是从楼面消失**。开了桌、有应收、没结账，
- *    就是钱还没收到。楼面清干净但没人知道它们的存在 = 静默丢单，
- *    而这套系统是店里唯一的主记录，丢了就真没了。
+ * ⚠️ These **must not simply vanish from the floor**. A table was opened, an
+ *    amount is owed and nothing was collected, so that is money not yet
+ *    received. A clean floor with nobody aware they exist is a silently lost
+ *    check, and this system is the store's only record.
  *
- * 包含自提单：电话订单没人来取、也没作废，同样是没结的账。
+ * To-go checks included: a phone order nobody collected and nobody voided is just as uncollected.
  */
 export async function carriedOverChecks(
   bdate: string,
   cutoffHour: number,
 ): Promise<LocalCheck[]> {
-  // ⚠️ 故意用全表扫描而不是 where('status')。索引查询会**静默排除**
-  //    索引键无效的记录（outbox 那次 NaN 的坑就是这么来的）——
-  //    而这个函数存在的全部意义就是"任何未结的单都不许藏起来"。
-  //    一天几百条，扫一遍的代价可以忽略。
+  // ⚠️ A full scan on purpose, not where('status'). An index query **silently
+  //    drops** records whose index key is invalid (that is how the NaN in the
+  //    outbox happened) -- and the entire point of this function is that no
+  //    open check may hide. A few hundred rows a day makes the scan free.
   const rows = await db.checks.toArray()
   return rows
     .filter((c) => c.status === 'open' && checkBusinessDate(c, cutoffHour) !== bdate)
@@ -444,7 +448,8 @@ export interface Totals {
 }
 
 /**
- * 汇总。**作废的单不计入营业额**，但单独统计 —— 它正是老板要看的那个数。
+ * Totals. **Voided checks are not sales**, but they are counted separately --
+ * that number is exactly what the owner wants to see.
  */
 export function totalsOf(rows: LocalCheck[]): Totals {
   const t: Totals = {
@@ -453,7 +458,7 @@ export function totalsOf(rows: LocalCheck[]): Totals {
     serviceCents: 0, cashCents: 0, cardCents: 0, otherCents: 0,
   }
   for (const c of rows) {
-    // merged 的单明细已搬到目标单，自己不再计入任何统计
+    // A merged check's lines have moved to its target, so it counts nowhere
     if (c.status === 'merged') continue
     if (c.status === 'voided') {
       t.voidedCount++
@@ -473,17 +478,17 @@ export function totalsOf(rows: LocalCheck[]): Totals {
   return t
 }
 
-/** 开桌。写本地 + 排队，**不等网络**。 */
+/** Open a table. Writes locally and queues, **without waiting for the network**. */
 export async function openTable(
   tableLabel: string,
   guests: Guests,
   drinks: Drinks,
-  /** 开桌时就点的菜 —— 整桌不吃自助、直接点餐的场景 */
+  /** Dishes ordered at open time -- the whole table skipping the buffet */
   lines: NewLine[] = [],
 ): Promise<string> {
   const payload = { table_label: tableLabel, guests, drinks, lines }
-  // enqueue 内部生成 op_id，这里要拿到它作为 check_uuid，
-  // 所以先自己生成再传进去
+  // enqueue mints an op_id internally, but we need it as the check_uuid,
+  // so it is generated here and passed in
   const opId = uuid()
   await enqueue('open_check', payload, opId)
   await applyCheckOp('open_check', opId, payload, new Date().toISOString(), {
@@ -506,10 +511,10 @@ export async function closeTable(checkUuid: string): Promise<void> {
 }
 
 /**
- * 楼面：桌号 → **当前营业日**的未结账单。
+ * The floor: table label -> the open check on **the current business day**.
  *
- * 跨天的未结单不在这里 —— 楼面每天从干净的开始。它们由
- * carriedOverChecks() 单独列出来处理，见 CarriedOver.tsx。
+ * Carried-over checks are not here -- the floor starts clean every day. They
+ * are listed separately by carriedOverChecks(); see CarriedOver.tsx.
  */
 export async function openChecksByTable(
   bdate: string,
@@ -517,8 +522,8 @@ export async function openChecksByTable(
 ): Promise<Map<string, LocalCheck>> {
   const rows = await db.checks.toArray()
   const m = new Map<string, LocalCheck>()
-  // ⚠️ 只认堂食。自提单没有桌位，混进楼面会占掉一个格子。
-  //    `source` 缺失的是加这个字段之前的老数据 —— 那时只有堂食，所以当堂食处理。
+  // ⚠️ Dine-in only. A to-go check has no table and would take up a cell.
+  //    A missing `source` is data from before that field existed -- everything was dine-in then.
   for (const r of rows) {
     if (r.status !== 'open') continue
     if (!isDineIn(r)) continue
@@ -529,16 +534,16 @@ export async function openChecksByTable(
 }
 
 /**
- * 桌号 → 跨天未结的堂食单。楼面开桌前要拿它挡一道。
+ * Table label -> a carried-over dine-in check. The floor checks this before opening a table.
  *
- * 为什么必须挡：服务端有唯一偏索引 uq_check_open_per_table
- * （一张桌同时只能有一张未结账单）。昨天那张单还在服务端占着位，
- * 今天在同一张桌开新单**会被服务端拒绝**、掉进死信队列。
- * 楼面上那张桌看起来是空的，员工点了却没反应 —— 这正是高峰期
- * 最让人放弃使用系统的那种失败。
+ * Why it has to: the server has a partial unique index, uq_check_open_per_table
+ * (one open check per table). Yesterday's check still holds that table, so
+ * opening a new one there today **is rejected by the server** and lands in the
+ * dead letter queue. The table looks free, the tap does nothing -- which at
+ * peak is exactly the kind of failure that makes people abandon a system.
  *
- * 所以在这里提前拦住并给出能自己解决的提示。约束负责保证正确性，
- * 错误信息负责让人知道下一步做什么 —— 和 restore_check 那次一个道理。
+ * So it is caught here, with a message that says what to do about it. The
+ * constraint guarantees correctness; the message makes it actionable -- same lesson as restore_check.
  */
 export async function carriedOverByTable(
   bdate: string,
@@ -550,12 +555,12 @@ export async function carriedOverByTable(
   return m
 }
 
-/** 老数据没有 source 字段。那时只有堂食，所以缺失即堂食。 */
+/** Old rows have no source field. Everything was dine-in then, so missing means dine-in. */
 export function isDineIn(c: LocalCheck): boolean {
   return c.source === undefined || c.source === 'dine_in'
 }
 
-/** 自提用**白名单**判断，不用"不是堂食"—— 后者会把老数据和将来的新类型一起放进来。 */
+/** To-go is decided by **whitelist**, not by "not dine-in" -- the latter would sweep in old rows and any future kind. */
 export function isTogo(c: LocalCheck): boolean {
   return c.source === 'buffet_togo' || c.source === 'phone_order'
 }
@@ -582,7 +587,7 @@ function payFields(raw: unknown) {
   }
 }
 
-/** 换桌。日常操作，普通员工即可。 */
+/** Transfer to another table. Daily work, so regular staff can do it. */
 export async function transferTable(checkUuid: string, toLabel: string): Promise<void> {
   const payload = { check_uuid: checkUuid, to_table_label: toLabel }
   const opId = uuid()
@@ -592,7 +597,7 @@ export async function transferTable(checkUuid: string, toLabel: string): Promise
   })
 }
 
-/** 并桌：把若干张单并进目标单。**并完可能触发大桌服务费。** */
+/** Merge: fold several checks into a target. **The result may trigger the large-party charge.** */
 export async function mergeTables(
   targetUuid: string,
   sourceUuids: string[],
@@ -605,7 +610,7 @@ export async function mergeTables(
   })
 }
 
-/** 关单并记录支付方式。 */
+/** Close the check and record how it was paid. */
 export async function closeWithPayment(
   checkUuid: string,
   payment: Payment,
@@ -618,7 +623,7 @@ export async function closeWithPayment(
   })
 }
 
-/** 事后改支付方式。**整体替换** —— 用于"方式录错了"。 */
+/** Change the payment method afterwards. **Replaces wholesale** -- for "the method was recorded wrong". */
 export async function updatePayment(
   checkUuid: string,
   payment: Payment,
@@ -632,10 +637,10 @@ export async function updatePayment(
 }
 
 /**
- * 补收差额。**在已收金额上累加** —— 用于"结完账又加了菜"。
+ * Top up. **Adds to what was already collected** -- for "dishes were added after collecting".
  *
- * 和 updatePayment 是两件事，不能合并：走替换的话，补收的 $6.99
- * 会把原来那笔 $55.47 冲掉，「支付与账单不符」反而更严重。
+ * A different thing from updatePayment, and they must not be merged: replacing
+ * would wipe the original $55.47 with the $6.99 top-up, making the "payment does not match" worse.
  */
 export async function addPayment(
   checkUuid: string,
@@ -649,71 +654,73 @@ export async function addPayment(
   })
 }
 
-/** 已收合计。 */
+/** Total collected. */
 export function paidCents(c: LocalCheck): number {
   return (c.pay_cash ?? 0) + (c.pay_card ?? 0) + (c.pay_other ?? 0)
 }
 
 /**
- * 待收差额（正数 = 还欠，负数 = 多收了该退）。
+ * What is still outstanding (positive = still owed, negative = overpaid and owed back).
  *
- * 结完账又加菜就会出现正的差额；退了菜则是负的。
- * 月报里那条「支付与账单不符」抓的就是这个数不为 0 的单。
+ * Adding dishes after collecting produces a positive number; a voided dish a negative one.
+ * The month report's "payment does not match the check" is exactly the checks where this is not 0.
  */
 export function dueCents(c: LocalCheck): number {
-  if (!c.pay_method) return 0 // 还没记过支付，谈不上差额
+  if (!c.pay_method) return 0 // nothing collected yet, so there is no gap to speak of
   return c.est_cents - paidCents(c)
 }
 
 
 /**
- * 哪些账单还有操作没上传。
+ * Which checks still have operations waiting to upload.
  *
- * ⚠️ **从 outbox 实时推导，不存状态。**
+ * ⚠️ **Derived from the outbox, never stored.**
  *
- * 原来在 LocalCheck 上存了个 `synced` 字段，同步成功后按 op_id 去标记。
- * 但那只对开桌成立 —— 开桌那条 op 的 id 恰好就是账单 id。
- * 结账/改单/换桌用的是**新的 op_id**，标记匹配不上，
- * 于是那张单会**永远显示"待同步"**，而它其实早就上传成功了。
+ * LocalCheck used to carry a `synced` field, marked by op_id after a
+ * successful sync. That only holds for opening a check -- that op's id happens
+ * to be the check's id. Collecting, editing and transferring use **new op
+ * ids**, the marking never matches, and the check shows "pending" forever
+ * although it uploaded long ago.
  *
- * 一个永远不消失的警告等于没有警告：员工看两次就学会无视它，
- * 真出问题时也不会再看。所以这里改成算出来的 ——
- * outbox 里没有引用它的 op，它就是干净的，不可能算错。
+ * A warning that never clears is not a warning: staff learn to ignore it after
+ * twice and stop looking when it matters. So it is computed instead -- no op
+ * in the outbox references it, therefore it is clean, and that cannot be wrong.
  */
 export async function pendingCheckUuids(): Promise<Set<string>> {
   const ops = await db.outbox.toArray()
   const out = new Set<string>()
   for (const o of ops) {
     if (o.entity === 'open_check') {
-      // 开桌：账单的身份就是这条 op 的 id
+      // Opening a check: the check's identity is this op's id
       out.add(o.op_id)
       continue
     }
     const cu = o.payload?.check_uuid
     if (typeof cu === 'string') out.add(cu)
-    // 并桌还会影响被并入的那几张
+    // A merge also affects the checks being folded in
     const srcs = o.payload?.source_uuids
     if (Array.isArray(srcs)) for (const x of srcs) if (typeof x === 'string') out.add(x)
   }
   return out
 }
 
-/** 本地镜像保留多少个营业日。够查「昨天那单怎么回事」，又不会无限长。 */
+/** How many business days the local mirror keeps. Enough for "what happened on yesterday's check", without growing forever. */
 export const LOCAL_KEEP_DAYS = 7
 
 /**
- * 归档：把很久以前、已经结清且已上传的账单从**本地镜像**删掉。
+ * Archiving: drop long-settled, uploaded checks from the **local mirror**.
  *
- * 只删本机缓存，**服务端一条不动** —— 月报读的是服务端，历史照样查得到。
+ * Only this device's cache; **the server keeps everything** -- the month report reads the server.
  *
- * 为什么需要：本地镜像原本只增不减，而楼面和清单每 2 秒轮询一次、
- * 每次都要全表扫一遍算营业日。一年下来几万条，iPad 上会肉眼可见地卡。
- * 本地镜像的用途是"断网时当天照样能干活"，不是当档案库。
+ * Why: the mirror only ever grew, while the floor and the check list poll every
+ * 2 seconds and scan the whole table to work out business days. Tens of
+ * thousands of rows a year is visibly slow on an iPad. A local mirror exists so
+ * the day's work survives a network outage; it is not an archive.
  *
- * 三条都满足才删，任何一条不满足就留着：
- *   · 已结账/已作废/已并单 —— 未结的单永远留着，那是还没收到的钱
- *   · 已经上传成功     —— 没确认的绝不删，删了就是丢单
- *   · 早于保留窗口
+ * All three have to hold; any one failing keeps the row:
+ *   - closed / voided / merged -- an open check is kept forever, that is money not yet received
+ *   - uploaded successfully   -- an unconfirmed one is never deleted; deleting it loses a check
+ *   - older than the retention window
  */
 export async function pruneLocalMirror(
   cutoffHour: number,
@@ -728,11 +735,11 @@ export async function pruneLocalMirror(
   const doomed = rows
     .filter((c) => {
       if (c.status === 'open') return false
-      // outbox 里还有引用它的 op —— 那条 op 重放时要能找到这张单
+      // An op in the outbox still references it -- the replay has to find this check
       if (pending.has(c.check_uuid)) return false
       const bd = checkBusinessDate(c, cutoffHour)
-      // 空串 = 时间戳坏了。算不出营业日的单一律留着让人能看见，
-      // 不能因为算不出来就删掉。
+      // Empty string = a broken timestamp. A check whose business day cannot be
+      // computed is kept and stays visible; never deleted for being uncomputable.
       if (!bd) return false
       return bd < oldest
     })
@@ -744,16 +751,18 @@ export async function pruneLocalMirror(
 
 
 /**
- * 清空本机的账单镜像，重新从服务端拉一遍。
+ * Empty this device's check mirror and pull it again from the server.
  *
- * 什么时候需要：服务端的数据被清过（重测、修数据），而本机镜像还留着
- * 早就不存在的单 —— 服务端删数据不会通知客户端，只有客户端自己重来。
+ * When it is needed: server data was cleared (a re-test, a data fix) while the
+ * mirror still holds checks that no longer exist -- deleting on the server does
+ * not notify a client, so the client has to start over.
  *
- * ⚠️ **outbox 不为空时拒绝执行。** 那里面是还没上传的真实操作，
- * 清掉就是丢单。宁可让人先等它同步完，也不能"顺手"帮他删掉。
+ * ⚠️ **Refuses to run while the outbox is not empty.** Those are real
+ * operations that have not uploaded, and clearing them loses checks. Better to
+ * make someone wait for a sync than to helpfully delete their work.
  *
- * 保留登录状态、设备 id 和菜单缓存 —— 重置的是"业务数据"，
- * 不是"这台设备是谁"。
+ * Sign-in, the device id and the menu cache are kept -- what is reset is the
+ * business data, not "which device this is".
  */
 export async function resetLocalData(): Promise<{ ok: boolean; pending: number }> {
   const pending = await db.outbox.count()
@@ -763,12 +772,12 @@ export async function resetLocalData(): Promise<{ ok: boolean; pending: number }
     await db.checks.clear()
     await db.events.clear()
     await db.deadletter.clear()
-    // 游标归零 —— 下次同步会把服务端现有的变更全部重新拉一遍，
-    // 本地镜像由此重建。这是事件溯源的直接好处：不需要"导入数据"。
+    // Cursor to zero -- the next sync pulls every change the server still has
+    // and rebuilds the mirror from them. The direct payoff of event sourcing: no import step.
     await setMeta('cursor', 0)
-    // ⚠️ 光归零不够。/api/sync 平时会**过滤掉本设备自己产生的 op**
-    //（避免把刚写的东西再应用一遍），所以从 0 重拉只会拿回别人写的单 ——
-    // 这台 iPad 自己开的单会永远缺席。resync 让服务端这一轮不过滤。
+    // ⚠️ Zeroing it is not enough. /api/sync normally **filters out ops this
+    //    device produced** (so it does not re-apply its own writes), so pulling
+    //    from 0 returns only other devices' checks and this iPad's own go missing. resync turns the filter off for one round.
     await setMeta('resync', 1)
   })
   return { ok: true, pending: 0 }
@@ -776,36 +785,37 @@ export async function resetLocalData(): Promise<{ ok: boolean; pending: number }
 
 
 /**
- * 加菜/退菜后重算本地金额。
+ * Recompute the local amounts after a dish is added or voided.
  *
- * ⚠️ 这里出过一个会真的算错钱的 bug，别改回去：
+ * ⚠️ This had a bug that really did miscalculate money. Do not put it back:
  *
- * 原来的写法是 `taxRatio = tax_cents / est_cents`，然后
- * `总额 = 税前 × (1 + taxRatio)`。但 `est_cents` 是**含税**总额，
- * 而税是收在（小计 + 服务费）上的，所以这个比值算出来是
- *   r / (1 + r)   而不是   r
- * 7.1% 的税率会被当成 6.63%，每加一次菜就少算一点税。
+ * It used to be `taxRatio = tax_cents / est_cents` and then
+ * `total = pre-tax x (1 + taxRatio)`. But `est_cents` **includes** tax, and tax
+ * is charged on (subtotal + service charge), so that ratio is
+ *   r / (1 + r)   rather than   r
+ * A 7.1% rate was applied as 6.63%, losing a little tax on every added dish.
  *
- * 后果不只是显示难看：服务端加菜时是按真实税率重算的，
- * 于是界面上的「待收」比服务端真实的差额小一点 ——
- * 员工照着补收完，账上仍留一个尾巴，月报继续报「支付与账单不符」。
+ * The damage was not cosmetic: the server recomputes at the real rate when a
+ * dish is added, so the "outstanding" on screen was slightly under the real
+ * gap. Staff collected that, a tail was left on the books, and the month report kept flagging it.
  *
- * 当时的注释说「税率从缓存的 catalog 拿不到（这是同步函数）」，
- * 那是错的：调用方就在上面 await 过 loadCatalog()。现在把税率传进来，
- * 和 open/modify/merge 三条路用同一个 taxCents()。
+ * The comment at the time said "the tax rate is not available from the cached
+ * catalog (this is a sync function)", which was false: the caller awaits
+ * loadCatalog() right above. The rate is passed in now, and all four paths
+ * (open / modify / merge / add) share one taxCents().
  *
- * 返回三个数一起写回去 —— 只更新 est_cents 的话，详情页的
- * 「大桌服务费」「税」两行会停在旧值，而下一次加菜又拿这两个旧值
- * 去反推人头费，误差会累积。
+ * All three numbers are written back together -- updating only est_cents
+ * leaves the service charge and tax rows on the detail page stale, and the next
+ * added dish derives head charges from those stale values, accumulating error.
  */
 function recalcEst(
   row: LocalCheck,
   lines: LocalLine[],
   taxRate: number,
 ): { est_cents: number; service_cents: number; tax_cents: number } {
-  // 人头费 = 旧的含税总额 − 旧服务费 − 旧税 − 旧单品。
-  // 反推而不是按当前价重算，是为了**保住开台时的价格快照** ——
-  // 中途改过菜单价的话，重算会把历史账单的金额也改掉。
+  // Head charges = old tax-inclusive total - old service charge - old tax - old dishes.
+  // Derived rather than recomputed at current prices, to **keep the price
+  // snapshot taken when the table opened** -- recomputing after a menu price change would restate the check.
   const head =
     row.est_cents -
     (row.service_cents ?? 0) -
@@ -832,14 +842,14 @@ export interface NewLine {
   amount_cents?: number
   notes?: string
   /**
-   * 加料 / 特殊要求。目录里的只传 modifier_id，**不传价格** ——
-   * 价格由服务端查目录，客户端传什么都不看。
-   * 手写的要求才带 label + price_cents（金额只存在于现场，同 open_price）。
+   * Add-ons / special requests. Catalogue ones send only modifier_id and
+   * **no price** -- the server looks it up and ignores whatever the client sent.
+   * Only a hand-typed request carries label + price_cents (that amount exists only at the counter, like open_price).
    */
   modifiers?: PickedModifier[]
 }
 
-/** 开一张自提单（Buffet To Go 或 电话点菜）。 */
+/** Open a to-go check (Buffet To Go or a phone order). */
 export async function openTogo(
   source: 'buffet_togo' | 'phone_order',
   lines: NewLine[],
@@ -859,7 +869,7 @@ export async function openTogo(
   return opId
 }
 
-/** 给已有账单加菜 —— **堂食也能用**（一桌里有人吃自助有人点菜）。 */
+/** Add dishes to an existing check -- **dine-in included** (one guest on the buffet, another ordering). */
 export async function addLines(checkUuid: string, lines: NewLine[]): Promise<void> {
   const payload = { check_uuid: checkUuid, lines }
   const opId = uuid()
@@ -870,7 +880,7 @@ export async function addLines(checkUuid: string, lines: NewLine[]): Promise<voi
 }
 
 
-/** payload 里的菜转成本地明细（补上菜名和价格）。 */
+/** Turn the dishes in a payload into local lines (filling in names and prices). */
 function mapLines(raw: unknown, cat: Awaited<ReturnType<typeof loadCatalog>>): LocalLine[] {
   const menu = new Map((cat?.menu ?? []).map((m) => [m.id, m]))
   return ((raw ?? []) as any[]).map((l) => {

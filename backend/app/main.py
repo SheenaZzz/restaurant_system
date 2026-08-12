@@ -17,8 +17,8 @@ from .sync import apply_ops, fetch_changes, log_truncated
 
 app = FastAPI(title="Restaurant System API", version="0.5.0")
 
-# 开发期前端在 :5173、后端在 :8000，跨源。
-# 生产两者都在 Caddy 后面同源，这段不会生效。
+# In development the front end is on :5173 and the API on :8000, so requests cross origins.
+# In production both sit behind Caddy on one origin and this does nothing.
 _origins = [o for o in os.getenv("CORS_ORIGINS", "").split(",") if o]
 if _origins:
     app.add_middleware(
@@ -37,29 +37,31 @@ app.include_router(admin_api.router)
 
 @app.get("/api/health")
 def health(db: Session = Depends(get_db)):
-    """存活探针。真的打一次库，而不是只回 200 ——
-    "进程活着但连不上数据库" 正是最需要被发现的状态。
+    """Liveness probe. It really touches the database rather than just
+    returning 200 -- "the process is up but cannot reach the database" is
+    exactly the state worth catching.
 
-    刻意不要求认证：探针必须在没有凭证时也能用。"""
+    Deliberately unauthenticated: a probe has to work without credentials."""
     db.execute(text("SELECT 1"))
     return {"status": "ok", "db": "ok"}
 
 
 @app.post("/api/sync", response_model=SyncResponse)
 def sync(req: SyncRequest, user: CurrentUser, db: Session = Depends(get_db)):
-    """离线队列的唯一入口。
+    """The one entry point for the offline queue.
 
-    ⚠️ **授权在这里强制执行，不在前端。**
-    客户端离线期间产生的每条 op 都带 client_id，但**不带角色声明** ——
-    角色只从服务端验过的 access token 里取。前端把 role 改成 admin
-    也没用，写入路径看的是这里的 `user`。
+    ⚠️ **Authorisation is enforced here, not in the front end.**
+    Every op a client produced offline carries a client_id but **no role
+    claim** -- the role comes only from the access token the server verified.
+    Setting role to admin in the front end changes nothing; the write path
+    reads the `user` here.
     """
-    # ⚠️ 截断判定必须在 apply_ops **之前**：这一批 op 会写进日志、把
-    #    MAX(seq) 顶上去，先写再判就永远判不出来。
+    # ⚠️ The truncation test has to run **before** apply_ops: this batch is
+    #    about to push MAX(seq) past the cursor, and testing afterwards could never detect it.
     truncated = log_truncated(db, req.since_cursor)
 
-    # 即使要求客户端重来，也照样先收下它带来的 op ——
-    # outbox 里可能是断网期间真实录的单，那是店里的钱，不能因为重置丢掉。
+    # Take the client's ops even when telling it to start over -- the outbox
+    # may hold checks really entered while the network was down, which is the store's money.
     applied, duplicate, rejected = apply_ops(db, req.client_id, req.ops, user)
 
     if truncated:
@@ -67,7 +69,7 @@ def sync(req: SyncRequest, user: CurrentUser, db: Session = Depends(get_db)):
             applied=applied,
             duplicate=duplicate,
             rejected=rejected,
-            # 游标归零，客户端清空镜像后带 resync=True 整份重拉
+            # Cursor to zero; the client empties its mirror and re-pulls with resync=True
             cursor=0,
             changes=[],
             reset=True,
@@ -87,7 +89,7 @@ def sync(req: SyncRequest, user: CurrentUser, db: Session = Depends(get_db)):
 
 @app.get("/api/admin/summary", dependencies=[Depends(require_role("admin"))])
 def admin_summary(db: Session = Depends(get_db)):
-    """仅 admin。Step 3 的验收探针，也是 Step 12 老板报表的雏形。"""
+    """admin only. The Step 3 acceptance probe, and the seed of the owner's report in Step 12."""
     row = db.execute(
         text(
             """
@@ -103,7 +105,7 @@ def admin_summary(db: Session = Depends(get_db)):
 
 @app.get("/api/debug/count")
 def debug_count(user: CurrentUser, db: Session = Depends(get_db)):
-    """骨架验收用。Step 4 之后删掉。"""
+    """Skeleton acceptance only. Removed after Step 4."""
     ops = db.execute(text("SELECT count(*) FROM sync_op")).scalar_one()
     applied = db.execute(
         text("SELECT count(*) FROM sync_op WHERE applied_at IS NOT NULL")

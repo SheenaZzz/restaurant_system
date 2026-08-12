@@ -1,8 +1,9 @@
-"""开桌 / 关单的业务副作用。
+"""Business side effects of opening and closing checks.
 
-**所有写入都走 sync，没有第二条路。**
-一条写入路径 = 一套不变量。如果开桌既能走 REST 又能走 sync，
-两边的校验迟早会漂移，而漂移出来的洞只有在对账时才会被发现。
+**Every write goes through sync. There is no second path.**
+One write path means one set of invariants. If opening a check could go
+through REST as well, the two sets of checks would drift, and the holes
+that drift opens only turn up at reconciliation.
 """
 
 import uuid as uuidlib
@@ -32,26 +33,27 @@ from .pricing import resolve_head_prices
 
 GUEST_TYPES = ("adult", "child", "senior")
 
-# --- 大桌服务费 ---
-# 5 人及以上收 10%。
-# ⚠️ 先写成常量。等费率真要调整时应该挪进配置表（像 buffet_price 那样带
-#    effective_from），否则改一次费率会影响历史账单的重算结果。
-#    落库的 service_charge_rate 快照保证了**已有账单**不受影响。
+# --- large-party service charge ---
+# 10% at five guests or more.
+# ⚠️ A constant for now. Once the rate really has to change it belongs in a
+#    table with an effective_from, the way buffet_price does, or changing it
+#    would alter what past checks recompute to. The service_charge_rate
+#    snapshot on the check protects **existing** checks either way.
 LARGE_PARTY_MIN = 5
 SERVICE_CHARGE_RATE = Decimal("0.10")
 
 
 def _party_size(db: Session, check_id: int) -> int:
-    """估计这桌有几个人。
+    """Estimate how many people are at this table.
 
-    我们只记录了「吃 buffet 的人数」和「要饮料的份数」，没有单独记
-    「坐了几个人」。只喝饮料不吃自助的人**也占座位、也算在大桌人数里**，
-    所以取两者的最大值：
-      - 6 人吃、2 人喝 → 至少 6 人
-      - 3 人吃、5 人喝 → 至少 5 人
+    We record how many people eat the buffet and how many drinks were
+    ordered, never "how many people sat down". Someone who only drinks
+    still takes a seat and still counts toward the party, so take the max:
+      - 6 eating, 2 drinking -> at least 6
+      - 3 eating, 5 drinking -> at least 5
 
-    这是从现有数据能得到的最好估计。如果店里对「几人」有更严格的口径，
-    需要在开桌时单独记一个座位数字段。
+    That is the best estimate this data supports. A stricter definition of
+    "how many people" would need its own seat count, recorded at open time.
     """
     rows = db.execute(
         select(HeadCharge.kind, func.sum(HeadCharge.qty))
@@ -63,7 +65,7 @@ def _party_size(db: Session, check_id: int) -> int:
 
 
 def _current_tax_rate(db: Session, on: date) -> Decimal:
-    """取某个营业日适用的税率。没配过就是 0（不收税）。"""
+    """The tax rate in force on a business day. Never configured means 0."""
     r = db.scalar(
         select(TaxRate.rate)
         .where(TaxRate.effective_from <= on)
@@ -74,12 +76,12 @@ def _current_tax_rate(db: Session, on: date) -> Decimal:
 
 
 def _recalc_service_charge(db: Session, chk: DiningCheck) -> None:
-    """按当前人数重算服务费**和税**。每次金额或人数变动后都要调用。
+    """Recompute the service charge **and the tax** for the current party.
 
-    并桌是最容易触发服务费的场景：两桌各 3 人本来都不收，
-    并成 6 人就要收了 —— 这正是这个函数存在的理由。
+    Merging is what trips it: two tables of three owe nothing, merged into
+    six they do -- which is the whole reason this function exists.
     """
-    db.flush()  # 让刚 add 的 head_charge 参与统计
+    db.flush()  # so the head_charge rows we just added are counted
 
     size = _party_size(db, chk.id)
 
@@ -87,16 +89,16 @@ def _recalc_service_charge(db: Session, chk: DiningCheck) -> None:
         select(func.coalesce(func.sum(HeadCharge.qty * HeadCharge.unit_price_cents), 0))
         .where(HeadCharge.check_id == chk.id)
     ) or 0
-    # 单点菜品也要计入服务费基数（退掉的不算）
+    # A la carte lines count toward the base too (voided ones do not)
     lines = db.scalar(
         select(func.coalesce(func.sum(OrderLine.qty * OrderLine.unit_price_cents), 0))
         .where(OrderLine.check_id == chk.id, OrderLine.status != "voided")
     ) or 0
     subtotal = int(head + lines)
 
-    # --- 大桌服务费 ---
+    # --- large-party service charge ---
     if size >= LARGE_PARTY_MIN:
-        # 四舍五入到分。用 Decimal 而不是浮点 —— 钱不能用 float。
+        # Round to the cent with Decimal, not float -- money is never a float.
         chk.service_charge_cents = int(
             (Decimal(subtotal) * SERVICE_CHARGE_RATE).quantize(
                 Decimal("1"), rounding=ROUND_HALF_UP
@@ -107,11 +109,11 @@ def _recalc_service_charge(db: Session, chk: DiningCheck) -> None:
         chk.service_charge_cents = 0
         chk.service_charge_rate = None
 
-    # --- 税 ---
-    # 税基 = 小计 + 服务费。
-    # ⚠️ 强制性服务费在多数州是应税的（自愿给的小费才免税），
-    #    我们这 10% 是满 5 人自动加的，属于强制性，所以计入税基。
-    #    如果店里的会计口径不同，改这一行即可。
+    # --- tax ---
+    # Tax base = subtotal + service charge.
+    # ⚠️ A mandatory service charge is taxable in most states (a voluntary
+    #    tip is not). Ours is added automatically at five guests, so it is
+    #    mandatory and belongs in the base. Different accounting, one line.
     period = db.get(ServicePeriod, chk.period_id)
     on = period.business_date if period else date.today()
     rate = _current_tax_rate(db, on)
@@ -120,28 +122,28 @@ def _recalc_service_charge(db: Session, chk: DiningCheck) -> None:
         (Decimal(base) * rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     )
     chk.tax_rate = rate if rate > 0 else None
-# 饮料只有成人/儿童两档 —— 长者饮料按成人价，这是店里的实际做法
+# Drinks have two tiers only -- seniors pay the adult price, which is what the store does
 DRINK_TIERS = ("adult", "child")
 
 
 def _parse_drinks(raw) -> dict[str, int]:
-    """解析饮料数量，**同时兼容新旧两种 payload 格式**。
+    """Parse the drink counts, **accepting the old payload shape as well**.
 
-        新：{"adult": 2, "child": 1}
-        旧：3            （等价于 {"adult": 3}）
+        new: {"adult": 2, "child": 1}
+        old: 3            (same as {"adult": 3})
 
-    ⚠️ 为什么必须兼容旧格式：这是个离线优先系统 ——
-    某台 iPad 的 outbox 里可能还躺着升级前排队的 op，
-    它带的是旧格式。如果新服务端不认，那些单会被拒进死信队列，
-    等于**因为一次发版丢了真实营业数据**。
-    离线系统改 payload 格式，兼容期是必须的，不是可选的。
+    ⚠️ Why the old shape has to keep working: this is offline-first. Some
+    iPad's outbox may still hold ops queued before the upgrade, carrying the
+    old shape. A server that rejects them sends real sales to the dead letter
+    queue -- **a deploy that loses takings**. Changing a payload shape in an
+    offline system requires a compatibility window; it is not optional.
     """
     if isinstance(raw, bool):
-        raise BusinessError(f"饮料数非法: {raw!r}")
+        raise BusinessError(f"Bad drink count: {raw!r}")
 
     if isinstance(raw, int):
         if raw < 0:
-            raise BusinessError(f"饮料数非法: {raw!r}")
+            raise BusinessError(f"Bad drink count: {raw!r}")
         return {"adult": raw} if raw else {}
 
     if isinstance(raw, dict):
@@ -149,47 +151,48 @@ def _parse_drinks(raw) -> dict[str, int]:
         for tier in DRINK_TIERS:
             n = raw.get(tier, 0)
             if isinstance(n, bool) or not isinstance(n, int) or n < 0:
-                raise BusinessError(f"饮料数非法: {tier}={n!r}")
+                raise BusinessError(f"Bad drink count: {tier}={n!r}")
             if n:
                 out[tier] = n
         unknown = set(raw) - set(DRINK_TIERS)
         if unknown:
-            # senior 会走到这里 —— 明确报错而不是静默丢弃，
-            # 静默丢弃等于少收钱
-            raise BusinessError(f"饮料档位不支持: {sorted(unknown)}（只有成人/儿童）")
+            # senior lands here -- say so instead of dropping it silently,
+            # because dropping it silently means undercharging
+            raise BusinessError(f"Unsupported drink tier: {sorted(unknown)} (adult/child only)")
         return out
 
-    raise BusinessError(f"饮料数非法: {raw!r}")
+    raise BusinessError(f"Bad drink count: {raw!r}")
 
 
 class BusinessError(ValueError):
-    """业务规则拒绝。会被 sync 层转成 rejected，进客户端死信队列。"""
+    """A business rule said no. sync turns it into a rejected op, which the
+    client parks in its dead letter queue."""
 
 
 def open_check(db: Session, op_id: uuidlib.UUID, payload: dict, client_ts: datetime,
                user_id: int | None) -> None:
-    """开一张堂食单：dining_check + 若干 head_charge。
+    """Open a dine-in check: one dining_check plus its head_charge rows.
 
     payload = {
       "table_label": "A7",
       "guests": {"adult": 2, "child": 1, "senior": 0},
-      "drinks": {"adult": 2, "child": 1}   # 也接受旧格式的整数
+      "drinks": {"adult": 2, "child": 1}   # a bare integer also works
     }
     """
     label = payload.get("table_label")
     if not isinstance(label, str) or not label:
-        raise BusinessError("缺少 table_label")
+        raise BusinessError("table_label is missing")
 
     table = db.scalar(select(DiningTable).where(DiningTable.label == label))
     if table is None:
-        raise BusinessError(f"桌号不存在: {label}")
+        raise BusinessError(f"No such table: {label}")
 
     guests_raw = payload.get("guests") or {}
     guests: dict[str, int] = {}
     for g in GUEST_TYPES:
         n = guests_raw.get(g, 0)
         if not isinstance(n, int) or n < 0:
-            raise BusinessError(f"人数非法: {g}={n!r}")
+            raise BusinessError(f"Bad guest count: {g}={n!r}")
         if n:
             guests[g] = n
 
@@ -198,23 +201,23 @@ def open_check(db: Session, op_id: uuidlib.UUID, payload: dict, client_ts: datet
     total_guests = sum(guests.values())
     total_drinks = sum(drinks.values())
 
-    # ⚠️ 饮料数**可以超过**吃 buffet 的人数 ——
-    #    陪同的人不吃自助、只要一杯饮料，是很常见的情况。
-    #    （原本这里挡了 drinks > guests，是把业务规则想窄了。）
+    # ⚠️ Drinks **may exceed** the number of buffet guests -- somebody who
+    #    tags along, does not eat and just wants a drink is common.
+    #    (This used to reject drinks > guests, which read the rule too narrowly.)
     #
-    #    由此产生的一个建模后果：admission 的人数 = **吃 buffet 的人数**，
-    #    不等于坐在桌上的人数。后面做消耗率预测时要的正是前者
-    #    （只有吃的人才消耗菜），所以这个口径是对的 —— 但如果将来
-    #    要统计真实上座率，需要另外记一个字段。
+    #    One modelling consequence: the admission count is **how many people
+    #    eat the buffet**, not how many sit at the table. That is exactly what
+    #    consumption forecasting wants -- only eaters consume food -- but real
+    #    occupancy would need a field of its own.
     lines = payload.get("lines") or []
 
-    # 整桌都不吃自助、直接点菜是常见情况 —— 所以三者有其一即可。
-    # 全空才拒绝：那是一张没有任何内容的单，没有意义。
+    # A whole table ordering a la carte instead of the buffet is common, so any
+    # one of the three is enough. All three empty is a check with nothing on it.
     if total_guests == 0 and total_drinks == 0 and not lines:
-        raise BusinessError("至少要有一位客人、一份饮料，或点一道菜")
+        raise BusinessError("Needs at least one guest, one drink, or one dish")
 
-    # ⚠️ 用 op 的 client_ts 而不是服务端当前时间：
-    # 离线两小时后补发的单，必须落在**当时**那个营业时段里
+    # ⚠️ Use the op's client_ts rather than the server clock: a check queued
+    # offline for two hours has to land in the period it **actually** happened in
     period = resolve_period(db, client_ts)
     prices = resolve_head_prices(db, period.kind, period.business_date)
 
@@ -228,14 +231,14 @@ def open_check(db: Session, op_id: uuidlib.UUID, payload: dict, client_ts: datet
         opened_by=user_id,
     )
     db.add(chk)
-    # flush 让 uq_check_open_per_table 立刻生效 ——
-    # 两个服务员离线各开了同一张桌，第二条要在这里就炸掉
+    # flush so uq_check_open_per_table bites now -- if two servers opened the
+    # same table offline, the second one has to blow up right here
     db.flush()
 
     for g, n in guests.items():
         price = prices.get(("admission", g))
         if price is None:
-            raise BusinessError(f"没有 {period.kind}/{g} 的价格配置")
+            raise BusinessError(f"No price configured for {period.kind}/{g}")
         db.add(
             HeadCharge(
                 check_id=chk.id,
@@ -249,7 +252,7 @@ def open_check(db: Session, op_id: uuidlib.UUID, payload: dict, client_ts: datet
     for tier, n in drinks.items():
         price = prices.get(("drink", tier))
         if price is None:
-            raise BusinessError(f"没有 {period.kind}/{tier} 的饮料价格配置")
+            raise BusinessError(f"No drink price configured for {period.kind}/{tier}")
         db.add(
             HeadCharge(
                 check_id=chk.id,
@@ -260,7 +263,7 @@ def open_check(db: Session, op_id: uuidlib.UUID, payload: dict, client_ts: datet
             )
         )
 
-    # 开桌时就带的菜（整桌点餐不吃自助的场景）
+    # Dishes ordered at open time (the whole-table-a-la-carte case)
     if lines:
         _add_lines(db, chk, lines, client_ts)
 
@@ -268,22 +271,23 @@ def open_check(db: Session, op_id: uuidlib.UUID, payload: dict, client_ts: datet
 
 
 def close_check(db: Session, payload: dict, client_ts: datetime) -> None:
-    """关单。**只关单，不处理收款** —— 收款走店里现有方式。"""
+    """Close the check. **Closing only -- the money is handled the way the store already does it.**"""
     raw = payload.get("check_uuid")
     try:
         cu = uuidlib.UUID(str(raw))
     except (ValueError, AttributeError, TypeError):
-        raise BusinessError(f"check_uuid 非法: {raw!r}") from None
+        raise BusinessError(f"Bad check_uuid: {raw!r}") from None
 
     chk = db.scalar(select(DiningCheck).where(DiningCheck.client_uuid == cu))
     if chk is None:
-        raise BusinessError("账单不存在（可能开桌那条还没同步上来）")
+        raise BusinessError("No such check (its open_check op may not have synced yet)")
 
-    # 已经关过就当成功 —— 幂等。两台设备同时点结账不该报错。
+    # Already closed counts as success -- idempotent. Two devices tapping
+    # collect at the same time must not raise.
     if chk.status == "closed":
         return
     if chk.status == "voided":
-        raise BusinessError("账单已作废，不能关单")
+        raise BusinessError("A voided check cannot be closed")
 
     chk.status = "closed"
     chk.closed_at = client_ts
@@ -297,52 +301,52 @@ def _load_check(db: Session, payload: dict) -> DiningCheck:
     try:
         cu = uuidlib.UUID(str(raw))
     except (ValueError, AttributeError, TypeError):
-        raise BusinessError(f"check_uuid 非法: {raw!r}") from None
+        raise BusinessError(f"Bad check_uuid: {raw!r}") from None
 
     chk = db.scalar(select(DiningCheck).where(DiningCheck.client_uuid == cu))
     if chk is None:
-        raise BusinessError("账单不存在（可能开桌那条还没同步上来）")
+        raise BusinessError("No such check (its open_check op may not have synced yet)")
     return chk
 
 
 def modify_check(db: Session, payload: dict, client_ts: datetime) -> None:
-    """改单：整体替换人数与饮料。
+    """Edit a check: replace the guest and drink counts wholesale.
 
     payload = {"check_uuid": ..., "guests": {...}, "drinks": {...}}
 
-    **用整体替换而不是增量调整。** 增量（"成人 +1"）在离线重放时会出错：
-    两台设备各自 +1，重放后变成 +2，但操作者的意图是"最终是 3 人"。
-    整体替换是幂等的 —— 重放多少次结果都一样。
+    **Replace rather than adjust.** An increment ("adult +1") goes wrong on
+    offline replay: two devices each send +1 and it replays as +2, when what
+    the operator meant was "there are three adults". Replacement is idempotent.
 
-    价格用**这张单当初所属时段**的价格重算，不是当前时段 ——
-    晚上改一张午市的单，不能按晚市价收。
+    Prices come from **the period this check belongs to**, not the current
+    one -- editing a lunch check in the evening must not charge dinner prices.
     """
     chk = _load_check(db, payload)
-    # 已结账的单**也允许改** —— 结完账才发现录错人数是常事。
-    # 唯一挡住的是已作废：要先撤销作废再改，否则语义含糊
-    #（改一张作废单意味着什么？）。
+    # Closed checks **can** be edited -- realising the guest count was wrong
+    # after collecting is routine. Only voided is blocked: undo the void
+    # first, or the meaning is murky (what does editing a voided check mean?).
     if chk.status == "voided":
-        raise BusinessError("已作废的单请先撤销作废再修改")
+        raise BusinessError("Undo the void before editing this check")
 
     guests: dict[str, int] = {}
     guests_raw = payload.get("guests") or {}
     for g in GUEST_TYPES:
         n = guests_raw.get(g, 0)
         if isinstance(n, bool) or not isinstance(n, int) or n < 0:
-            raise BusinessError(f"人数非法: {g}={n!r}")
+            raise BusinessError(f"Bad guest count: {g}={n!r}")
         if n:
             guests[g] = n
 
     drinks = _parse_drinks(payload.get("drinks", 0))
     if sum(guests.values()) == 0 and sum(drinks.values()) == 0:
-        raise BusinessError("至少要有一位客人或一份饮料")
+        raise BusinessError("Needs at least one guest or one drink")
 
     period = db.get(ServicePeriod, chk.period_id)
     if period is None:
-        raise BusinessError("账单所属营业时段丢失")
+        raise BusinessError("This check has lost its service period")
     prices = resolve_head_prices(db, period.kind, period.business_date)
 
-    # 先删后加。sync_op 里留着完整的改单历史，所以审计不受影响。
+    # Delete then re-add. sync_op keeps the whole edit history, so the audit trail is intact.
     db.query(HeadCharge).filter(HeadCharge.check_id == chk.id).delete(
         synchronize_session=False
     )
@@ -350,7 +354,7 @@ def modify_check(db: Session, payload: dict, client_ts: datetime) -> None:
     for g, n in guests.items():
         price = prices.get(("admission", g))
         if price is None:
-            raise BusinessError(f"没有 {period.kind}/{g} 的价格配置")
+            raise BusinessError(f"No price configured for {period.kind}/{g}")
         db.add(
             HeadCharge(
                 check_id=chk.id, kind="admission", guest_type=g,
@@ -360,7 +364,7 @@ def modify_check(db: Session, payload: dict, client_ts: datetime) -> None:
     for tier, n in drinks.items():
         price = prices.get(("drink", tier))
         if price is None:
-            raise BusinessError(f"没有 {period.kind}/{tier} 的饮料价格配置")
+            raise BusinessError(f"No drink price configured for {period.kind}/{tier}")
         db.add(
             HeadCharge(
                 check_id=chk.id, kind="drink", guest_type=tier,
@@ -373,25 +377,26 @@ def modify_check(db: Session, payload: dict, client_ts: datetime) -> None:
 
 def void_check(db: Session, payload: dict, client_ts: datetime,
                user_id: int | None) -> None:
-    """作废整张单，并**强制留下原因**。
+    """Void a whole check, **with a mandatory reason**.
 
-    作废是唯一能让一整张单的钱凭空消失的操作，所以它必须：
-      ① 有原因（不许空）
-      ② 可归因到人
-      ③ 在异常表里留痕，进老板的报表
+    Voiding is the only operation that makes a whole check's money vanish,
+    so it has to:
+      1. carry a reason (blank is rejected)
+      2. be attributable to a person
+      3. leave a row in the exception table, which the owner's report reads
     """
     chk = _load_check(db, payload)
     if chk.status == "voided":
-        return  # 幂等
+        return  # idempotent
 
     reason = payload.get("reason")
     if not isinstance(reason, str) or not reason.strip():
-        raise BusinessError("作废必须填写原因")
+        raise BusinessError("A void has to have a reason")
 
     amount = _check_total_cents(db, chk)
 
-    # 记下作废前是什么状态，撤销时恢复成它。
-    # **不动 closed_at** —— 那是结账时间，跟作废是两回事。
+    # Remember what it was before, so undo can put it back.
+    # **Leave closed_at alone** -- that is when it was collected, a different fact.
     chk.pre_void_status = chk.status
     chk.status = "voided"
     chk.voided_at = client_ts
@@ -410,31 +415,32 @@ def void_check(db: Session, payload: dict, client_ts: datetime,
 
 def restore_check(db: Session, payload: dict, client_ts: datetime,
                   user_id: int | None) -> None:
-    """撤销作废，把单恢复回作废前的状态。
+    """Undo a void and put the check back the way it was.
 
-    作废是可逆的 —— 误作废是很常见的操作失误，没有撤销就只能重新录一遍，
-    而重录会丢掉原始的开台时间和操作人。
+    A void is reversible -- voiding the wrong check is a common slip, and
+    without an undo the only fix is re-entering it, which loses the original
+    open time and the original operator.
 
-    **不删除原来的作废记录**，只在上面盖一个"已撤销"的戳。
-    "先作废一张 $120 的单、十分钟后又恢复" 本身就是老板该看见的信号；
-    删掉记录等于把这个信号也删了。
+    **The void record is not deleted**, it only gets an "undone" stamp.
+    "Voided a $120 check and restored it ten minutes later" is exactly the
+    signal an owner should see; deleting the record deletes the signal.
 
-    原因**选填** —— 危险的方向（作废）要求说明理由，
-    纠错的方向（恢复）不该增加摩擦。
+    The reason is **optional** here -- the dangerous direction (voiding) has
+    to justify itself, the corrective one should not have friction added.
     """
     chk = _load_check(db, payload)
     if chk.status != "voided":
-        return  # 幂等：已经是正常状态
+        return  # idempotent: already in a normal state
 
     reason = payload.get("reason")
     reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
 
     target = chk.pre_void_status or "open"
 
-    # ⚠️ 真实边界：作废之后这张桌空出来了，很可能已经被重新开了新单。
-    #    这时恢复会造成"同一张桌两张未结单"，撞唯一约束 ——
-    #    数据库会挡住，但报出来是 UniqueViolation，主管看不懂。
-    #    这里提前检查并给出能看懂的话。
+    # ⚠️ Real edge: once voided the table is free, and it has probably been
+    #    opened again. Restoring would leave two open checks on one table
+    #    and hit the unique index -- the database stops it, but as a
+    #    UniqueViolation, which no manager can read. Check it here first.
     if target == "open" and chk.table_id is not None:
         conflict = db.scalar(
             select(DiningCheck.id).where(
@@ -446,15 +452,15 @@ def restore_check(db: Session, payload: dict, client_ts: datetime,
         if conflict is not None:
             table = db.get(DiningTable, chk.table_id)
             raise BusinessError(
-                f"{table.label if table else '该桌'} 已经有另一张未结账单，"
-                "无法恢复这一张。请先结掉或作废那一张。"
+                f"{table.label if table else 'That table'} already has an open "
+                "check, so this one cannot be restored. Close or void that one first."
             )
 
     chk.status = target
     chk.pre_void_status = None
     chk.voided_at = None
 
-    # 给最近一条未撤销的作废记录盖戳
+    # Stamp the most recent void record that has not been undone
     exc = db.scalars(
         select(CheckException)
         .where(
@@ -472,18 +478,19 @@ def restore_check(db: Session, payload: dict, client_ts: datetime,
 
 
 # ---------------------------------------------------------------------------
-# 支付方式（**只是记录**，系统不处理收款）
+# Payment method (**recorded only** -- the system does not take money)
 # ---------------------------------------------------------------------------
 
 PAYMENT_METHODS = ("cash", "card", "mixed", "other")
 
 
 def _check_total_cents(db: Session, chk: DiningCheck) -> int:
-    """这张单当前的应收合计（人头费 + 单品 + 服务费 + 税）。
+    """What this check owes right now (heads + dishes + service charge + tax).
 
-    每次现算，不落一个 total 字段 —— 落了就要在加菜、改单、并桌、
-    改税率之后处处记得同步它，漏一处就是一个对不上的金额，
-    而且只有对账时才会发现。
+    Computed every time instead of stored in a total column -- a stored total
+    has to be kept in step after adding dishes, editing, merging and changing
+    the tax rate, and one missed spot is an amount that disagrees with itself
+    and only surfaces at reconciliation.
     """
     head = db.scalar(
         select(func.coalesce(func.sum(HeadCharge.qty * HeadCharge.unit_price_cents), 0))
@@ -505,11 +512,12 @@ def _paid_cents(chk: DiningCheck) -> int:
 
 
 def _apply_payment(chk: DiningCheck, raw) -> None:
-    """写入支付方式。
+    """Record how a check was paid.
 
-    为什么要记：系统不碰钱，所以日结时**唯一的交叉验证**就是
-    "系统算出来各种方式各收多少" 对上 "卡机和钱箱里实际有多少"。
-    不记方式，差额就无从归因 —— 只知道差了 30 块，不知道差在现金还是卡上。
+    Why bother: the system never touches money, so the **only** cross-check at
+    close of day is "what the system says each method took" against "what is
+    actually in the card machine and the drawer". Without the method, a $30
+    gap cannot be pinned on cash or on card.
     """
     if raw is None:
         chk.payment_method = None
@@ -518,27 +526,27 @@ def _apply_payment(chk: DiningCheck, raw) -> None:
         return
 
     if not isinstance(raw, dict):
-        raise BusinessError(f"payment 格式非法: {raw!r}")
+        raise BusinessError(f"Bad payment payload: {raw!r}")
 
     method = raw.get("method")
     if method not in PAYMENT_METHODS:
-        raise BusinessError(f"支付方式非法: {method!r}（现金/刷卡/混合/其它）")
+        raise BusinessError(f"Bad payment method: {method!r} (cash/card/mixed/other)")
 
     def amt(key: str) -> int:
         v = raw.get(key, 0)
         if isinstance(v, bool) or not isinstance(v, int) or v < 0:
-            raise BusinessError(f"金额非法: {key}={v!r}")
+            raise BusinessError(f"Bad amount: {key}={v!r}")
         return v
 
     cash, card, other = amt("cash_cents"), amt("card_cents"), amt("other_cents")
 
     if method == "mixed" and sum(x > 0 for x in (cash, card, other)) < 2:
-        raise BusinessError("选了「混合」但只填了一种方式的金额")
+        raise BusinessError("Mixed was chosen but only one method has an amount")
 
     note = raw.get("note")
     note = note.strip() if isinstance(note, str) and note.strip() else None
     if method == "other" and not note:
-        raise BusinessError("选「其它」时必须说明（例如 gift card）")
+        raise BusinessError("Other needs a note (a gift card, for instance)")
 
     chk.payment_method = method
     chk.paid_cash_cents = cash
@@ -548,47 +556,50 @@ def _apply_payment(chk: DiningCheck, raw) -> None:
 
 
 def set_payment(db: Session, payload: dict, client_ts: datetime) -> None:
-    """事后修改支付方式。
+    """Change the payment method after the fact.
 
-    权限给到普通员工而不是只给主管 —— 记错方式不会让钱变少，
-    而每次改都要找主管的摩擦太大，反而会导致干脆不记。
-    谁改的记在 sync_op 里，审计不受影响。
+    Open to regular staff rather than managers only -- recording the wrong
+    method never makes money disappear, and needing a manager every time is
+    enough friction that people stop recording it at all. Who changed it is
+    in sync_op either way.
     """
     chk = _load_check(db, payload)
     if chk.status == "voided":
-        raise BusinessError("已作废的单不能改支付方式")
+        raise BusinessError("A voided check's payment method cannot be changed")
     _apply_payment(chk, payload.get("payment"))
 
 
 def add_payment(db: Session, payload: dict, client_ts: datetime) -> None:
-    """补收差额：在**已收金额之上累加**，不是替换。
+    """Top up: **add to what was already collected**, never replace it.
 
-    为什么非要单独一个操作，不能复用 set_payment：
-    结完账又加了菜是常事（系统故意允许改已结的单）。这时账单从
-    $55.47 涨到 $62.46，但已收还停在 $55.47 —— 月报里那条
-    「支付与账单不符」抓的就是它。补收差额时如果走 set_payment，
-    录进去的 $6.99 会**冲掉**原来那笔 $55.47，不符反而更严重。
+    Why this cannot reuse set_payment: adding dishes after collecting happens
+    all the time (the system deliberately allows editing a closed check). The
+    check goes from $55.47 to $62.46 while the collected amount stays at
+    $55.47 -- which is exactly what the month report's "payment does not
+    match the check" warning catches. Putting the $6.99 through set_payment
+    would **wipe out** the original $55.47 and make the mismatch worse.
 
-    ⚠️ 加法必须在服务端做。客户端只说"这次收了多少"，
-       不说"总共收了多少" —— 它手上那份已收金额可能是过期的
-       （别的设备刚补收过），拿过期的总额去覆盖就是丢钱。
+    ⚠️ The addition has to happen on the server. The client says "this much
+       was collected just now", never "this much in total" -- its copy of the
+       collected amount may be stale (another device just topped up), and
+       overwriting with a stale total is losing money.
 
-    不建 payment_event 表：每次补收本身就是一条 sync_op，
-    带 client_ts 和操作人。「这单分两次收的」这段历史，
-    用现有的操作历史就能重放出来 —— 数据本来就在审计日志里。
+    No payment_event table: every top-up is already a sync_op carrying its
+    client_ts and its operator. "This one was collected in two goes" replays
+    out of the operation history -- the data is in the audit log already.
     """
     chk = _load_check(db, payload)
     if chk.status == "voided":
-        raise BusinessError("已作废的单不能补收")
+        raise BusinessError("A voided check cannot be topped up")
 
     raw = payload.get("payment")
     if not isinstance(raw, dict):
-        raise BusinessError(f"payment 格式非法: {raw!r}")
+        raise BusinessError(f"Bad payment payload: {raw!r}")
 
     def amt(key: str) -> int:
         v = raw.get(key, 0)
         if isinstance(v, bool) or not isinstance(v, int) or v < 0:
-            raise BusinessError(f"金额非法: {key}={v!r}")
+            raise BusinessError(f"Bad amount: {key}={v!r}")
         return v
 
     add_cash, add_card, add_other = (
@@ -598,29 +609,29 @@ def add_payment(db: Session, payload: dict, client_ts: datetime) -> None:
     )
     added = add_cash + add_card + add_other
     if added <= 0:
-        raise BusinessError("补收金额必须大于 0")
+        raise BusinessError("The top-up has to be greater than 0")
 
     note = raw.get("note")
     note = note.strip() if isinstance(note, str) and note.strip() else None
     if add_other > 0 and not note:
-        raise BusinessError("补收里用「其它」方式时必须说明（例如 gift card）")
+        raise BusinessError("Other in a top-up needs a note (a gift card, for instance)")
 
     total = _check_total_cents(db, chk)
     due = total - _paid_cents(chk)
     if due <= 0:
-        raise BusinessError("这张单已经收齐，没有需要补收的差额")
+        raise BusinessError("This check is fully paid; there is nothing to top up")
     if added > due:
         raise BusinessError(
-            f"补收 {added / 100:.2f} 超过了待收的 {due / 100:.2f}。"
-            "多收的部分不该记在这张单上 —— 请核对金额。"
+            f"A top-up of {added / 100:.2f} is more than the {due / 100:.2f} "
+            "outstanding. The excess does not belong on this check -- check the amount."
         )
 
     chk.paid_cash_cents = (chk.paid_cash_cents or 0) + add_cash
     chk.paid_card_cents = (chk.paid_card_cents or 0) + add_card
     chk.paid_other_cents = (chk.paid_other_cents or 0) + add_other
 
-    # 支付方式由三个桶**推导**，不接受客户端传的 method ——
-    # 一笔刷卡 + 一笔现金，合起来就是 mixed，这不该由客户端判断。
+    # The method is **derived** from the three buckets; a client-supplied one
+    # is ignored -- one card payment plus one cash payment is mixed, by definition.
     buckets = [chk.paid_cash_cents, chk.paid_card_cents, chk.paid_other_cents]
     nonzero = [i for i, v in enumerate(buckets) if v]
     if len(nonzero) > 1:
@@ -629,35 +640,35 @@ def add_payment(db: Session, payload: dict, client_ts: datetime) -> None:
         chk.payment_method = ("cash", "card", "other")[nonzero[0]]
 
     if note:
-        # 补收的说明追加，不覆盖 —— 原来那笔的说明同样要留着
+        # A top-up note appends rather than overwrites -- the first note stays
         chk.payment_note = f"{chk.payment_note} / {note}" if chk.payment_note else note
 
 
 # ---------------------------------------------------------------------------
-# 换桌 / 并桌
+# Transfer / merge
 # ---------------------------------------------------------------------------
 
 
 def transfer_check(db: Session, payload: dict, client_ts: datetime) -> None:
-    """换桌：客人吃到一半挪到别的桌。
+    """Move a check to another table mid-meal.
 
-    权限给普通员工 —— 这是日常操作，不涉及金额。
+    Open to regular staff -- routine, and no money changes.
     """
     chk = _load_check(db, payload)
     if chk.status in ("voided", "merged"):
-        raise BusinessError(f"{chk.status} 状态的单不能换桌")
+        raise BusinessError(f"A {chk.status} check cannot be transferred")
 
     label = payload.get("to_table_label")
     if not isinstance(label, str) or not label:
-        raise BusinessError("缺少目标桌号")
+        raise BusinessError("The destination table is missing")
 
     target = db.scalar(select(DiningTable).where(DiningTable.label == label))
     if target is None:
-        raise BusinessError(f"桌号不存在: {label}")
+        raise BusinessError(f"No such table: {label}")
     if target.id == chk.table_id:
-        return  # 幂等：已经在这张桌上
+        return  # idempotent: already there
 
-    # 只有未结单才占桌 —— 已结账的单换桌不会冲突
+    # Only open checks hold a table -- a closed one cannot conflict
     if chk.status == "open":
         busy = db.scalar(
             select(DiningCheck.id).where(
@@ -667,51 +678,52 @@ def transfer_check(db: Session, payload: dict, client_ts: datetime) -> None:
             )
         )
         if busy is not None:
-            raise BusinessError(f"{label} 已有未结账单，不能换过去（可以考虑并桌）")
+            raise BusinessError(f"{label} already has an open check (merge them instead?)")
 
     chk.table_id = target.id
 
 
 def merge_checks(db: Session, payload: dict, client_ts: datetime) -> None:
-    """并桌：几桌拼成一个大桌，合成一张单。
+    """Merge several checks into one.
 
-    payload = {"check_uuid": 目标单, "source_uuids": [被并入的单...]}
+    payload = {"check_uuid": target, "source_uuids": [checks to fold in...]}
 
-    **把明细搬到目标单，源单标记为 merged。**
-    这样营业额只算一次 —— 如果保留源单各自的明细再去"合计显示"，
-    统计口径会变得很容易出错（哪些算、哪些不算）。
-    搬完之后源单是空的，状态 merged，不计入任何统计。
+    **The lines move to the target and the sources are marked merged.**
+    Sales are then counted once. Keeping each source's lines and adding them
+    up for display makes it far too easy to get the accounting wrong -- which
+    ones count? After the move the sources are empty, merged, counted nowhere.
 
-    ⚠️ 目前**不支持拆回**。真要拆只能作废后重开 ——
-    合并在店里是低频操作，先不为它增加复杂度。
+    ⚠️ **Un-merging is not supported.** Splitting means voiding and re-entering
+    -- merging is rare enough in the store not to pay for the complexity.
     """
     target = _load_check(db, payload)
     if target.status not in ("open", "closed"):
-        raise BusinessError(f"{target.status} 状态的单不能作为并桌目标")
+        raise BusinessError(f"A {target.status} check cannot be a merge target")
 
     raw = payload.get("source_uuids")
     if not isinstance(raw, list) or not raw:
-        raise BusinessError("缺少要并入的账单")
+        raise BusinessError("Nothing to merge in")
 
     for item in raw:
         try:
             su = uuidlib.UUID(str(item))
         except (ValueError, TypeError):
-            raise BusinessError(f"source_uuid 非法: {item!r}") from None
+            raise BusinessError(f"Bad source_uuid: {item!r}") from None
         if su == target.client_uuid:
-            raise BusinessError("不能把一张单并入它自己")
+            raise BusinessError("A check cannot be merged into itself")
 
         src = db.scalar(select(DiningCheck).where(DiningCheck.client_uuid == su))
         if src is None:
-            raise BusinessError("要并入的账单不存在（可能还没同步上来）")
+            raise BusinessError("The check to merge in does not exist (it may not have synced yet)")
         if src.status == "merged":
-            continue  # 幂等
+            continue  # idempotent
         if src.status not in ("open", "closed"):
-            raise BusinessError(f"{src.status} 状态的单不能并桌")
+            raise BusinessError(f"A {src.status} check cannot be merged")
 
-        # 明细搬家。同 kind+guest_type 的行会并存，统计时求和，
-        # 不合并成一行 —— 保留"这几个人原本坐哪桌"的痕迹意义不大，
-        # 但拆成多行至少能看出这是并过桌的。
+        # Move the lines. Rows with the same kind+guest_type sit side by side
+        # and are summed when counted rather than folded into one -- knowing
+        # which table those guests came from is worth little, but the extra
+        # rows at least show that a merge happened.
         db.query(HeadCharge).filter(HeadCharge.check_id == src.id).update(
             {"check_id": target.id}, synchronize_session=False
         )
@@ -720,13 +732,13 @@ def merge_checks(db: Session, payload: dict, client_ts: datetime) -> None:
         src.service_charge_cents = 0
         src.service_charge_rate = None
 
-    # 并完之后人数变了 —— 两桌各 3 人本来都不收服务费，
-    # 并成 6 人就要收了。这是并桌最容易被忽略的后果。
+    # The party is bigger now -- two tables of three owed nothing, six owes
+    # 10%. This is the consequence of merging that is easiest to forget.
     _recalc_service_charge(db, target)
 
 
 # ---------------------------------------------------------------------------
-# Buffet 外带（称重）
+# Buffet takeout (by weight)
 # ---------------------------------------------------------------------------
 
 TOGO_ITEM_EN = "Buffet To-Go (by weight)"
@@ -734,29 +746,30 @@ TOGO_ITEM_EN = "Buffet To-Go (by weight)"
 
 def togo_sale(db: Session, op_id: uuidlib.UUID, payload: dict,
               client_ts: datetime, user_id: int | None) -> None:
-    """一笔 buffet 外带。
+    """One buffet takeout sale.
 
     payload = {"amount_cents": 1875, "payment": {...}}
 
-    和堂食完全不同的三点：
-      - **没有桌号** —— 柜台交易，不占座
-      - **没有人头** —— 秤直接给出金额，我们不知道也不需要知道几个人
-      - **没有服务费** —— 大桌服务费是针对堂食大桌的
+    Three ways it differs from dine-in:
+      - **no table** -- a counter sale, no seat taken
+      - **no head count** -- the scale gives the amount; how many people it feeds is unknown and does not matter
+      - **no service charge** -- that is a large-party dine-in thing
 
-    金额落在 order_line 上（qty=1，unit_price 就是称出来的钱），
-    而不是 head_charge —— head_charge 的语义是"按人头"，
-    硬塞一个 qty=1 的行进去，后面算客流时就会把它当成一个人。
+    The amount lands on an order_line (qty=1, unit_price is what the scale
+    said) rather than a head_charge -- head_charge means "per person", and a
+    qty=1 row there would later be counted as one guest.
 
-    **一步到位创建并结账** —— 外带是当场付清的，不存在"未结的外带单"。
-    做成两步（先开单再结账）只会在断网重放时多一次失败机会。
+    **Created and closed in one step** -- takeout is paid at the counter, so
+    an open takeout check does not exist. Two steps would only add another
+    way for an offline replay to fail.
     """
     amount = payload.get("amount_cents")
     if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
-        raise BusinessError(f"金额非法: {amount!r}")
+        raise BusinessError(f"Bad amount: {amount!r}")
 
     item = db.scalar(select(MenuItem).where(MenuItem.name_en == TOGO_ITEM_EN))
     if item is None:
-        raise BusinessError("外带项目未配置（请先跑 seed）")
+        raise BusinessError("The takeout item is not configured (run the seed first)")
 
     period = resolve_period(db, client_ts)
 
@@ -765,7 +778,7 @@ def togo_sale(db: Session, op_id: uuidlib.UUID, payload: dict,
         table_id=None,
         period_id=period.id,
         source="togo",
-        status="closed",          # 柜台即付，直接结账
+        status="closed",          # paid at the counter, closed immediately
         opened_at=client_ts,
         closed_at=client_ts,
         opened_by=user_id,
@@ -779,7 +792,7 @@ def togo_sale(db: Session, op_id: uuidlib.UUID, payload: dict,
             menu_item_id=item.id,
             qty=1,
             unit_price_cents=amount,
-            status="served",      # 外带没有后厨流程
+            status="served",      # takeout has no kitchen flow
             placed_at=client_ts,
             ready_at=client_ts,
         )
@@ -790,91 +803,93 @@ def togo_sale(db: Session, op_id: uuidlib.UUID, payload: dict,
 
 
 # ---------------------------------------------------------------------------
-# 自提：Buffet To Go（按重量）+ 电话点菜
+# To go: buffet by weight, and phone orders
 # ---------------------------------------------------------------------------
 
 
 def _resolve_modifiers(
     db: Session, raw, dish: str
 ) -> list[tuple[int | None, str, int]]:
-    """解析一道菜上的加料，返回 (modifier_id, 名称快照, 单价) 列表。
+    """Resolve the add-ons on one dish into (modifier_id, label snapshot, price).
 
-    两种来源，价格的权威性完全不同：
+    Two sources, with very different authority over the price:
 
-    · 目录里的（带 modifier_id）—— **价格一律服务端查**，
-      客户端传什么都不看。信客户端的金额等于谁都能给自己打折。
+    - From the catalogue (carries modifier_id) -- **the server looks the price
+      up**; whatever the client sent is ignored. Trusting the client's amount
+      is letting anyone discount themselves.
 
-    · 前台手写的（带 label + price_cents）—— 客人提的怪要求，
-      金额只能当场谈、当场输。这和 Buffet To Go 按重量称是同一类例外：
-      不是偷懒，是这个数**本来就只存在于现场**。
-      所以它必须归属到人（sync_op 里有 user_id），事后能查是谁定的价。
+    - Typed by the front (label + price_cents) -- an odd request from a guest,
+      priced on the spot. Same class of exception as weighing buffet takeout:
+      not laziness, the number **only exists at the counter**. Which is why it
+      is attributed to a person (sync_op carries user_id) and can be traced.
     """
     if raw is None:
         return []
     if not isinstance(raw, list):
-        raise BusinessError(f"{dish} 的加料格式非法: {raw!r}")
+        raise BusinessError(f"Bad add-on payload on {dish}: {raw!r}")
 
     out: list[tuple[int | None, str, int]] = []
     for m in raw:
         if not isinstance(m, dict):
-            raise BusinessError(f"{dish} 的加料格式非法: {m!r}")
+            raise BusinessError(f"Bad add-on payload on {dish}: {m!r}")
 
         mod_id = m.get("modifier_id")
         if mod_id is not None:
             if isinstance(mod_id, bool) or not isinstance(mod_id, int):
-                raise BusinessError(f"modifier_id 非法: {mod_id!r}")
+                raise BusinessError(f"Bad modifier_id: {mod_id!r}")
             row = db.get(MenuModifier, mod_id)
             if row is None or not row.active:
-                raise BusinessError(f"加料不存在或已停用: {mod_id}")
+                raise BusinessError(f"No such add-on, or it is inactive: {mod_id}")
             out.append((row.id, row.name_zh, row.price_cents))
             continue
 
-        # 手写的要求
+        # a hand-typed request
         label = m.get("label")
         if not isinstance(label, str) or not label.strip():
-            raise BusinessError(f"{dish} 的自定义要求必须填写内容")
+            raise BusinessError(f"The custom request on {dish} needs some text")
         cents = m.get("price_cents", 0)
         if isinstance(cents, bool) or not isinstance(cents, int) or cents < 0:
-            raise BusinessError(f"自定义要求的金额非法: {cents!r}")
+            raise BusinessError(f"Bad amount on a custom request: {cents!r}")
         out.append((None, label.strip(), cents))
 
     return out
 
 
 def _add_lines(db: Session, chk: DiningCheck, raw, client_ts: datetime) -> None:
-    """把菜品加到账单上。堂食和自提共用 —— 一桌里有人吃自助、有人点菜，
-    跟自提点菜在数据上是同一件事。
+    """Add dishes to a check. **Dine-in uses this too** -- one person at a
+    table on the buffet while another orders a dish is, in the data, the same
+    thing as a to-go order.
 
-    价格一律服务端解析。唯一的例外是 `open_price` 的条目
-    （Buffet To Go 按重量称），那种金额只能由前台从秤上读出来输入。
+    The server resolves every price. The only exception is an open_price item
+    (buffet takeout by weight), where the amount can only come off the scale.
     """
     if not isinstance(raw, list) or not raw:
-        raise BusinessError("没有要加的菜")
+        raise BusinessError("There are no dishes to add")
 
     for item in raw:
         if not isinstance(item, dict):
-            raise BusinessError(f"菜品格式非法: {item!r}")
+            raise BusinessError(f"Bad dish payload: {item!r}")
 
         mid = item.get("menu_item_id")
         if not isinstance(mid, int):
-            raise BusinessError(f"menu_item_id 非法: {mid!r}")
+            raise BusinessError(f"Bad menu_item_id: {mid!r}")
 
         mi = db.get(MenuItem, mid)
         if mi is None or not mi.active:
-            raise BusinessError(f"菜品不存在或已下架: {mid}")
+            raise BusinessError(f"No such dish, or it is off the menu: {mid}")
 
         qty = item.get("qty", 1)
         if isinstance(qty, bool) or not isinstance(qty, int) or qty <= 0:
-            raise BusinessError(f"数量非法: {qty!r}")
+            raise BusinessError(f"Bad quantity: {qty!r}")
 
         if mi.open_price:
             amt = item.get("amount_cents")
             if isinstance(amt, bool) or not isinstance(amt, int) or amt <= 0:
-                raise BusinessError(f"{mi.name_zh} 需要输入金额")
+                raise BusinessError(f"{mi.name_en} needs an amount")
             price = amt
         else:
             if mi.price_cents is None:
-                raise BusinessError(f"{mi.name_zh} 没有定价，不能单点")
+                raise BusinessError(f"{mi.name_en} has no price and cannot be ordered on its own")
             price = mi.price_cents
 
         notes = item.get("notes")
@@ -886,11 +901,12 @@ def _add_lines(db: Session, chk: DiningCheck, raw, client_ts: datetime) -> None:
             check_id=chk.id,
             menu_item_id=mi.id,
             qty=qty,
-            # 价格快照 —— 改菜单不会改动历史账单。
-            # ⚠️ 加料的钱**折进单价**：所有算钱的地方
-            #    （应收合计、服务费基数、税基、月报）都是
-            #    SUM(qty × unit_price_cents)，折进来之后它们一处都不用改，
-            #    也就不可能漏改其中一处。加了什么另存 order_line_modifier。
+            # Price snapshot -- changing the menu never changes a past check.
+            # ⚠️ Add-on money is **folded into the unit price**: everything that
+            #    computes money (total due, service charge base, tax base, the
+            #    month report) is SUM(qty x unit_price_cents), so none of them
+            #    change and none of them can be missed. What was added is
+            #    kept separately in order_line_modifier.
             unit_price_cents=price + sum(m[2] for m in mods),
             notes=notes,
             status="placed",
@@ -899,7 +915,7 @@ def _add_lines(db: Session, chk: DiningCheck, raw, client_ts: datetime) -> None:
         db.add(line)
 
         if mods:
-            db.flush()  # 拿 line.id
+            db.flush()  # we need line.id
             for modifier_id, label, cents in mods:
                 db.add(
                     OrderLineModifier(
@@ -913,18 +929,19 @@ def _add_lines(db: Session, chk: DiningCheck, raw, client_ts: datetime) -> None:
 
 def open_togo_check(db: Session, op_id: uuidlib.UUID, payload: dict,
                     client_ts: datetime, user_id: int | None) -> None:
-    """开一张自提单。
+    """Open a to-go check.
 
-    两种：
-      buffet_togo  自助餐打包，秤上直接出金额，前台把数字录进来
-      phone_order  电话点菜，从菜单选
+    Two kinds:
+      buffet_togo  buffet by weight -- the scale gives the amount, the front types it in
+      phone_order  ordered off the menu over the phone
 
-    **不占桌、不算大桌服务费** —— service charge 看的是 head_charge 的人头数，
-    自提单没有人头，自然是 0，不需要额外判断。
+    **No table and no large-party charge** -- the service charge counts
+    head_charge rows, a to-go check has none, so it comes out 0 with no
+    special case needed.
     """
     source = payload.get("source")
     if source not in ("buffet_togo", "phone_order"):
-        raise BusinessError(f"自提类型非法: {source!r}")
+        raise BusinessError(f"Bad to-go kind: {source!r}")
 
     period = resolve_period(db, client_ts)
     chk = DiningCheck(
@@ -940,15 +957,16 @@ def open_togo_check(db: Session, op_id: uuidlib.UUID, payload: dict,
     db.flush()
 
     _add_lines(db, chk, payload.get("lines"), client_ts)
-    # ⚠️ 这一行以前漏了，**自提单从来没收过税**。
+    # ⚠️ This line was missing once, and **to-go checks were never taxed**.
     #
-    #    服务费确实不该收（那是按堂食人头算的，_party_size 对自提是 0，
-    #    所以这个函数自己会算出 0）—— 但税照收，自提的熟食一样应税。
+    #    The service charge genuinely does not apply -- it counts dine-in
+    #    heads, and _party_size is 0 for to-go, so it comes out 0 anyway.
     #
-    #    漏掉的后果不只是少收税：客户端估价是**加税**的，员工照着屏幕
-    #    收钱，服务端记的却是不含税总额 → 这张单立刻变成"多收"，
-    #    月报里一直挂着「支付与账单不符」。加菜那条路（add_order_lines）
-    #    本来就调了重算，等于同一种单两条路的税还不一样。
+    #    It cost more than the tax: the client's estimate **does** include
+    #    tax, staff collect what the screen says, and the server recorded a
+    #    pre-tax total -- so the check immediately read as overpaid and the
+    #    month report kept flagging it. add_order_lines already recalculated,
+    #    so the same kind of check was taxed two different ways.
     _recalc_service_charge(db, chk)
 
     name = payload.get("customer_name")
@@ -959,7 +977,7 @@ def open_togo_check(db: Session, op_id: uuidlib.UUID, payload: dict,
             PickupOrder(
                 check_id=chk.id,
                 customer_name=(name or None),
-                # PII 原则：只留后四位，够核对身份就行
+                # PII: keep the last four only, enough to identify the guest
                 phone_last4=(str(phone)[-4:] if phone else None),
                 promised_at=promised,
                 status="placed",
@@ -968,34 +986,34 @@ def open_togo_check(db: Session, op_id: uuidlib.UUID, payload: dict,
 
 
 def add_order_lines(db: Session, payload: dict, client_ts: datetime) -> None:
-    """给已有账单加菜。**堂食也能用** ——
-    一桌两人，一个吃自助一个点菜，就是这个场景。
+    """Add dishes to an existing check. **Dine-in included** -- a table of two
+    with one on the buffet and one ordering a dish is exactly this case.
     """
     chk = _load_check(db, payload)
     if chk.status not in ("open", "closed"):
-        raise BusinessError(f"{chk.status} 状态的单不能加菜")
+        raise BusinessError(f"A {chk.status} check cannot take more dishes")
 
     _add_lines(db, chk, payload.get("lines"), client_ts)
-    # 加菜会改变金额，大桌服务费要跟着重算
+    # Adding dishes changes the amount, so the large-party charge is recomputed
     _recalc_service_charge(db, chk)
 
 
 def void_order_line(db: Session, payload: dict, client_ts: datetime) -> None:
-    """退掉一道菜（做错了 / 客人不要了）。
+    """Void one dish (cooked wrong, or the guest changed their mind).
 
-    **不物理删除**，只把状态标成 voided —— 退菜是要进老板报表的，
-    删掉就等于这道菜从没出现过。
+    **Not physically deleted**, only marked voided -- voided dishes go into
+    the owner's report, and deleting one means it never happened.
     """
     chk = _load_check(db, payload)
     line_id = payload.get("line_id")
     if not isinstance(line_id, int):
-        raise BusinessError(f"line_id 非法: {line_id!r}")
+        raise BusinessError(f"Bad line_id: {line_id!r}")
 
     line = db.get(OrderLine, line_id)
     if line is None or line.check_id != chk.id:
-        raise BusinessError("这道菜不在这张单上")
+        raise BusinessError("That dish is not on this check")
     if line.status == "voided":
-        return  # 幂等
+        return  # idempotent
 
     line.status = "voided"
     _recalc_service_charge(db, chk)

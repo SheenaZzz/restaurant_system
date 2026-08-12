@@ -1,10 +1,11 @@
-"""只读接口：菜单/价格/桌位目录 + 当前楼面状态。
+"""Read-only endpoints: the menu, prices and table catalogue, plus floor state.
 
-写入一律走 /api/sync，这里只负责读。
+Every write goes through /api/sync; this only reads.
 
-目录一次性全给（20 桌 + 19 菜品 + 8 档价格，几 KB），
-客户端缓存到 IndexedDB —— **离线时开桌页要能渲染出桌号和价格**。
-分成三个端点只会多两次往返，没有任何好处。
+The catalogue arrives in one call (20 tables, 143 dishes, 8 prices -- a few
+kB) and the client caches it in IndexedDB, because **opening a table has to
+render seats and prices offline**. Splitting it into three endpoints would
+only cost two more round trips.
 """
 
 from datetime import date, datetime, timezone
@@ -53,7 +54,7 @@ class PriceOut(BaseModel):
 class CategoryOut(BaseModel):
     key: str
     label: str
-    # 分类的英文名，给中英切换用
+    # English name of the category, for the language switch
     label_en: str
 
 
@@ -77,39 +78,43 @@ class CatalogOut(BaseModel):
     categories: list[CategoryOut]
     tables: list[TableOut]
     menu: list[MenuItemOut]
-    # 加料目录。跟菜单一起下发 —— 点菜页离线也要能选加辣、加虾，
-    # 而且客户端拿它做**显示估价**，落库金额仍由服务端按这张表重算。
+    # The add-on catalogue, sent with the menu -- ordering has to offer extra
+    # spicy and add shrimp offline, and the client estimates prices from it
+    # (the stored amount is still recomputed server-side from this same table).
     modifiers: list[ModifierOut]
     prices: list[PriceOut]
-    # 自助餐台的布局，按时段分组。跟菜单一起下发 ——
-    # 补菜页**必须离线可用**：断网时厨师照样在补菜，
-    # 那正是最不该丢记录的时候。
+    # The buffet layout, grouped by period. Sent with the menu because the
+    # refill page **has to work offline**: cooks keep refilling when the network
+    # is down, which is exactly when a lost record hurts most.
     buffet_board: dict[str, list[BuffetDishOut]]
-    # 客户端拿它决定用午市还是晚市的价格来**显示**金额。
-    # 落库时服务端会自己再算一遍，不信这个值。
+    # The client uses this to decide whether to **display** lunch or dinner
+    # prices. The server recomputes on write and does not trust this value.
     current_period_kind: str
-    # 当前税率，供客户端**估算显示**用；落库金额一律服务端重算
+    # The current tax rate, for the client's **display estimate**; stored amounts are always recomputed
     tax_rate: float
     server_time: datetime
-    # 营业日的分界（店内本地时间，整点）。
+    # Where the business day starts (store local time, on the hour).
     #
-    # 下发而不是让前端自己写一份常量：营业日口径定义在
-    # services/period.py，是唯一的一处。前端硬编码第二份的话，
-    # 哪天把分界从 0 点调回 2 点，清单页和月报就会各按各的口径切 ——
-    # 而这套系统唯一的交叉验证手段就是这两个数字能对上。
+    # Published rather than hard-coded in the front end: the business day is
+    # defined in services/period.py and nowhere else. A second copy in the
+    # front end means that the day someone moves the boundary back to 02:00,
+    # the check list and the month report split it differently -- and those two
+    # numbers agreeing is this system's only cross-check.
     business_day_cutoff_hour: int
-    # 服务端此刻认定的营业日。前端离线时按设备时钟自己算，
-    # 在线时可以拿这个值核对有没有偏（比如 iPad 时区被人改过）。
+    # The business day the server currently thinks it is. Offline the front end
+    # computes its own from the device clock; online it can compare (in case
+    # someone changed the iPad's time zone).
     business_date: date
-    # 店里此刻的 UTC 偏移，**分钟，东正西负**（太平洋夏令时 = -420）。
+    # The store's current UTC offset, **in minutes, east positive** (Pacific daylight = -420).
     #
-    # 前端拿它和设备自己的偏移比：不一致就说明这台设备的时区不是店里的，
-    # 那么每天总有一段时间它会把账单归到错误的营业日 ——
-    # 而且是静默归错。只比营业日不够，两者相同的时段里问题看不出来，
-    # 等看出来时已经错了几个小时。
+    # The front end compares it with the device's own: a mismatch means this
+    # device is not on store time, so every day there is a stretch where it
+    # files checks on the wrong business day -- silently. Comparing business
+    # days is not enough: while they agree the problem is invisible, and by the
+    # time they disagree it has been wrong for hours.
     #
-    # ⚠️ 注意符号：JS 的 getTimezoneOffset() 是**反的**（UTC-7 返回 +420）。
-    #    这里用标准写法，前端取负号，别在两边各自猜。
+    # ⚠️ Mind the sign: JS getTimezoneOffset() is **inverted** (UTC-7 returns +420).
+    #    This uses the conventional sign and the front end negates it, rather than both sides guessing.
     store_utc_offset_minutes: int
 
 
@@ -132,8 +137,8 @@ def catalog(user: CurrentUser, db: Session = Depends(get_db)):
         .order_by(MenuModifier.sort_order)
     ).all()
 
-    # 取一次时刻算出所有跟时间有关的字段 —— 分别取 now 的话，
-    # 恰好跨过 0 点或 15:00 的那一次请求会拿到自相矛盾的组合
+    # Take the clock once and derive every time-dependent field from it --
+    # separate now() calls would give a self-contradictory answer to the request that straddles 00:00 or 15:00
     clock = load_store_clock(db)
     now_local = clock.now()
 
@@ -184,10 +189,11 @@ class OpenCheckOut(BaseModel):
 
 @router.get("/floor", response_model=list[OpenCheckOut])
 def floor(user: CurrentUser, db: Session = Depends(get_db)):
-    """当前所有未结账单。
+    """Every check that is currently open.
 
-    只是**对账用的权威快照** —— 楼面界面平时读本地镜像，
-    否则断网就白屏了。这个端点用来在重连后核对本地状态有没有漂移。
+    Only an **authoritative snapshot for reconciliation** -- the floor screen
+    reads its local mirror, or it would go blank offline. This endpoint is for
+    checking after a reconnect whether the local state has drifted.
     """
     rows = db.execute(
         text(

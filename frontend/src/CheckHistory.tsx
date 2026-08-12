@@ -12,7 +12,7 @@ interface HistoryOp {
   payload: Record<string, any>
 }
 
-/** 重放到某一步时账单长什么样。改单是整体替换，所以必须重放才知道"改了什么"。 */
+/** What the check looked like at one step. An edit replaces wholesale, so only a replay shows what changed. */
 interface Snapshot {
   adult: number
   child: number
@@ -28,11 +28,11 @@ const EMPTY: Snapshot = {
 }
 
 const FIELDS: { k: keyof Snapshot; label: string }[] = [
-  { k: 'adult', label: '成人' },
-  { k: 'child', label: '儿童' },
-  { k: 'senior', label: '长者' },
-  { k: 'drinkAdult', label: '成人饮料' },
-  { k: 'drinkChild', label: '儿童饮料' },
+  { k: 'adult', label: 'Adult' },
+  { k: 'child', label: 'Child' },
+  { k: 'senior', label: 'Senior' },
+  { k: 'drinkAdult', label: 'Adult drink' },
+  { k: 'drinkChild', label: 'Child drink' },
 ]
 
 function applyOp(s: Snapshot, op: HistoryOp): Snapshot {
@@ -66,7 +66,7 @@ function applyOp(s: Snapshot, op: HistoryOp): Snapshot {
   }
 }
 
-/** 一条操作的人话描述 + 变化明细。 */
+/** One operation in plain words, plus what changed. */
 function describe(op: HistoryOp, before: Snapshot, after: Snapshot) {
   const p = op.payload
   const diffs: string[] = []
@@ -74,12 +74,12 @@ function describe(op: HistoryOp, before: Snapshot, after: Snapshot) {
   switch (op.entity) {
     case 'open_check': {
       const parts: string[] = []
-      if (after.adult) parts.push(`成人 ${after.adult}`)
-      if (after.child) parts.push(`儿童 ${after.child}`)
-      if (after.senior) parts.push(`长者 ${after.senior}`)
-      if (after.drinkAdult) parts.push(`成人饮料 ${after.drinkAdult}`)
-      if (after.drinkChild) parts.push(`儿童饮料 ${after.drinkChild}`)
-      return { title: `开桌 ${after.table}`, diffs: parts, tone: 'ok' as const }
+      if (after.adult) parts.push(`${tr('Adult')} ${after.adult}`)
+      if (after.child) parts.push(`${tr('Child')} ${after.child}`)
+      if (after.senior) parts.push(`${tr('Senior')} ${after.senior}`)
+      if (after.drinkAdult) parts.push(`${tr('Adult drink')} ${after.drinkAdult}`)
+      if (after.drinkChild) parts.push(`${tr('Child drink')} ${after.drinkChild}`)
+      return { title: `${tr('Seat table')} ${after.table}`, diffs: parts, tone: 'ok' as const }
     }
     case 'modify_check': {
       for (const f of FIELDS) {
@@ -88,14 +88,14 @@ function describe(op: HistoryOp, before: Snapshot, after: Snapshot) {
         if (a !== b) diffs.push(`${tr(f.label)} ${a} → ${b}`)
       }
       return {
-        title: '改单',
-        diffs: diffs.length ? diffs : ['（数量没有变化）'],
+        title: tr('Edit check'),
+        diffs: diffs.length ? diffs : [tr('(no change in the counts)')],
         tone: 'warn' as const,
       }
     }
     case 'transfer_check':
       return {
-        title: '换桌',
+        title: tr('Transfer'),
         diffs: [`${before.table || '?'} → ${after.table}`],
         tone: 'warn' as const,
       }
@@ -103,44 +103,44 @@ function describe(op: HistoryOp, before: Snapshot, after: Snapshot) {
       const n = (p.source_uuids ?? []).length
       const isTarget = p.check_uuid !== undefined && p.check_uuid !== null
       return {
-        title: '并桌',
-        diffs: [isTarget ? `并入了 ${n} 张单` : '本单被并入其它单'],
+        title: tr('Merge'),
+        diffs: [isTarget ? `${tr('Folded in')} ${n}` : tr('This check was folded into another')],
         tone: 'warn' as const,
       }
     }
     case 'close_check': {
       const pay = p.payment
       return {
-        title: '结账',
+        title: tr('Collect'),
         diffs: pay
           ? [
-              `支付方式：${PAY_LABEL[pay.method] ?? pay.method}`,
+              `${tr('Payment method')}: ${tr(PAY_LABEL[pay.method] ?? pay.method)}`,
               ...(pay.method === 'mixed'
-                ? [`现金 ${money(pay.cash_cents ?? 0)} / 刷卡 ${money(pay.card_cents ?? 0)}`]
+                ? [`${tr('Cash')} ${money(pay.cash_cents ?? 0)} / ${tr('Card')} ${money(pay.card_cents ?? 0)}`]
                 : []),
               ...(pay.note ? [pay.note] : []),
             ]
-          : ['未记录支付方式'],
+          : [tr('No payment method recorded')],
         tone: 'ok' as const,
       }
     }
     case 'set_payment': {
       const pay = p.payment ?? {}
       return {
-        title: '改支付方式',
+        title: tr('Change payment method'),
         diffs: [
-          `改为 ${PAY_LABEL[pay.method] ?? pay.method}`,
+          `${tr('Changed to')} ${tr(PAY_LABEL[pay.method] ?? pay.method)}`,
           ...(pay.note ? [pay.note] : []),
         ],
         tone: 'warn' as const,
       }
     }
     case 'void_check':
-      return { title: '作废', diffs: [p.reason ?? ''], tone: 'bad' as const }
+      return { title: tr('Void'), diffs: [p.reason ?? ''], tone: 'bad' as const }
     case 'restore_check':
       return {
-        title: '撤销作废',
-        diffs: p.reason ? [p.reason] : ['恢复为作废前的状态'],
+        title: tr('Undo void'),
+        diffs: p.reason ? [p.reason] : [tr('Restored to the status before the void')],
         tone: 'ok' as const,
       }
     default:
@@ -164,11 +164,11 @@ export default function CheckHistory({
     authFetch(`/api/checks/${checkUuid}/history`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then(setOps)
-      // 历史来自服务端 —— 离线时看不了。说清楚，别装成"没有历史"
-      .catch(() => setErr('需要联网才能查看历史'))
+      // The history comes from the server -- unavailable offline. Say so rather than pretending there is none
+      .catch(() => setErr(tr('Needs a connection to load the history')))
   }, [checkUuid])
 
-  // 逐条重放，边放边算出每一步的前后差异
+  // Replay one by one, computing each step's before and after as it goes
   const items: { op: HistoryOp; d: ReturnType<typeof describe> }[] = []
   let s = EMPTY
   for (const op of ops ?? []) {
@@ -180,11 +180,11 @@ export default function CheckHistory({
   return (
     <div className="sheet-back" onClick={onClose}>
       <div className="sheet wide" onClick={(e) => e.stopPropagation()}>
-        <h2>{tableLabel} 操作历史</h2>
+        <h2>{tableLabel} {tr('History')}</h2>
 
         {err && <p className="hint">{err}</p>}
-        {!ops && !err && <p className="hint">{tr('载入中…')}</p>}
-        {ops?.length === 0 && <p className="hint">{tr('还没有同步到服务器，暂无历史。')}</p>}
+        {!ops && !err && <p className="hint">{tr('Loading…')}</p>}
+        {ops?.length === 0 && <p className="hint">{tr('Not synced yet, no history.')}</p>}
 
         <ol className="timeline">
           {items.map(({ op, d }) => (
@@ -206,10 +206,10 @@ export default function CheckHistory({
           ))}
         </ol>
 
-        <p className="hint">{tr('历史来自服务端的操作日志，**每一条都记录了是谁、什么时候做的**， 不能删改。')}</p>
+        <p className="hint">{tr('History comes from the server operation log — who did what and when. It cannot be edited.')}</p>
 
         <div className="sheet-actions">
-          <button onClick={onClose}>{tr('关闭')}</button>
+          <button onClick={onClose}>{tr('Close')}</button>
         </div>
       </div>
     </div>

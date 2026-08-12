@@ -5,9 +5,10 @@ import type { Guests } from './checks'
 import type { LocalCheck } from './db'
 
 /**
- * 改单弹层。与开桌页共用同一套加减器，但语义不同：
- * 这里提交的是**最终值**（整体替换），不是增量 —— 见 checks.py 里
- * modify_check 的说明：增量在离线重放时会算错。
+ * The edit sheet. It shares the steppers with the open-table sheet, but means
+ * something different: what it submits is the **final value** (a wholesale
+ * replacement), not a delta -- see modify_check in checks.py, where a delta
+ * comes out wrong on offline replay.
  */
 export default function EditSheet({
   check,
@@ -57,14 +58,14 @@ export default function EditSheet({
   return (
     <div className="sheet-back" onClick={onCancel}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <h2>改单 {check.table_label}</h2>
+        <h2>{tr('Edit check')} {check.table_label}</h2>
 
-        <Row label={tr('成人')} v={guests.adult} on={(d) => bumpG('adult', d)} />
-        <Row label={tr('儿童')} v={guests.child} on={(d) => bumpG('child', d)} />
-        <Row label={tr('长者')} v={guests.senior} on={(d) => bumpG('senior', d)} />
+        <Row label={tr('Adult')} v={guests.adult} on={(d) => bumpG('adult', d)} />
+        <Row label={tr('Child')} v={guests.child} on={(d) => bumpG('child', d)} />
+        <Row label={tr('Senior')} v={guests.senior} on={(d) => bumpG('senior', d)} />
         <div className="divider" />
-        <Row label={tr('成人饮料')} v={drinks.adult} on={(d) => bumpD('adult', d)} />
-        <Row label={tr('儿童饮料')} v={drinks.child} on={(d) => bumpD('child', d)} />
+        <Row label={tr('Adult drink')} v={drinks.adult} on={(d) => bumpD('adult', d)} />
+        <Row label={tr('Child drink')} v={drinks.child} on={(d) => bumpD('child', d)} />
 
         <p className="total">
           {money(est)}
@@ -77,7 +78,7 @@ export default function EditSheet({
         </p>
 
         <div className="sheet-actions">
-          <button onClick={onCancel}>{tr('取消')}</button>
+          <button onClick={onCancel}>{tr('Cancel')}</button>
           <button
             className="primary"
             disabled={busy || (total === 0 && totalDrinks === 0)}
@@ -90,7 +91,7 @@ export default function EditSheet({
               }
             }}
           >
-            {busy ? '…' : '保存'}
+            {busy ? '…' : tr('Save')}
           </button>
         </div>
       </div>

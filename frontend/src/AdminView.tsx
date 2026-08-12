@@ -4,20 +4,22 @@ import { authFetch, getIdentity, refreshIdentity } from './auth'
 import { money, refreshCatalog } from './catalog'
 
 /**
- * 老板后台。人头价 / 菜价 / 加料目录 / 账户。
+ * The owner's back office: per-head prices / dish prices / add-ons / accounts.
  *
- * ⚠️ 只给 admin。DESIGN.md 的权限矩阵里「改菜单/价格」只有老板打勾 ——
- *    改价能让每一单的钱都变，和录小费、设税率不是一个量级。
- *    前端这层只是门控，真正拦住的是服务端的 require_role("admin")。
+ * ⚠️ admin only. In DESIGN.md's permission matrix, "edit menu / prices" is
+ *    ticked for the owner alone -- a price change moves the money on every
+ *    check, which is not the same league as entering tips or setting a rate.
+ *    This layer only gates the UI; require_role("admin") on the server is what stops it.
  *
- * 三块的**改价语义不一样**，界面上必须说清楚，否则老板会以为都一样：
- *   · 人头价：换生效日 = 新增一版，旧价原样留着（月报要回查）
- *   · 菜价  ：直接改，因为账单落的是 unit_price_cents 快照
- *   · 加料  ：整份替换，顺序就是列表顺序；删掉的是停用不是删除
+ * The three blocks have **different edit semantics**, and the page has to say
+ * so or the owner will assume they are alike:
+ *   - per-head: a new effective date adds a version, the old prices stay (the month report looks them up)
+ *   - dishes:   edited in place, because a check stores a unit_price_cents snapshot
+ *   - add-ons:  replaced wholesale, order = list order; removing deactivates rather than deletes
  *
- * 账户页只做「看名字、改名字、重设密码」。**看不到原密码** ——
- * 库里是 argon2 哈希，不可逆。界面上必须把这句话说出来，
- * 否则老板会以为是自己没找到。
+ * The accounts tab only does "see the names, change the names, reset the
+ * password". **The password itself cannot be seen** -- it is an argon2 hash and
+ * irreversible. The page has to say that, or the owner will assume they simply cannot find it.
  */
 
 interface BuffetRow {
@@ -54,7 +56,7 @@ interface Pricing {
   business_date: string
 }
 
-/** 自助餐台上的一格。没有 id = 老板刚加的。 */
+/** One slot on the buffet. No id = the owner just added it. */
 interface BoardRow {
   id: number | null
   page: number
@@ -69,15 +71,14 @@ interface UserRow {
   display_name: string
   role: string
   role_label: string
-  role_label_en: string
   active: boolean
-  /** 这个账号现在有几个没过期、没登出的会话 */
+  /** How many sessions this account has that are neither expired nor signed out */
   sessions: number
 }
 
-const PERIOD: Record<string, string> = { lunch: '午市', dinner: '晚市' }
-const KIND: Record<string, string> = { admission: '自助餐', drink: '饮料' }
-const GUEST: Record<string, string> = { adult: '成人', child: '儿童', senior: '长者' }
+const PERIOD: Record<string, string> = { lunch: 'Lunch', dinner: 'Dinner' }
+const KIND: Record<string, string> = { admission: 'Buffet', drink: 'Drinks' }
+const GUEST: Record<string, string> = { adult: 'Adult', child: 'Child', senior: 'Senior' }
 
 type Tab = 'buffet' | 'menu' | 'mods' | 'users' | 'board'
 
@@ -88,20 +89,20 @@ export default function AdminView() {
   const [busy, setBusy] = useState(false)
   const [tab, setTab] = useState<Tab>('buffet')
 
-  // 各自的草稿。**不直接改 data** —— 没保存就切走要能原样回来
+  // A draft per section. **data is never edited directly** -- switching away without saving has to come back unchanged
   const [buffet, setBuffet] = useState<Record<string, number>>({})
   const [effFrom, setEffFrom] = useState('')
   const [menuEdit, setMenuEdit] = useState<Record<number, { price: number | null; active: boolean }>>({})
   const [mods, setMods] = useState<ModRow[]>([])
   const [q, setQ] = useState('')
 
-  // 账户。单独拉 —— 改价页天天开，账户一年动不了两次，没必要每次都查。
+  // Accounts are fetched separately: the pricing page is opened daily, accounts twice a year.
   const [users, setUsers] = useState<UserRow[] | null>(null)
   const [uEdit, setUEdit] = useState<Record<number, { username: string; display_name: string }>>({})
   const [pw, setPw] = useState<Record<number, string>>({})
   const [me, setMe] = useState<string | null>(null)
 
-  // 自助餐台。午市晚市各一块板，分开保存。
+  // The buffet board. One board for lunch and one for dinner, saved separately.
   const [board, setBoard] = useState<Record<string, BoardRow[]> | null>(null)
   const [bPeriod, setBPeriod] = useState<'lunch' | 'dinner'>('lunch')
   const [bDraft, setBDraft] = useState<Record<string, BoardRow[]>>({})
@@ -121,7 +122,7 @@ export default function AdminView() {
       )
       setMods(d.modifiers.filter((m) => m.active).map((m) => ({ ...m })))
     } catch (e) {
-      setErr(tr(String(e).includes('403') ? '只有老板账号能改价' : '需要联网才能读取'))
+      setErr(tr(String(e).includes('403') ? 'Only the owner account can change prices' : 'Needs a connection to load this'))
     }
   }, [])
 
@@ -147,7 +148,7 @@ export default function AdminView() {
       takeUsers(((await res.json()) as { users: UserRow[] }).users)
       setMe((await getIdentity())?.username ?? null)
     } catch {
-      setErr(tr('需要联网才能读取'))
+      setErr(tr('Needs a connection to load this'))
     }
   }, [takeUsers])
 
@@ -167,7 +168,7 @@ export default function AdminView() {
       if (!res.ok) throw new Error(String(res.status))
       takeBoard(((await res.json()) as { board: Record<string, BoardRow[]> }).board)
     } catch {
-      setErr(tr('需要联网才能读取'))
+      setErr(tr('Needs a connection to load this'))
     }
   }, [takeBoard])
 
@@ -175,7 +176,7 @@ export default function AdminView() {
     if (tab === 'board' && board === null) void loadBoardRows()
   }, [tab, board, loadBoardRows])
 
-  /** 一块板保存后要刷 catalog —— 补菜页读的是缓存的那一份。 */
+  /** Saving a board refreshes the catalog -- the refill page reads the cached copy. */
   async function saveBoard() {
     setBusy(true)
     setErr(null)
@@ -193,7 +194,7 @@ export default function AdminView() {
       }
       takeBoard(((await res.json()) as { board: Record<string, BoardRow[]> }).board)
       await refreshCatalog()
-      setMsg(tr('台面已保存，补菜页立刻就是新的。'))
+      setMsg(tr('Board saved. The refill page has it already.'))
     } catch (e) {
       setErr(String(e).replace(/^Error:\s*/, ''))
     } finally {
@@ -219,18 +220,18 @@ export default function AdminView() {
         Object.fromEntries(d.menu.map((m) => [m.id, { price: m.price_cents, active: m.active }])),
       )
       setMods(d.modifiers.filter((m) => m.active).map((m) => ({ ...m })))
-      // 前台缓存的菜单/价格/加料都从 catalog 来 —— 不刷新的话
-      // iPad 上还会用旧价显示，直到下次冷启动
+      // The floor's cached menu, prices and add-ons all come from the catalog --
+      // without a refresh the iPad keeps showing the old prices until its next cold start
       await refreshCatalog()
-      setMsg(`${what} · ${tr('已保存。前台会用新价，已经开出去的单不受影响。')}`)
+      setMsg(`${what} · ${tr('saved. The floor will use the new prices; checks already open are unaffected.')}`)
     } catch {
-      setErr(tr('保存失败，检查网络后重试'))
+      setErr(tr('Save failed, check the connection and retry'))
     } finally {
       setBusy(false)
     }
   }
 
-  /** 账户的写入。三个入口都回整份列表，直接换掉本地状态。 */
+  /** Account writes. All three return the whole list, which replaces local state. */
   async function saveUser(path: string, body: unknown, ok: string) {
     setBusy(true)
     setErr(null)
@@ -242,15 +243,16 @@ export default function AdminView() {
         body: JSON.stringify(body),
       })
       if (!res.ok) {
-        // 登录名重复是唯一一个老板真会撞上的错误，值得一句翻过的人话。
-        // 其它的照搬服务端 detail —— 那些是不该发生的情况，
-        // 原样显示比翻译成一句糊话更有助于排查。
-        if (res.status === 409) throw new Error(tr('这个登录名已经有人用了'))
+        // A duplicate username is the only error the owner will really hit, so it
+        // is worth a translated sentence. Everything else passes the server's
+        // detail through -- those should not happen, and the raw text helps more
+        // than a vague translation.
+        if (res.status === 409) throw new Error(tr('That username is already taken'))
         const d = await res.json().catch(() => null)
         throw new Error(d?.detail ?? String(res.status))
       }
       takeUsers(((await res.json()) as { users: UserRow[] }).users)
-      // 改的是自己的名字时，本地缓存的身份会过期（顶栏还显示旧名字）
+      // When it is their own name, the cached identity goes stale (the header still shows the old one)
       await refreshIdentity().catch(() => null)
       setMe((await getIdentity())?.username ?? null)
       setMsg(ok)
@@ -261,7 +263,7 @@ export default function AdminView() {
     }
   }
 
-  /** 改某一格。原来空着就新建一行（id=null → 服务端当新增）。 */
+  /** Edit one slot. An empty one becomes a new row (id=null -> the server adds it). */
   function setSlot(page: number, pos: number, patch: Partial<BoardRow>) {
     setBDraft((s) => {
       const rows = [...(s[bPeriod] ?? [])]
@@ -275,7 +277,7 @@ export default function AdminView() {
     })
   }
 
-  /** 清空一格。保存时它就不在列表里了 → 服务端停用（不是删除）。 */
+  /** Clear a slot. It is then absent from the saved list -> the server deactivates it (never deletes). */
   function clearSlot(page: number, pos: number) {
     setBDraft((s) => ({
       ...s,
@@ -295,7 +297,7 @@ export default function AdminView() {
   }, [data, q])
 
   if (err && !data) return <p className="hint">{err}</p>
-  if (!data) return <p className="hint">{tr('载入中…')}</p>
+  if (!data) return <p className="hint">{tr('Loading…')}</p>
 
   const buffetDirty = data.buffet.some((b) => buffet[bkey(b)] !== b.price_cents)
     || effFrom !== data.buffet_effective_from
@@ -313,19 +315,19 @@ export default function AdminView() {
     <>
       <div className="tabs sub">
         <button className={tab === 'buffet' ? 'on' : ''} onClick={() => setTab('buffet')}>
-          {tr('自助餐 / 饮料')}{buffetDirty && <span className="cnt warn">{tr('改')}</span>}
+          {tr('Buffet & drinks')}{buffetDirty && <span className="cnt warn">{tr('edited')}</span>}
         </button>
         <button className={tab === 'menu' ? 'on' : ''} onClick={() => setTab('menu')}>
-          {tr('菜单价')}{menuDirty && <span className="cnt warn">{tr('改')}</span>}
+          {tr('Menu prices')}{menuDirty && <span className="cnt warn">{tr('edited')}</span>}
         </button>
         <button className={tab === 'mods' ? 'on' : ''} onClick={() => setTab('mods')}>
-          {tr('常用要求')}{modsDirty && <span className="cnt warn">{tr('改')}</span>}
+          {tr('Common requests')}{modsDirty && <span className="cnt warn">{tr('edited')}</span>}
         </button>
         <button className={tab === 'board' ? 'on' : ''} onClick={() => setTab('board')}>
-          {tr('补菜台')}
+          {tr('Buffet board')}
         </button>
         <button className={tab === 'users' ? 'on' : ''} onClick={() => setTab('users')}>
-          {tr('账户')}
+          {tr('Accounts')}
         </button>
       </div>
 
@@ -335,16 +337,16 @@ export default function AdminView() {
       {tab === 'buffet' && (
         <>
           <p className="hint warnbox">
-            {tr('换一个生效日 = 新增一版，旧价原样留着（月报和对账要回查当时卖多少钱）。同一个生效日重复保存 = 改回来，不算调价。')}
+            {tr('A new effective date adds a version and keeps the old prices — reports and reconciliation need to know what a seat cost on a given day. Saving twice on the same date is a correction, not a price change.')}
           </p>
 
           <label className="reason">
-            {tr('生效日期')}
+            {tr('Effective from')}
             <input type="date" value={effFrom} onChange={(e) => setEffFrom(e.target.value)} />
           </label>
           <p className="hint">
-            {tr('当前这版生效于')} <b>{data.buffet_effective_from ?? '—'}</b>
-            {' · '}{tr('今天的营业日')} <b>{data.business_date}</b>
+            {tr('This version applies from')} <b>{data.buffet_effective_from ?? '—'}</b>
+            {' · '}{tr("today's business day is")} <b>{data.business_date}</b>
           </p>
 
           {(['lunch', 'dinner'] as const).map((p) => (
@@ -363,7 +365,7 @@ export default function AdminView() {
                         onChange={(v) => setBuffet((s) => ({ ...s, [bkey(b)]: v }))}
                       />
                       {buffet[bkey(b)] !== b.price_cents && (
-                        <span className="pc-was">{tr('原')} {money(b.price_cents)}</span>
+                        <span className="pc-was">{tr('was')} {money(b.price_cents)}</span>
                       )}
                     </label>
                   ))}
@@ -372,7 +374,7 @@ export default function AdminView() {
           ))}
 
           <div className="sheet-actions">
-            <button onClick={load} disabled={busy}>{tr('撤销改动')}</button>
+            <button onClick={load} disabled={busy}>{tr('Discard changes')}</button>
             <button
               className="primary"
               disabled={busy || !buffetDirty || !effFrom}
@@ -388,11 +390,11 @@ export default function AdminView() {
                       price_cents: buffet[bkey(b)] ?? b.price_cents,
                     })),
                   },
-                  tr('人头价'),
+                  tr('Per-head prices'),
                 )
               }
             >
-              {busy ? tr('保存中…') : buffetDirty ? tr('保存人头价') : tr('未改动')}
+              {busy ? tr('Saving…') : buffetDirty ? tr('Save buffet prices') : tr('No changes')}
             </button>
           </div>
         </>
@@ -401,13 +403,13 @@ export default function AdminView() {
       {tab === 'menu' && (
         <>
           <p className="hint">
-            {tr('改菜价不影响已经开出去的单 —— 下单时存的是当时的价格快照。下架的菜不再出现在点菜页，历史账单照常显示。')}
+            {tr('Changing a dish price does not touch checks already open — the price is snapshotted when the dish is ordered. A dish taken off keeps showing on past checks.')}
           </p>
           <input
             className="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={tr('搜菜名（中文或英文）')}
+            placeholder={tr('Search dishes')}
           />
 
           {cats.map((c) => {
@@ -427,8 +429,8 @@ export default function AdminView() {
                           <small>{m.name_en}</small>
                         </span>
                         {m.open_price ? (
-                          // 按重量称的条目没有固定价，服务端也拒绝设死
-                          <span className="pc-open">{tr('现场输金额')}</span>
+                          // Items sold by weight have no fixed price, and the server refuses to pin one
+                          <span className="pc-open">{tr('Amount entered on the spot')}</span>
                         ) : (
                           <Money
                             cents={e?.price ?? 0}
@@ -443,7 +445,7 @@ export default function AdminView() {
                             setMenuEdit((s) => ({ ...s, [m.id]: { ...s[m.id], active: !s[m.id].active } }))
                           }
                         >
-                          {e?.active ? tr('在售') : tr('已下架')}
+                          {e?.active ? tr('On sale') : tr('Off menu')}
                         </button>
                       </div>
                     )
@@ -454,7 +456,7 @@ export default function AdminView() {
           })}
 
           <div className="sheet-actions">
-            <button onClick={load} disabled={busy}>{tr('撤销改动')}</button>
+            <button onClick={load} disabled={busy}>{tr('Discard changes')}</button>
             <button
               className="primary"
               disabled={busy || !menuDirty}
@@ -468,11 +470,11 @@ export default function AdminView() {
                       active: menuEdit[m.id]?.active ?? m.active,
                     })),
                   },
-                  tr('菜价'),
+                  tr('Dish prices'),
                 )
               }
             >
-              {busy ? tr('保存中…') : menuDirty ? tr('保存菜价') : tr('未改动')}
+              {busy ? tr('Saving…') : menuDirty ? tr('Save menu prices') : tr('No changes')}
             </button>
           </div>
         </>
@@ -481,10 +483,10 @@ export default function AdminView() {
       {tab === 'mods' && (
         <>
           <p className="hint">
-            {tr('点菜「定制」里的常用要求。上下箭头调顺序，顺序就是点菜页的显示顺序。免费的填 0。')}
+            {tr('The add-ons offered under "Customise" when ordering. The arrows set the order they appear in. Put 0 for free ones.')}
           </p>
           <p className="hint warnbox">
-            {tr('删掉一条是停用，不是删除 —— 历史账单上加过这一项的记录必须留着。停用后它不再出现在点菜页，已经开出去的单照常显示。')}
+            {tr('Removing one deactivates it rather than deleting it — past checks that used it have to keep their record. It stops appearing when ordering; existing checks still show it.')}
           </p>
 
           <div className="mod-edit-list">
@@ -496,10 +498,10 @@ export default function AdminView() {
                 </div>
                 <input
                   className="me-name"
-                  // 这里在**编辑中文名**，不是显示 —— 绑 name_zh，不跟界面语言走
+                  // This **edits the Chinese name**, it does not display one -- bound to name_zh, not to the interface language
                   value={m.name_zh}
                   onChange={(e) => setMods(patch(mods, i, { name_zh: e.target.value }))}
-                  placeholder={tr('中文名，例如 加虾')}
+                  placeholder={tr('Name, e.g. Add shrimp')}
                 />
                 <input
                   className="me-en"
@@ -511,7 +513,7 @@ export default function AdminView() {
                   cents={m.price_cents}
                   onChange={(v) => setMods(patch(mods, i, { price_cents: v }))}
                 />
-                <button className="me-del" onClick={() => setMods(mods.filter((_, j) => j !== i))}>{tr('删除')}</button>
+                <button className="me-del" onClick={() => setMods(mods.filter((_, j) => j !== i))}>{tr('Delete')}</button>
               </div>
             ))}
           </div>
@@ -519,10 +521,10 @@ export default function AdminView() {
           <button
             className="linkbtn wide"
             onClick={() => setMods([...mods, { id: null, name_zh: '', name_en: '', price_cents: 0 }])}
-          >{tr('＋ 加一条')}</button>
+          >{tr('+ Add one')}</button>
 
           <div className="sheet-actions">
-            <button onClick={load} disabled={busy}>{tr('撤销改动')}</button>
+            <button onClick={load} disabled={busy}>{tr('Discard changes')}</button>
             <button
               className="primary"
               disabled={busy || !modsDirty || mods.some((m) => !m.name_zh.trim())}
@@ -537,11 +539,11 @@ export default function AdminView() {
                       price_cents: m.price_cents,
                     })),
                   },
-                  tr('常用要求'),
+                  tr('Common requests'),
                 )
               }
             >
-              {busy ? tr('保存中…') : modsDirty ? tr('保存常用要求') : tr('未改动')}
+              {busy ? tr('Saving…') : modsDirty ? tr('Save requests') : tr('No changes')}
             </button>
           </div>
         </>
@@ -550,27 +552,27 @@ export default function AdminView() {
       {tab === 'board' && (
         <>
           <p className="hint">
-            {tr('自助餐台上摆的菜。3 页 × 10 格，午市晚市各一块板，台前照这个顺序显示。')}
+            {tr('The dishes out on the buffet. Three pages of ten, one board for lunch and one for dinner, shown in this order.')}
           </p>
           <p className="hint warnbox">
-            {tr('改名字 = 同一道菜换个写法，消耗记录接得上。换成另一道菜请清空这一格再填新的 —— 直接改名会让新菜继承旧菜的历史。')}
+            {tr('Renaming keeps the same dish and its history. To put a different dish in a slot, clear it first and type the new one — renaming in place would hand the old dish’s history to the new one.')}
           </p>
 
           <div className="seg">
             {(['lunch', 'dinner'] as const).map((p) => (
               <button key={p} className={bPeriod === p ? 'on' : ''} onClick={() => setBPeriod(p)}>
-                {tr(p === 'lunch' ? '午市' : '晚市')}
+                {tr(p === 'lunch' ? 'Lunch' : 'Dinner')}
               </button>
             ))}
           </div>
 
           {board === null ? (
-            <p className="hint">{tr('载入中…')}</p>
+            <p className="hint">{tr('Loading…')}</p>
           ) : (
             <>
               {[1, 2, 3].map((pg) => (
                 <section key={pg}>
-                  <h3 className="zone">{tr('第 N 页').replace('N', String(pg))}</h3>
+                  <h3 className="zone">{tr('Page N').replace('N', String(pg))}</h3>
                   <div className="board-edit">
                     {Array.from({ length: 10 }, (_, i) => i + 1).map((pos) => {
                       const row = (bDraft[bPeriod] ?? []).find(
@@ -580,9 +582,9 @@ export default function AdminView() {
                         <div key={pos} className={`board-row${row ? '' : ' blank'}`}>
                           <span className="bp">{pos}</span>
                           <input
-                            // 编辑的是**中文名**，不跟界面语言走
+                            // What is edited is the **Chinese name**; it does not follow the interface language
                             value={row?.name_zh ?? ''}
-                            placeholder={tr('空格')}
+                            placeholder={tr('empty')}
                             onChange={(e) => setSlot(pg, pos, { name_zh: e.target.value })}
                           />
                           <input
@@ -596,7 +598,7 @@ export default function AdminView() {
                             disabled={!row}
                             onClick={() => clearSlot(pg, pos)}
                           >
-                            {tr('清空')}
+                            {tr('Clear')}
                           </button>
                         </div>
                       )
@@ -606,9 +608,9 @@ export default function AdminView() {
               ))}
 
               <div className="sheet-actions">
-                <button onClick={loadBoardRows} disabled={busy}>{tr('撤销改动')}</button>
+                <button onClick={loadBoardRows} disabled={busy}>{tr('Discard changes')}</button>
                 <button className="primary" disabled={busy} onClick={saveBoard}>
-                  {busy ? tr('保存中…') : tr('保存这块板')}
+                  {busy ? tr('Saving…') : tr('Save this board')}
                 </button>
               </div>
             </>
@@ -619,14 +621,14 @@ export default function AdminView() {
       {tab === 'users' && (
         <>
           <p className="hint">
-            {tr('每个人一个账号，账单上「谁操作的」就是这里的名字。')}
+            {tr('One account per person. The name here is what shows up as "who did this" on a check.')}
           </p>
           <p className="hint warnbox">
-            {tr('密码在库里是不可逆的哈希，看不到原文 —— 只能重设一个新的。重设会把这个账号在所有设备上的登录踢掉（最多 15 分钟内生效）。')}
+            {tr('Passwords are stored as a one-way hash, so they cannot be shown — only replaced. Resetting one signs that account out on every device (within 15 minutes).')}
           </p>
 
           {users === null ? (
-            <p className="hint">{tr('载入中…')}</p>
+            <p className="hint">{tr('Loading…')}</p>
           ) : (
             <div className="acct-list">
               {users.map((u) => {
@@ -638,20 +640,20 @@ export default function AdminView() {
                   <section key={u.id} className="acct">
                     <div className="ac-top">
                       <span className="ac-role">
-                        {catLabel({ label: u.role_label, label_en: u.role_label_en })}
+                        {tr(u.role_label)}
                       </span>
-                      {isMe && <span className="cnt">{tr('当前登录')}</span>}
+                      {isMe && <span className="cnt">{tr('You')}</span>}
                       <span className="ac-sess">
                         {u.sessions > 0
-                          ? `${u.sessions} ${tr('处登录')}`
-                          : tr('没有设备登录')}
+                          ? `${u.sessions} ${tr('signed in')}`
+                          : tr('No device signed in')}
                       </span>
                     </div>
 
                     <label className="reason">
-                      {tr('显示名')}
+                      {tr('Display name')}
                       <input
-                        // 显示名是**数据**（账单上要看到它），跟着界面语言走没有意义
+                        // A display name is **data** (it appears on checks), so following the interface language would make no sense
                         value={e?.display_name ?? ''}
                         onChange={(ev) =>
                           setUEdit((s) => ({
@@ -662,7 +664,7 @@ export default function AdminView() {
                       />
                     </label>
                     <label className="reason">
-                      {tr('登录名')}
+                      {tr('Username')}
                       <input
                         value={e?.username ?? ''}
                         autoCapitalize="off"
@@ -686,7 +688,7 @@ export default function AdminView() {
                           }))
                         }
                       >
-                        {tr('撤销改动')}
+                        {tr('Discard changes')}
                       </button>
                       <button
                         className="primary"
@@ -698,21 +700,21 @@ export default function AdminView() {
                               username: e.username.trim(),
                               display_name: e.display_name.trim(),
                             },
-                            tr('名字已保存'),
+                            tr('Name saved'),
                           )
                         }
                       >
-                        {busy ? tr('保存中…') : dirty ? tr('保存') : tr('未改动')}
+                        {busy ? tr('Saving…') : dirty ? tr('Save') : tr('No changes')}
                       </button>
                     </div>
 
                     <label className="reason">
-                      {tr('新密码')}
+                      {tr('New password')}
                       <input
-                        // 刻意**不遮码**：老板设完要念给员工听，遮起来只会让他
-                        // 打错了也不知道。这不是在输入自己的密码。
+                        // Deliberately **not masked**: the owner reads it out to the
+                        // member of staff, and masking only hides their own typos. This is not their own password.
                         value={pw[u.id] ?? ''}
-                        placeholder={tr('至少 4 位')}
+                        placeholder={tr('At least 4 characters')}
                         autoCapitalize="off"
                         autoCorrect="off"
                         onChange={(ev) => setPw((s) => ({ ...s, [u.id]: ev.target.value }))}
@@ -725,13 +727,13 @@ export default function AdminView() {
                         saveUser(
                           `users/${u.id}/password`,
                           { password: pw[u.id].trim() },
-                          `${tr(u.display_name)} · ${tr('新密码已生效，原有登录已全部失效')}${
-                            isMe ? ` · ${tr('你自己也要用新密码重新登录')}` : ''
+                          `${tr(u.display_name)} · ${tr('new password is live, every existing sign-in was revoked')}${
+                            isMe ? ` · ${tr('you will have to sign in again with it')}` : ''
                           }`,
                         )
                       }
                     >
-                      {tr('重设密码')}
+                      {tr('Reset password')}
                     </button>
                   </section>
                 )
@@ -759,11 +761,12 @@ function patch(a: ModRow[], i: number, p: Partial<ModRow>): ModRow[] {
 }
 
 /**
- * 金额输入。**按元输入、按分存**。
+ * Amount input. **Typed in dollars, stored in cents.**
  *
- * 这一页是老板在办公室慢慢改的，不是高峰期盲按 —— 所以用普通输入框
- * 而不是 POS 键盘：一次要改几十个价，弹键盘反而慢。
- * 但存的仍然是分，绝不用浮点算钱。
+ * This page is the owner editing prices in the back office, not blind tapping at
+ * peak, so it uses a normal input rather than the POS keypad: with dozens of
+ * prices to change, a keypad is slower.
+ * What is stored is still cents -- money is never a float.
  */
 function Money({ cents, onChange }: { cents: number; onChange: (cents: number) => void }) {
   const [text, setText] = useState((cents / 100).toFixed(2))
@@ -777,7 +780,7 @@ function Money({ cents, onChange }: { cents: number; onChange: (cents: number) =
         onChange={(e) => {
           setText(e.target.value)
           const v = Number(e.target.value)
-          // 四舍五入到分再存 —— 输 "12.345" 不能变成 1234.5 分
+          // Round to cents before storing -- "12.345" must not become 1234.5 cents
           if (Number.isFinite(v) && v >= 0) onChange(Math.round(v * 100))
         }}
         onBlur={() => setText((cents / 100).toFixed(2))}

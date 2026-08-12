@@ -31,16 +31,16 @@ import {
 } from './sync'
 
 const ROLE_LABEL: Record<Identity['role'], string> = {
-  front_employee: '前台员工',
-  front_manager: '前台主管',
-  kitchen: '后厨',
-  admin: '老板',
+  front_employee: 'Front staff',
+  front_manager: 'Front manager',
+  kitchen: 'Kitchen',
+  admin: 'Owner',
 }
 
 export default function App() {
   const [booting, setBooting] = useState(true)
-  // ⚠️ 只有 App 订阅语言就够：项目里没有任何 React.memo，
-  //    App 一重渲染，整棵树都会重新求值 tr()。不用把每个组件都包一遍。
+  // ⚠️ Only App needs to subscribe to the language: nothing here is
+  //    React.memo, so one re-render of App re-evaluates every tr() in the tree.
   const lang = useLang()
   const [identity, setIdentity] = useState<Identity | null>(null)
 
@@ -50,7 +50,7 @@ export default function App() {
   >([])
   const [online, setOnline] = useState(navigator.onLine)
   const [last, setLast] = useState<string>('—')
-  /** 同步的原始计数，只在「未上传」详情里给排障用 */
+  /** Raw sync counters, shown only in the "pending" detail for troubleshooting */
   const [detail, setDetail] = useState<string>('—')
   const [tone, setTone] = useState<'ok' | 'warn' | 'bad'>('ok')
   const [dead, setDead] = useState(0)
@@ -61,16 +61,16 @@ export default function App() {
   const [showSync, setShowSync] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
 
-  // 身份从 IndexedDB 读，**不需要网络** ——
-  // 离线冷启动时也能立刻渲染出正确的角色界面
+  // The identity is read from IndexedDB, **no network needed** -- an offline
+  // cold start still renders the right role immediately
   useEffect(() => {
-    // 语言和身份一起读 —— 先渲染再切会闪一下
+    // Language and identity are read together; rendering first and switching after flickers
     void initLang()
     getIdentity()
       .then((id) => {
         setIdentity(id)
-        // 联网时向服务端确认一次角色 —— 缓存的是登录那一刻的快照，
-        // 角色在服务端被改过的话（比如员工升主管）前端会一直渲染错
+        // Confirm the role with the server when online -- the cache is a snapshot
+        // from sign-in, and a role changed server-side would render wrong forever
         if (id) void refreshIdentity().then((f) => f && setIdentity(f))
       })
       .finally(() => setBooting(false))
@@ -78,42 +78,44 @@ export default function App() {
 
   async function refresh() {
     setPending(await db.outbox.count())
-    // 死信必须可见。看不见的失败等于没发生 —— 而它其实是丢了一单。
+    // Dead letters have to be visible. A failure nobody sees did not happen -- except it lost a check.
     setDead(await db.deadletter.count())
     setEvents(await db.events.orderBy('created_at').reverse().limit(30).toArray())
   }
 
-  // 手动同步和自动触发共用同一个上报路径，
-  // 否则手点的那次不会刷新状态栏，会留下上一次的失败信息（误导性很强）
+    // Manual sync and the automatic triggers report through the same path,
+    // or a manual tap leaves the previous failure on the status bar, which is very misleading
   function report(r: SyncResult | null, f?: SyncFailure) {
     if (r) {
-      // ⚠️ 这里原本直接显示 `applied N · dup N · cursor N`。
-      //    那是调试用的原始数字，店里没人知道 dup 和 cursor 是什么 ——
-      //    而看不懂的状态等于没有状态，出真问题时也不会有人多看一眼。
-      //    人话留在主界面，原始数字挪进「未上传」那个详情里（iPad 上
-      //    没有 devtools，真机排障还得靠它们）。
-      setLast(r.applied > 0 ? `${tr('已上传')} ${r.applied}` : tr('数据都已上传'))
+      // ⚠️ This used to print `applied N · dup N · cursor N`.
+      //    Those are debugging numbers, and nobody in a shop knows what dup and
+      //    cursor mean -- a status nobody understands is no status at all, and
+      //    when something really breaks, nobody looks twice.
+      //    Plain words on the main screen; the raw numbers moved into the
+      //    "pending" detail (an iPad has no devtools, so they are still needed).
+      setLast(r.applied > 0 ? `${tr('Uploaded')} ${r.applied}` : tr('Everything uploaded'))
       setDetail(`applied ${r.applied} · dup ${r.duplicate} · cursor ${r.cursor}`)
       setTone('ok')
     } else if (f?.kind === 'offline') {
-      // 关键：离线**不是错误**。说成"失败"会让员工重复操作。
-      setLast(tr('离线，数据已排队，联网后自动补发'))
+      // The point: offline **is not an error**. Calling it "failed" makes staff redo the work.
+      setLast(tr('Offline. Queued, will send when back online.'))
       setTone('warn')
     } else if (f?.kind === 'auth') {
-      // 会话没了，但**数据仍在排队**，这点必须说清楚
-      setLast(tr('会话已失效，请重新登录（数据仍在排队）'))
+      // The session is gone, but **the data is still queued** -- that has to be said
+      setLast(tr('Session expired, please log in again (your data is still queued)'))
       setTone('bad')
       void getIdentity().then(setIdentity)
     } else {
-      setLast(`${tr('同步出错')}：${f?.message ?? tr('未知')}`)
+      setLast(`${tr('Sync error')}：${f?.message ?? tr('unknown')}`)
       setTone('bad')
     }
     void refresh()
   }
 
-  // 每次登录把页面拨回这个角色的首页。后厨没有楼面那些页 ——
-  // 不拨的话它一进来两个 tab 都不高亮，看不出自己在哪一页；
-  // 换人接班时也该从头开始，而不是停在上一个人最后看的那一页。
+  // Every sign-in lands on that role's home page. The kitchen has none of the
+  // floor pages, and without this neither of its tabs is highlighted, so there
+  // is no telling which page you are on. A shift change should also start fresh
+  // rather than wherever the last person left off.
   useEffect(() => {
     if (!identity) return
     setView(identity.role === 'kitchen' ? 'kitchen' : 'floor')
@@ -131,13 +133,15 @@ export default function App() {
     const uninstall = installSyncTriggers(report)
     void refresh()
 
-    // 归档：本地镜像只保留最近几个营业日。
-    // 只删本机缓存里"已结清 + 已上传 + 早于保留窗口"的单，服务端一条不动，
-    // 月报照样查得到。不做的话本地镜像只增不减，而楼面/清单每 2 秒
-    // 要全表扫一遍算营业日 —— 一年下来 iPad 上会明显变卡。
+    // Archiving: the local mirror keeps only the last few business days.
+    // Only this device's cache, and only checks that are settled, uploaded and
+    // older than the window; the server keeps everything and the month report
+    // still finds them. Without it the mirror only grows, while the floor and the
+    // check list scan the whole table every 2 seconds to work out business days --
+    // a year of that is visibly slow on an iPad.
     void loadCatalog()
       .then((c) => pruneLocalMirror(cutoffHourOf(c)))
-      .then((n) => n > 0 && console.info(`[archive] 本地清理了 ${n} 张旧账单`))
+      .then((n) => n > 0 && console.info(`[archive] cleaned ${n} old checks from the local mirror`))
       .catch(() => {})
 
     return () => {
@@ -148,17 +152,18 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [identity?.username])
 
-  if (booting) return <div className="wrap">{tr('载入中…')}</div>
+  if (booting) return <div className="wrap">{tr('Loading…')}</div>
   if (!identity) return <LoginPage onDone={setIdentity} />
 
   return (
     <div className="wrap">
       <header>
         <span className={online ? 'dot ok' : 'dot bad'} />
-        <strong>{tr(online ? '在线' : '离线')}</strong>
+        <strong>{tr(online ? 'Online' : 'Offline')}</strong>
         <span className="who">
-          {/* 显示名是数据，但种子账号叫「前台主管」这种角色名，词表里有。
-              真人姓名不在词表里，tr() 会原样返回 —— 和 operatorText 一个处理。 */}
+          {/* A display name is data, but the seeded accounts are named after roles
+              ("Front manager"), which the catalogue has. A real person's name is not
+              in it and tr() returns it unchanged -- same handling as operatorText. */}
           {tr(identity.display_name)}
           <span className={`role ${identity.role}`}>{tr(ROLE_LABEL[identity.role])}</span>
         </span>
@@ -167,24 +172,25 @@ export default function App() {
           className={pending ? 'badge warn clickable' : 'badge clickable'}
           onClick={() => setShowSync(true)}
         >
-          {tr('未上传')} {pending}
+          {tr('Pending')} {pending}
         </button>
         {dead > 0 && (
           <button className="badge bad clickable" onClick={() => setShowDead(true)}>
-            {tr('失败')} {dead}
+            {tr('Failed')} {dead}
           </button>
         )}
         <span className="badge build">build {__BUILD__}</span>
-        {/* 一键中英切换。放顶栏是因为它跟角色一样是"整个界面的状态"，
-            而不是某一页的设置 —— 藏进齿轮里，员工换班时找不到。 */}
+        {/* One-tap language switch. In the header because, like the role, it is
+            **the whole interface's state** rather than one page's setting -- buried
+            in the gear icon, a shift change would never find it. */}
         <button
           className="langbtn"
           onClick={() => setLang(getLang() === 'zh' ? 'en' : 'zh')}
-          title={lang === 'zh' ? 'Switch to English' : '切换成中文'}
+          title={tr('Switch language')}
         >
-          {lang === 'zh' ? 'EN' : '中'}
+          {lang === 'zh' ? 'EN' : 'ZH'}
         </button>
-        {/* 设置一年也点不了几次，放个小齿轮就够，不占主界面 */}
+        {/* Settings is tapped a few times a year, so a small gear is enough */}
         {canManage(identity.role) && (
           <button className="linkbtn" onClick={() => setShowSettings(true)}>
             ⚙︎
@@ -193,12 +199,12 @@ export default function App() {
         <button
           className="linkbtn"
           onClick={async () => {
-            // 登出只清凭证，**不动 outbox** —— 未同步的记录属于店里，
-            // 换个人登进来照样要发出去
+            // Signing out clears credentials only and **leaves the outbox alone** --
+            // unsynced records belong to the store and still have to go out
             await logout()
             setIdentity(null)
           }}
-        >{tr('登出')}</button>
+        >{tr('Log out')}</button>
       </header>
 
       {identity.role === 'kitchen' && (
@@ -206,11 +212,11 @@ export default function App() {
           <button
             className={view === 'kitchen' ? 'on' : ''}
             onClick={() => setView('kitchen')}
-          >{tr('订单')}</button>
+          >{tr('Orders')}</button>
           <button
             className={view === 'refill' ? 'on' : ''}
             onClick={() => setView('refill')}
-          >{tr('补菜')}</button>
+          >{tr('Refills')}</button>
         </div>
       )}
 
@@ -219,42 +225,44 @@ export default function App() {
           <button
             className={view === 'floor' ? 'on' : ''}
             onClick={() => setView('floor')}
-          >{tr('楼面')}</button>
+          >{tr('Floor')}</button>
           <button
             className={view === 'togo' ? 'on' : ''}
             onClick={() => setView('togo')}
-          >{tr('自提')}</button>
+          >{tr('To go')}</button>
           <button
             className={view === 'list' ? 'on' : ''}
             onClick={() => setView('list')}
-          >{tr('账单清单')}</button>
-          {/* 补菜前台也要能记：发现菜盘空了的往往是服务员，不是厨师。
-              只给后厨的话，"空了"这个最关键的事件会大量丢失。 */}
+          >{tr('Checks')}</button>
+          {/* The front records refills too: the person who notices an empty tray is
+              usually a server, not a cook. Kitchen-only would lose most of the
+              "ran empty" events, which are the ones that matter most. */}
           <button
             className={view === 'refill' ? 'on' : ''}
             onClick={() => setView('refill')}
-          >{tr('补菜')}</button>
-          {/* 整月营业额只给主管和老板看 —— 最小权限 */}
+          >{tr('Refills')}</button>
+          {/* A whole month's sales is for managers and the owner only -- least privilege */}
           {canManage(identity.role) && (
             <button
               className={view === 'month' ? 'on' : ''}
               onClick={() => setView('month')}
-            >{tr('月报')}</button>
+            >{tr('Reports')}</button>
           )}
-          {/* 改价**只给老板**，比月报还严 —— 见 DESIGN.md 的权限矩阵。
-              服务端 require_role("admin") 才是真正拦住的那道。 */}
+          {/* Pricing is **owner only**, stricter than the month report -- see the
+              permission matrix in DESIGN.md. The server's require_role("admin") is what actually stops it. */}
           {identity.role === 'admin' && (
             <button
               className={view === 'admin' ? 'on' : ''}
               onClick={() => setView('admin')}
-            >{tr('修改')}</button>
+            >{tr('Prices')}</button>
           )}
         </div>
       )}
 
-      {/* 跨天未结账单的提醒。放在这里而不是楼面里面 ——
-          切到清单页、自提页也要看得见，那笔钱不会因为换了个 tab 就不存在了。
-          没有未结单时这个组件什么都不渲染。 */}
+      {/* The carried-over reminder. Here rather than inside the floor, because it
+          has to stay visible on the check list and to-go pages too -- that money
+          does not stop existing because someone changed tab.
+          It renders nothing when there is nothing carried over. */}
       <ClockDriftBanner />
       {isFront(identity.role) && <CarriedOverBanner role={identity.role} />}
 
@@ -288,7 +296,7 @@ export default function App() {
                 ),
               )
           }}
-        >{tr('立即同步')}</button>
+        >{tr('Sync now')}</button>
         <code className={`status ${tone}`}>{last}</code>
       </div>
 
@@ -296,44 +304,44 @@ export default function App() {
 
       {showSettings && <SettingsSheet onClose={() => setShowSettings(false)} />}
 
-      {/* 一个员工看不懂的状态标签等于没有标签 —— 必须能点开问"这是什么" */}
+      {/* A status label staff cannot read is no label -- it has to open and explain itself */}
       {showSync && (
         <div className="sheet-back" onClick={() => setShowSync(false)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <h2>{tr('未上传')} {pending}</h2>
+            <h2>{tr('Pending')} {pending}</h2>
             <p className="hint">
-              这台 iPad 上有 <b>{pending}</b>{tr('条操作还没传到店里的服务器。')}</p>
+              {tr('This iPad has')} <b>{pending}</b>{tr('operations have not reached the store server yet.')}</p>
             <table className="kv">
               <tbody>
                 <tr>
-                  <td className="dim">{tr('要我做什么吗')}</td>
-                  <td className="num">{tr('不用。联网后会自动补发。')}</td>
+                  <td className="dim">{tr('Anything to do')}</td>
+                  <td className="num">{tr('Nothing. It sends automatically once online.')}</td>
                 </tr>
                 <tr>
-                  <td className="dim">{tr('数据会丢吗')}</td>
-                  <td className="num">{tr('不会。已经存在这台 iPad 上了。')}</td>
+                  <td className="dim">{tr('Can data be lost')}</td>
+                  <td className="num">{tr('No. It is already stored on this iPad.')}</td>
                 </tr>
                 <tr>
-                  <td className="dim">{tr('多久补发一次')}</td>
-                  <td className="num">{tr('有积压时每 4 秒重试一次')}</td>
+                  <td className="dim">{tr('How often it retries')}</td>
+                  <td className="num">{tr('Every 4 seconds while anything is queued')}</td>
                 </tr>
                 <tr>
-                  <td className="dim">{tr('现在网络')}</td>
-                  <td className="num">{tr(online ? '在线' : '离线')}</td>
+                  <td className="dim">{tr('Network')}</td>
+                  <td className="num">{tr(online ? 'Online' : 'Offline')}</td>
                 </tr>
                 <tr>
-                  <td className="dim">{tr('上次同步')}</td>
+                  <td className="dim">{tr('Last sync')}</td>
                   <td className="num">{last}</td>
                 </tr>
                 <tr>
-                  <td className="dim">{tr('技术细节')}</td>
+                  <td className="dim">{tr('Details')}</td>
                   <td className="num"><code>{detail}</code></td>
                 </tr>
               </tbody>
             </table>
-            <p className="hint">{tr('如果一直不归零，说明服务器连不上（检查店内 WiFi 和后台机器）。 红色的「失败 N」才是需要人处理的 —— 那是服务端明确拒绝的操作。')}</p>
+            <p className="hint">{tr('If it never reaches zero the server is unreachable — check the WiFi and the back-office machine. The red Failed badge is the one that needs a person: those were rejected outright.')}</p>
             <div className="sheet-actions">
-              <button onClick={() => setShowSync(false)}>{tr('知道了')}</button>
+              <button onClick={() => setShowSync(false)}>{tr('Got it')}</button>
               <button
                 className="primary"
                 onClick={() => {
@@ -342,30 +350,30 @@ export default function App() {
                     .catch(() => {})
                   setShowSync(false)
                 }}
-              >{tr('立即重试')}</button>
+              >{tr('Retry now')}</button>
             </div>
 
             {canManage(identity.role) && (
               <>
                 <div className="divider" />
                 <p className="hint">
-                  <b>{tr('重置本机数据')}</b>{tr('：清空这台设备缓存的账单，重新从服务器拉一遍。 服务端的数据被清理过、而本机还留着旧单时才需要 —— 服务端删数据不会通知客户端。')}</p>
+                  <b>{tr('Reset local data')}</b>{tr(': clears the checks cached on this device and pulls them again. Only needed when the server data was cleaned up and this device still holds old checks.')}</p>
                 <button
                   className="linkbtn wide danger"
                   onClick={async () => {
                     const r = await resetLocalData()
                     if (!r.ok) {
-                      setLast(`${tr('还有未上传的操作，等它同步完再重置')}（${r.pending}）`)
+                      setLast(`${tr('Some operations are still queued; let them sync before resetting')}（${r.pending}）`)
                       setTone('bad')
                       return
                     }
                     await sync().catch(() => {})
                     await refresh()
                     setShowSync(false)
-                    setLast(tr('本机数据已重置，正在重新拉取'))
+                    setLast(tr('Local data reset, fetching again'))
                     setTone('ok')
                   }}
-                >{tr('重置本机数据')}</button>
+                >{tr('Reset local data')}</button>
               </>
             )}
           </div>
@@ -377,9 +385,9 @@ export default function App() {
           {events.map((e) => (
             <li key={e.op_id}>
               <span className={e.synced ? 'tag ok' : 'tag warn'}>
-                {tr(e.synced ? '已同步' : '待同步')}
+                {tr(e.synced ? 'Synced' : 'Pending upload')}
               </span>
-              {e.remote ? <span className="tag remote">{tr('其它设备')}</span> : null}
+              {e.remote ? <span className="tag remote">{tr('Other device')}</span> : null}
               <span className="label">{tr(e.label)}</span>
               <code className="id">{e.op_id.slice(0, 8)}</code>
             </li>

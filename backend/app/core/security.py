@@ -1,13 +1,13 @@
-"""密码哈希与令牌签发。
+"""Password hashing and token issuing.
 
-两类令牌，寿命差一个数量级：
+Two kinds of token, an order of magnitude apart in lifetime:
 
-  access token   —— JWT，15 分钟，不落库。每个请求带它。
-  refresh token  —— 随机串，只把**哈希**存库。用来换新的 access token。
+  access token   -- a JWT, 15 minutes, never stored. Sent with every request.
+  refresh token  -- a random string; only its **hash** is stored. Buys new access tokens.
 
-为什么 access 用 JWT 而不落库：验证它不需要查库，
-而店里断网时 API 仍要能快速响应本地请求。
-为什么 refresh 必须落库：**要能吊销**。iPad 丢了，删掉 session 行即可。
+Why the access token is a JWT and not stored: verifying it needs no database
+round trip, and the API has to answer local requests quickly when the store's network is down.
+Why the refresh token must be stored: **it has to be revocable**. If an iPad walks, delete the session row.
 """
 
 import hashlib
@@ -26,10 +26,10 @@ JWT_ALG = "HS256"
 
 ACCESS_TTL = timedelta(minutes=15)
 
-# 员工会话必须长 —— 高峰期在油腻的 iPad 上重新打密码是不可能被接受的，
-# 强推只会让员工彻底放弃使用这个系统。
+# Staff sessions have to be long -- retyping a password on a greasy iPad at
+# peak is not something anyone will accept, and forcing it makes people abandon the system.
 REFRESH_TTL_STAFF = timedelta(days=30)
-# 老板走公网暴露的入口，寿命必须短
+# The owner's entry point is exposed to the public internet, so it stays short
 REFRESH_TTL_ADMIN = timedelta(hours=12)
 
 
@@ -46,15 +46,15 @@ def verify_password(raw: str, hashed: str) -> bool:
 
 
 def new_refresh_token() -> tuple[str, str]:
-    """返回 (明文, 哈希)。明文只在签发这一刻存在，之后服务端只有哈希。"""
+    """Returns (plaintext, hash). The plaintext exists only at this moment; afterwards the server has the hash."""
     raw = secrets.token_urlsafe(48)
     return raw, hash_refresh_token(raw)
 
 
 def hash_refresh_token(raw: str) -> str:
-    """refresh token 是高熵随机串，不需要 argon2 那种慢哈希
-    （慢哈希是为了扛住对**低熵密码**的暴力破解）。SHA-256 足够，
-    而且每次同步都要查它，必须快。"""
+    """A refresh token is a high-entropy random string, so it does not need a
+    slow hash (those exist to resist brute force against **low-entropy
+    passwords**). SHA-256 is enough, and every sync looks it up, so it has to be fast."""
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -75,5 +75,5 @@ def create_access_token(user_id: int, username: str, role: str) -> str:
 
 
 def decode_access_token(token: str) -> dict:
-    """过期或被篡改都会抛 jwt 的异常，由调用方转成 401。"""
+    """Expiry or tampering raises out of jwt; the caller turns it into a 401."""
     return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])

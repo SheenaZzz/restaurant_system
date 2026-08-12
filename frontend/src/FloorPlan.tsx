@@ -29,8 +29,8 @@ export default function FloorPlan({ role }: { role: Role }) {
   const [blocked, setBlocked] = useState<LocalCheck | null>(null)
 
   const reload = useCallback(async () => {
-    // 营业日每次都重算，不缓存在闭包里 —— 这台 iPad 很可能整夜
-    // 停在楼面这一屏没重新加载过，过了零点必须自己翻篇
+    // The business day is recomputed every time rather than captured in the
+    // closure -- this iPad may sit on the floor screen all night without reloading, and midnight has to turn the page by itself
     const c = await loadCatalog()
     const cutoff = cutoffHourOf(c)
     const today = currentBusinessDate(cutoff)
@@ -40,18 +40,18 @@ export default function FloorPlan({ role }: { role: Role }) {
     setOpen(m)
     setCarried(stale)
     setPending(await pendingCheckUuids())
-    // 详情页开着的时候，底下的数据可能被别的设备改了 —— 跟着刷新，
-    // 否则会拿着过期的金额去结账。
-    // ⚠️ 两个 map 都要找：从「去处理这张单」进来的是跨天的那张，
-    //    只查 m 的话下一次轮询就会把详情页自己关掉。
+    // While the detail is open another device may have changed the data --
+    // refresh along, or someone collects against a stale amount.
+    // ⚠️ Both maps have to be searched: arriving from "deal with this check"
+    //    opens a carried-over one, and looking only in m would make the next poll close the detail by itself.
     setDetailFor((d) =>
       d ? (m.get(d.table_label) ?? stale.get(d.table_label) ?? null) : null,
     )
   }, [])
 
   useEffect(() => {
-    // 先用缓存立刻渲染，再后台刷新 ——
-    // 离线冷启动时也要能看到 20 张桌，不能白屏等网络
+    // Render from the cache immediately, then refresh in the background --
+    // an offline cold start still has to show 20 tables rather than a blank screen waiting on the network
     loadCatalog().then(setCat)
     refreshCatalog().then((c) => c && setCat(c))
     void reload()
@@ -60,7 +60,7 @@ export default function FloorPlan({ role }: { role: Role }) {
   }, [reload])
 
   if (!cat) {
-    return <p className="hint">{tr('首次使用需要联网加载一次桌位和菜单…')}</p>
+    return <p className="hint">{tr('First run needs a connection to load tables and menu…')}</p>
   }
 
   const zones = [...new Set(cat.tables.map((t) => t.zone ?? '—'))]
@@ -70,20 +70,20 @@ export default function FloorPlan({ role }: { role: Role }) {
     <>
       <div className="floor-head">
         <span className="period">
-          {tr(cat.current_period_kind === 'lunch' ? '午市' : '晚市')}
+          {tr(cat.current_period_kind === 'lunch' ? 'Lunch' : 'Dinner')}
         </span>
-        {/* 营业日必须显示出来。旁边这些数字是"这一天"的，
-            不写清是哪一天，跨零点之后员工没法判断该不该信 */}
+        {/* The business day has to be shown. The numbers beside it are "this
+            day's", and without saying which day nobody can tell after midnight whether to trust them */}
         {bdate && <span className="bday">{businessDateLabel(bdate)}</span>}
         <span className="muted">
-          {tr('在座')} {openList.reduce((s, c) => s + c.adult + c.child + c.senior, 0)} ·{' '}
-          {tr('开台')} {open.size}/{cat.tables.length}
+          {tr('Seated')} {openList.reduce((s, c) => s + c.adult + c.child + c.senior, 0)} ·{' '}
+          {tr('Tables open')} {open.size}/{cat.tables.length}
         </span>
       </div>
 
       {zones.map((z) => (
         <section key={z}>
-          <h3 className="zone">{tr(z === 'main' ? '主厅' : z === 'large' ? '大桌' : z)}</h3>
+          <h3 className="zone">{tr(z === 'main' ? 'Main' : z === 'large' ? 'Large tables' : z)}</h3>
           <div className="grid">
             {cat.tables
               .filter((t) => (t.zone ?? '—') === z)
@@ -101,9 +101,10 @@ export default function FloorPlan({ role }: { role: Role }) {
                     }`}
                     onClick={() => {
                       if (chk) return setDetailFor(chk)
-                      // 这张桌昨天那单还没结 —— 服务端的唯一偏索引会拒掉
-                      // 今天的新单，掉进死信队列。与其让员工点了"没反应"，
-                      // 不如当场说清楚该做什么。
+                      // Yesterday's check on this table is still open -- the
+                      // server's partial unique index would reject today's and
+                      // drop it in the dead letter queue. Rather than a tap that
+                      // does nothing, say what to do about it.
                       const stale = carried.get(t.label)
                       if (stale) return setBlocked(stale)
                       setSheetFor(t.label)
@@ -113,17 +114,17 @@ export default function FloorPlan({ role }: { role: Role }) {
                     {chk ? (
                       <>
                         <span className="tguests">
-                          {chk.adult + chk.child + chk.senior} {tr('位')}
+                          {chk.adult + chk.child + chk.senior} {tr('guests')}
                           {chk.drink_adult + chk.drink_child > 0 &&
-                            ` · ${chk.drink_adult + chk.drink_child} ${tr('饮')}`}
+                            ` · ${chk.drink_adult + chk.drink_child} ${tr('drinks')}`}
                         </span>
                         <span className="tmoney">
                           {money(chk.est_cents)}
-                          {chk.service_cents > 0 && <span className="svc">{tr('+服务费')}</span>}
+                          {chk.service_cents > 0 && <span className="svc">{tr('+fee')}</span>}
                         </span>
                       </>
                     ) : (
-                      <span className="tseats">{t.seats} {tr('座')}</span>
+                      <span className="tseats">{t.seats} {tr('seats')}</span>
                     )}
                   </button>
                 )
@@ -153,21 +154,21 @@ export default function FloorPlan({ role }: { role: Role }) {
       {blocked && (
         <div className="sheet-back" onClick={() => setBlocked(null)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <h2>{blocked.table_label} · {tr('还有一张没结的单')}</h2>
+            <h2>{blocked.table_label} · {tr('still has an open check')}</h2>
             <p className="hint">
-              {tr('开在')} <b>{businessDateLabel(checkBusinessDate(blocked, cutoffHourOf(cat)))}</b>
-              {' · '}<b>{money(blocked.est_cents)}</b>{' · '}{tr('尚未结账')}
+              {tr('Opened on')} <b>{businessDateLabel(checkBusinessDate(blocked, cutoffHourOf(cat)))}</b>
+              {' · '}<b>{money(blocked.est_cents)}</b>{' · '}{tr('not settled yet')}
             </p>
-            <p className="hint">{tr('一张桌同时只能有一张未结账单，所以现在开不了新单。 先把它结掉或作废，这张桌就空出来了。')}</p>
+            <p className="hint">{tr('One open check per table, so a new one cannot be started. Settle or void it and the table frees up.')}</p>
             <div className="sheet-actions">
-              <button onClick={() => setBlocked(null)}>{tr('取消')}</button>
+              <button onClick={() => setBlocked(null)}>{tr('Cancel')}</button>
               <button
                 className="primary"
                 onClick={() => {
                   setDetailFor(blocked)
                   setBlocked(null)
                 }}
-              >{tr('去处理这张单')}</button>
+              >{tr('Go settle it')}</button>
             </div>
           </div>
         </div>

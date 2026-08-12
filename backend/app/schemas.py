@@ -6,27 +6,27 @@ from pydantic import BaseModel, Field
 
 
 class SyncOpIn(BaseModel):
-    """客户端 outbox 里的一条待同步操作。"""
+    """One pending operation from a client's outbox."""
 
-    # 客户端生成，全局唯一。重放安全的唯一依据。
+    # Client-generated and globally unique. The only thing that makes replay safe.
     op_id: UUID
     entity: str = Field(min_length=1, max_length=64)
     op_type: Literal["insert"]
-    # 同一设备内单调递增，保证设备内顺序
+    # Monotonic within a device, which preserves that device's ordering
     client_seq: int = Field(ge=0)
-    # 离线期间的真实发生时刻
+    # When it really happened, offline
     client_ts: datetime
     payload: dict[str, Any]
 
 
 class SyncRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=64)
-    # 客户端已消费到的服务端序号
+    # The server sequence number the client has consumed up to
     since_cursor: int = Field(default=0, ge=0)
-    # 上限防止一次请求过大；客户端超出就分批
+    # A ceiling so one request cannot be enormous; the client batches past it
     ops: list[SyncOpIn] = Field(default_factory=list, max_length=500)
-    # 客户端刚清空本地镜像，要求整份重发（含它自己写过的）。
-    # 只在服务端上一轮回了 reset=True 之后才会是 True。
+    # The client just emptied its mirror and wants everything again (including
+    # its own writes). Only true after the server answered reset=True.
     resync: bool = False
 
 
@@ -40,27 +40,28 @@ class ChangeOut(BaseModel):
     op_id: UUID
     client_id: str
     entity: str
-    # 操作在源设备上**实际发生**的时刻。
-    # payload 里没有时间，必须由这里带出去 —— 否则接收端只能用
-    # "收到的时刻"，离线积压两小时的记录会全被打上"刚刚"的时间戳。
+    # When the operation **actually happened** on the source device.
+    # The payload has no time in it, so it has to be carried here -- otherwise
+    # the receiver only has "when it arrived", and two hours of queued offline
+    # work all gets stamped "just now".
     client_ts: datetime
-    # 操作人显示名 —— 清单页要显示"谁操作的"。
-    # 客户端本地只知道自己那些 op 是谁做的，别人的必须由服务端带出来。
+    # Display name of whoever did it -- the check list shows "who did this".
+    # A client only knows that for its own ops; everyone else's has to come from the server.
     user_display: str | None = None
     payload: dict[str, Any]
 
 
 class SyncResponse(BaseModel):
-    # 本次真正产生了副作用的
+    # Ops that actually produced a side effect this time
     applied: list[UUID]
-    # 服务端已见过、这次跳过的（重放的正常结果，不是错误）
+    # Ops the server had already seen and skipped (a normal replay result, not an error)
     duplicate: list[UUID]
-    # 校验或业务失败的，客户端应保留并告警
+    # Rejected by validation or a business rule; the client keeps them and warns
     rejected: list[RejectedOp]
-    # 客户端下次带回来的游标
+    # The cursor the client sends back next time
     cursor: int
-    # 其它设备产生的变更
+    # Changes produced by other devices
     changes: list[ChangeOut]
-    # 服务端日志里已经没有这个游标之前的记录了 ——
-    # 客户端应清空本地镜像、游标归零、带 resync 重来一次。见 sync.log_truncated。
+    # The server's log no longer holds anything before this cursor -- the
+    # client should empty its mirror, reset the cursor and come back with resync. See sync.log_truncated.
     reset: bool = False

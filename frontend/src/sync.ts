@@ -10,14 +10,14 @@ import db, {
   type OutboxOp,
 } from './db'
 
-/** 一次同步最多带走多少条，与后端 SyncRequest.ops 的 max_length 对齐。 */
+/** How many ops one sync carries at most; matches SyncRequest.ops max_length on the server. */
 const BATCH = 200
 
 type RemoteChange = {
   op_id: string
   entity: string
   client_ts: string
-  /** 服务端带出来的操作人显示名 —— 本地只知道自己那些 op 是谁做的 */
+  /** Display name the server attaches -- a device only knows that for its own ops */
   user_display?: string | null
   payload: Record<string, unknown>
 }
@@ -31,47 +31,49 @@ export type SyncResult = {
 }
 
 /**
- * 同步失败的两种性质完全不同，绝不能混为一谈：
+ * The two kinds of sync failure are nothing alike and must never be conflated:
  *
- * - `offline`：网络不通。**这是正常状态**，数据安全地排在 outbox 里。
- * - `auth`：会话失效，需要重新登录。数据仍然安全排队。
- * - `error`：连上了但服务端出错。这才需要人介入。
+ * - `offline`: no network. **This is a normal state**; the data is safe in the outbox.
+ * - `auth`: the session expired and someone has to sign in again. Still queued safely.
+ * - `error`: connected, but the server failed. This is the one that needs a person.
  *
- * 之前统一显示"同步失败"是个真问题 —— 服务员看到"失败"会重复操作，
- * 而在餐馆里，一个骗人的状态提示比崩溃更危险。
+ * Showing all three as "sync failed" was a real problem -- a server who reads
+ * "failed" redoes the work, and in a restaurant a lying status is worse than a crash.
  */
 export type SyncFailure = { kind: 'offline' | 'auth' | 'error'; message: string }
 
-/** 单次请求的硬超时。Fetch API **没有默认超时** —— 见下方 STUCK_MS 的说明。 */
+/** Hard timeout for one request. Fetch has **no default timeout** -- see STUCK_MS below. */
 const FETCH_TIMEOUT = 10_000
 
 /**
- * in-flight 看门狗。
+ * The in-flight watchdog.
  *
- * 踩过的坑（真机上丢了 6 条记录）：
- * 开飞行模式的瞬间，正好有一个 fetch 在途。Fetch API 没有默认超时，
- * 这个 promise **永远不会 settle** —— 于是 `inFlight` 永久挂着，
- * 之后每次 sync() 都直接返回这个卡死的 promise，**再也不发起新请求**。
- * 定时器照常跑，Caddy 却再也收不到任何东西，而 UI 停在死锁前的最后一次上报。
+ * What this cost once (six records lost on a real device):
+ * airplane mode goes on with a fetch in flight. Fetch has no default timeout,
+ * so that promise **never settles** -- `inFlight` stays set forever and every
+ * later sync() hands back the same dead promise, **never issuing a request
+ * again**. The timer keeps firing, Caddy never hears anything, and the UI sits
+ * on whatever it last reported.
  *
- * 两道防线：① fetch 加 AbortController 硬超时 ② 这个看门狗兜底。
+ * Two defences: (1) AbortController on the fetch, (2) this watchdog behind it.
  */
 const STUCK_MS = 30_000
 
-/** 同一时刻只允许一个同步在跑，否则同一批 op 会被发两遍。 */
+/** Only one sync may run at a time, or the same batch of ops goes out twice. */
 let inFlight: Promise<SyncResult | null> | null = null
 let inFlightAt = 0
 
 /**
- * 写入路径：**先写本地，再排队**。
+ * The write path: **write locally, then queue**.
  *
- * 两张表在同一个 Dexie 事务里写 —— 要么本地镜像和 outbox 都有，
- * 要么都没有。否则会出现"UI 显示了但永远不会被同步"的幽灵记录。
+ * Both tables are written in one Dexie transaction -- either the mirror and the
+ * outbox both have it, or neither does. Otherwise you get a ghost record the UI
+ * shows and sync never sends.
  */
 export async function enqueue(
   entity: string,
   payload: Record<string, unknown>,
-  /** 允许调用方自带 op_id —— 账单要用它当自己的身份标识 */
+  /** Callers may bring their own op_id -- a check uses it as its identity */
   opId?: string,
 ): Promise<string> {
   const op_id = opId ?? uuid()
@@ -90,9 +92,9 @@ export async function enqueue(
     }
     await db.outbox.add(op)
 
-    // 补菜记录的本地镜像和 outbox 写在**同一个事务**里。
-    // 分开写的话会出现"记录发出去了但台前看不到"——而台前唯一的反馈
-    // 就是"上次补菜多久以前"，看不到就会重复点。
+    // A refill's local mirror row and its outbox entry are written in **one
+    // transaction**. Split, they produce "the record went out but the board does
+    // not show it" -- and "last refilled N minutes ago" is the only feedback there is, so people tap again.
     if (entity === 'tray_event') {
       const back = Number(payload.minutes_ago ?? 0) || 0
       await db.trays.add({
@@ -106,21 +108,21 @@ export async function enqueue(
     }
   })
 
-  // 尽快发出去：outbox 停留时间越短，设备损坏时丢的越少
+  // Send it as soon as possible: the less time in the outbox, the less a broken device loses
   void sync()
   return op_id
 }
 
 export async function sync(): Promise<SyncResult | null> {
-  // 只在"确实还在跑"时复用。超过看门狗时限就认定它卡死了，
-  // 丢弃并重新发起 —— 重复发送是安全的，op_id 保证幂等。
+  // Only reuse one that is **really still running**. Past the watchdog window it
+  // counts as dead: drop it and start again -- resending is safe, op_id is idempotent.
   if (inFlight && Date.now() - inFlightAt < STUCK_MS) return inFlight
 
-  if (inFlight) console.warn('[sync] 上一次同步疑似卡死，丢弃并重试')
+  if (inFlight) console.warn('[sync] the previous sync looks stuck; dropping it and retrying')
 
   inFlightAt = Date.now()
   const p = doSync().finally(() => {
-    // 只有当自己仍是当前那一个时才清空，避免被后来者覆盖后误清
+    // Only clear it while still the current one, or a later sync gets cleared by an earlier one
     if (inFlight === p) inFlight = null
   })
   inFlight = p
@@ -128,24 +130,24 @@ export async function sync(): Promise<SyncResult | null> {
 }
 
 /**
- * 取待发送的操作。
+ * Take the ops to send.
  *
- * ⚠️ **绝对不要用 `db.outbox.orderBy('client_seq')`。**
- * 那是索引查询，而 IndexedDB 会把索引键无效（NaN / undefined / null）
- * 的记录**静默排除**在结果之外 —— 但 `count()` 照数不误。
- * 结果就是：UI 显示"待同步 4"，请求体却是 `ops: []`，
- * 这 4 条永久卡死且不报任何错。真机上就是这么丢的。
+ * ⚠️ **Never use `db.outbox.orderBy('client_seq')`.**
+ * That is an index query, and IndexedDB **silently excludes** records whose
+ * index key is invalid (NaN / undefined / null) -- while `count()` still counts
+ * them. The result: the UI says "4 pending" and the request body is `ops: []`,
+ * with those four stuck forever and no error anywhere. That is how they were lost on a real device.
  *
- * 改成全量取出后在 JS 里排序：**不依赖索引，任何记录都跑不掉。**
+ * Reading everything and sorting in JS **depends on no index, so nothing can hide.**
  */
 async function takePending(): Promise<OutboxOp[]> {
   const all = await db.outbox.toArray()
 
-  // 顺手修复历史坏数据：把无效的 client_seq 补成一个合法值，
-  // 否则它们即便这次发出去了，下次仍然是隐形的
+  // Repair bad historical rows on the way past: give an invalid client_seq a
+  // legal value, or they stay invisible on the next pass even if this one sends them
   const broken = all.filter((o) => !Number.isFinite(o.client_seq))
   if (broken.length) {
-    console.warn(`[sync] 修复 ${broken.length} 条 client_seq 无效的记录`)
+    console.warn(`[sync] repairing ${broken.length} records with an invalid client_seq`)
     let base = await nextClientSeq()
     await db.transaction('rw', db.outbox, db.meta, async () => {
       for (const o of broken) {
@@ -162,15 +164,16 @@ async function takePending(): Promise<OutboxOp[]> {
 }
 
 /**
- * 服务端说它的日志里已经没有我们这个游标之前的记录了（`reset`）。
+ * The server says its log no longer holds anything before our cursor (`reset`).
  *
- * 同步是**只追加**的：服务端删掉的东西不会以"变更"的形式传下来，
- * 所以本地镜像里那些单会永远留着，界面显示的是已经不存在的账单。
- * 唯一正确的做法是把镜像整份丢掉、游标归零、从头拉一遍。
+ * Sync is **append-only**: what the server deleted never arrives as a change,
+ * so those checks stay in the local mirror and the screen shows checks that no
+ * longer exist. The only right move is to drop the mirror, zero the cursor and pull again.
  *
- * ⚠️ **只清 synced=1 的**。synced=0 意味着它还在 outbox 里没发出去 ——
- *    那是店里刚录的、服务端根本没见过的单，清掉就是真丢数据。
- *    outbox 和死信队列一个字都不动。
+ * ⚠️ **Only synced=1 rows go.** synced=0 means it is still in the outbox and
+ *    has never been sent -- a check the store just entered that the server has
+ *    never seen, so clearing it really would lose data.
+ *    The outbox and the dead letter queue are not touched at all.
  */
 async function resetMirror(): Promise<void> {
   await db.transaction('rw', db.checks, db.events, db.trays, db.meta, async () => {
@@ -178,11 +181,11 @@ async function resetMirror(): Promise<void> {
     await db.events.filter((e) => e.synced === 1).delete()
     await db.trays.filter((t) => t.synced === 1).delete()
     await setMeta('cursor', 0)
-    // 落库而不是放内存：重拉到一半刷新页面的话，下一次仍然要整份重来，
-    // 否则镜像会缺掉服务端"只发给别人"的那部分。
+    // Stored rather than kept in memory: reloading halfway through a re-pull
+    // still has to start over, or the mirror misses the part the server "only sends to others".
     await setMeta('resync', 1)
   })
-  console.warn('[sync] 服务端日志已被截断，本地镜像重建')
+  console.warn('[sync] the server log was truncated; rebuilding the local mirror')
 }
 
 async function doSync(): Promise<SyncResult | null> {
@@ -191,7 +194,7 @@ async function doSync(): Promise<SyncResult | null> {
   const cid = await clientId()
   const resync = (await getMeta<number>('resync', 0)) === 1
 
-  // outbox 空也要发一次：这是拉取其它设备变更的唯一时机
+  // Send even with an empty outbox: this is the only moment other devices' changes get pulled
   const body = JSON.stringify({
     client_id: cid,
     since_cursor: since,
@@ -210,12 +213,12 @@ async function doSync(): Promise<SyncResult | null> {
       signal: ctrl.signal,
     })
   } catch (e) {
-    // 超时中止的请求**可能其实已经送达并处理了**，只是响应没回来。
-    // 不要紧 —— 下次重放会得到 duplicate，这正是 op_id 幂等的价值。
+    // A request aborted on timeout **may well have arrived and been processed**,
+    // with only the response lost. That is fine -- the replay comes back as a duplicate, which is what op_id is for.
     const aborted = (e as Error)?.name === 'AbortError'
     const f: SyncFailure = {
       kind: 'offline',
-      message: aborted ? '请求超时，已排队重试' : '离线，已排队',
+      message: aborted ? 'Request timed out, queued for retry' : 'Offline, queued',
     }
     throw f
   } finally {
@@ -223,42 +226,44 @@ async function doSync(): Promise<SyncResult | null> {
   }
 
   if (res.status === 401) {
-    // authFetch 已经试过续期了，还是 401 说明会话真的没了。
-    // **绝不清空 outbox** —— 未同步的记录属于店里，
-    // 重新登录后照样要发出去。
-    const f: SyncFailure = { kind: 'auth', message: '会话已失效，请重新登录' }
+    // authFetch already tried to refresh, so a 401 here means the session is really gone.
+    // **Never clear the outbox** -- unsynced records belong to the store and
+    // still have to go out after signing in again.
+    const f: SyncFailure = { kind: 'auth', message: 'Session expired, please sign in again' }
     throw f
   }
 
   if (!res.ok) {
-    // 不清 outbox —— 下次重试。重复发送是安全的，因为 op_id 幂等。
+    // Do not clear the outbox -- retry next time. Resending is safe, op_id is idempotent.
     //
-    // ⚠️ 反代能通但上游挂了会返回 502/503/504 —— fetch **成功**，
-    //    所以不会走上面那个 catch。但对员工来说这跟断网没有区别：
-    //    数据安全排队、等会儿自动重发，不需要任何人做任何事。
-    //    显示成红色"出错"会让他们以为坏了，然后重复录单。
-    //    408/429 同理（超时 / 限流），都是过一会儿就好的。
+    // ⚠️ A reachable proxy with a dead upstream returns 502/503/504, so fetch
+    //    **succeeds** and the catch above never runs. To staff that is no
+    //    different from being offline: the data is queued and resends itself,
+    //    and nobody has to do anything.
+    //    A red "error" makes them think it broke and re-enter the check.
+    //    408/429 (timeout / rate limit) are the same -- they pass on their own.
     const transient = [408, 425, 429, 500, 502, 503, 504].includes(res.status)
     const f: SyncFailure = transient
-      ? { kind: 'offline', message: `服务端暂时不可用 (${res.status})，已排队` }
-      : { kind: 'error', message: `服务端 HTTP ${res.status}` }
+      ? { kind: 'offline', message: `Server unavailable (${res.status}), queued` }
+      : { kind: 'error', message: `Server HTTP ${res.status}` }
     throw f
   }
 
   const data = await res.json()
 
-  // applied 和 duplicate 都算"服务端已经有了"，都可以从 outbox 删。
-  // duplicate 不是错误，它恰恰是重放机制正常工作的证据。
+  // applied and duplicate both mean "the server has it", so both leave the outbox.
+  // A duplicate is not an error; it is the replay mechanism working.
   const settled: string[] = [...data.applied, ...data.duplicate]
 
-  // 被服务端明确拒绝的：**不能留在 outbox 里无限重试**。
-  // 否则 outbox 永远清不空，"待同步"永远不归零，而且每轮都白发一次。
-  // 移进死信队列，交给人处理。
+  // Explicitly rejected by the server: **it must not sit in the outbox retrying**
+  // forever, or the outbox never empties, "pending" never reaches zero and every
+  // round wastes a send.
+  // Move it to the dead letter queue for a person to handle.
   const rejected = (data.rejected ?? []) as { op_id: string; reason: string }[]
   let remoteChanges: RemoteChange[] = []
 
 
-  // 表多于 5 张时 Dexie 只接受数组形式的作用域
+  // Dexie only takes an array scope past five tables
   await db.transaction(
     'rw',
     [db.outbox, db.events, db.meta, db.deadletter, db.checks, db.trays],
@@ -281,34 +286,35 @@ async function doSync(): Promise<SyncResult | null> {
       if (settled.length) {
         await db.outbox.bulkDelete(settled)
         await Promise.all(settled.map((id) => db.events.update(id, { synced: 1 })))
-        // 账单的 check_uuid 就是创建它那条 op 的 op_id
+        // A check's check_uuid is the op_id of the op that created it
         await Promise.all(settled.map((id) => db.checks.update(id, { synced: 1 })))
         await Promise.all(settled.map((id) => db.trays.update(id, { synced: 1 })))
       }
 
-      // 其它设备的变更。要求重置时这一批一定是空的，
-      // 而且下面马上要清空镜像 —— 不应用。
+      // Other devices' changes. On a reset this batch is empty by definition,
+      // and the mirror is about to be cleared -- so nothing is applied.
       remoteChanges = data.reset ? [] : (data.changes as RemoteChange[])
 
       if (!data.reset) {
-        // 游标最后才推进：中途崩了就重来一次，宁可重复也不能跳过
+        // The cursor advances last: a crash in between just repeats a round, and repeating beats skipping
         await setMeta('cursor', data.cursor)
 
-        // 整份重拉要拉到**空响应**才算完。这一批还满着说明后面还有
-        // （服务端一次最多发 500 条），此时清掉 resync 的话，下一页
-        // 就会重新过滤掉本设备自己写的那些 op —— 镜像会缺一截。
+        // A full re-pull is only done at an **empty response**. A full batch means
+        // more is coming (the server sends 500 at most), and clearing resync now
+        // would make the next page filter out this device's own ops again -- leaving a gap.
         if (resync && data.changes.length === 0) await setMeta('resync', 0)
       }
     },
   )
 
   if (data.reset) {
-    // 注意顺序：上面那个事务已经把这批 op 从 outbox 结清、并把对应的本地
-    // 账单标成 synced=1 了。必须先标再清 —— 否则它们会以 synced=0 留在
-    // 镜像里，而 outbox 里已经没有对应的 op，变成永远同步不掉的幽灵单。
+    // Order matters: the transaction above already settled this batch out of the
+    // outbox and marked the matching local checks synced=1. Marking has to come
+    // first -- otherwise they stay in the mirror as synced=0 with no op left in
+    // the outbox, which is a ghost check that can never sync.
     await resetMirror()
-    // 立刻再来一次，把服务端现在真正拥有的整份拉回来。
-    // 不等下一次心跳（最长 20 秒）—— 这中间界面上是空的。
+    // Immediately go again and pull back what the server actually has.
+    // Not waiting for the next heartbeat (up to 20 seconds) -- the screen is empty until then.
     setTimeout(() => void sync(), 0)
     return {
       applied: data.applied.length,
@@ -319,8 +325,8 @@ async function doSync(): Promise<SyncResult | null> {
     }
   }
 
-  // 账单类变更在事务外应用 —— applyCheckOp 要读 catalog（也在 meta 表里），
-  // 放进同一个事务会因为表作用域重叠而死锁
+  // Check changes are applied outside the transaction -- applyCheckOp reads the
+  // catalog (also in the meta table), and overlapping table scopes would deadlock
   for (const c of remoteChanges) {
     if (c.entity === 'tray_event') {
       await applyTrayOp(c.op_id, c.payload, c.client_ts, {
@@ -332,8 +338,8 @@ async function doSync(): Promise<SyncResult | null> {
       await db.events.put({
         op_id: c.op_id,
         label: String(c.payload.label ?? ''),
-        // 用源设备的 client_ts，不是"收到的时刻" ——
-        // 否则离线积压的记录会全被排到列表最前面，时间线是错的
+        // Use the source device's client_ts, not "when it arrived" --
+        // otherwise a backlog of offline records all sorts to the top and the timeline is wrong
         created_at: c.client_ts,
         synced: 1,
         remote: 1,
@@ -356,16 +362,16 @@ async function doSync(): Promise<SyncResult | null> {
   }
 }
 
-/** outbox 有积压时的重试间隔 —— 要快，员工在等它清零 */
+/** Retry interval while the outbox has a backlog -- fast, because staff are watching it clear */
 const POLL_PENDING = 4_000
-/** 空闲时的心跳 —— 只为拉别的设备的变更，可以慢 */
+/** Idle heartbeat -- only to pull other devices' changes, so it can be slow */
 const POLL_IDLE = 20_000
 
 /**
- * 触发时机。
+ * When it fires.
  *
- * ⚠️ iOS 不支持 Background Sync —— 后台绝不会自己重放。
- * 所以必须在**回到前台**时立刻同步，这是 iPad 上最关键的一个钩子。
+ * ⚠️ iOS has no Background Sync -- nothing ever replays in the background.
+ * So it has to sync the moment the app **comes back to the foreground**; that is the critical hook on an iPad.
  */
 export function installSyncTriggers(
   onResult?: (r: SyncResult | null, failure?: SyncFailure) => void,
@@ -394,7 +400,7 @@ export function installSyncTriggers(
   }
 
   window.addEventListener('online', run)
-  // ⚠️ iOS 不支持 Background Sync —— 回到前台是最关键的一个钩子
+  // ⚠️ iOS has no Background Sync -- returning to the foreground is the critical hook
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') run()
   })

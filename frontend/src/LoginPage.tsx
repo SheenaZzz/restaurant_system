@@ -15,14 +15,14 @@ export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }
     try {
       onDone(await login(username.trim(), password))
     } catch (e) {
-      // 离线时 fetch 直接抛错 —— 要说清楚是连不上，
-      // 否则员工会以为是自己密码记错了
+      // fetch throws outright when offline -- say it cannot reach the server,
+      // or staff assume they mistyped the password
       setErr(
         e instanceof Error && e.message.includes('Failed to fetch')
-          ? tr('连不上服务器（检查店内 WiFi）')
+          ? tr('Cannot reach the server (check the store WiFi)')
           : e instanceof Error
             ? tr(e.message)
-            : tr('登录失败'),
+            : tr('Sign-in failed'),
       )
     } finally {
       setBusy(false)
@@ -32,10 +32,10 @@ export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }
   return (
     <div className="login-wrap">
       <form className="login" onSubmit={submit}>
-        <h1>{tr('餐馆运营系统')}</h1>
+        <h1>{tr('Restaurant Operations')}</h1>
 
         <label>
-          {tr('账号')}
+          {tr('Account')}
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
@@ -47,7 +47,7 @@ export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }
         </label>
 
         <label>
-          {tr('密码')}
+          {tr('Password')}
           <input
             type="password"
             value={password}
@@ -59,10 +59,11 @@ export default function LoginPage({ onDone }: { onDone: (id: Identity) => void }
 
         {err && <p className="err">{err}</p>}
 
-        {/* 这里原来印着开发账号和密码规则。上线的登录页不能写这个 ——
-            账号清单在 RUNBOOK.md 里，那是给开发看的，不是给站在店里的人看的。 */}
+        {/* This used to print the development accounts and the password rule.
+            A sign-in page in a shop cannot say that -- the account list lives in
+            RUNBOOK.md, which is for whoever runs the thing, not for the floor. */}
         <button type="submit" disabled={busy || !username || !password}>
-          {busy ? tr('登录中…') : tr('登录')}
+          {busy ? tr('Signing in…') : tr('Sign in')}
         </button>
       </form>
     </div>

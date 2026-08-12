@@ -17,12 +17,12 @@ import MenuPicker from './MenuPicker'
 import type { Guests } from './checks'
 
 /**
- * 开桌页。**这一屏的速度决定整个系统会不会被真正使用。**
+ * The open-table sheet. **How fast this screen is decides whether the system gets used at all.**
  *
- * 设计约束（来自现场，不是假想）：
- *   - 高峰期领位员只有 3 秒，手上可能还端着东西
- *   - 使用者可能是中老年人
- *   → 大按钮、层级浅、默认值就是最常见的情况（2 位成人）
+ * The constraints come from the floor, not from imagination:
+ *   - at peak the host has three seconds, possibly with their hands full
+ *   - the person using it may not be young
+ *   -> big buttons, a shallow hierarchy, and defaults that match the common case (2 adults)
  */
 export default function OpenSheet({
   tableLabel,
@@ -41,7 +41,7 @@ export default function OpenSheet({
   taxRate: number
   menu: MenuItem[]
   categories: Category[]
-  /** 加料目录，传给「直接点餐」里的点菜页 */
+  /** The add-on catalogue, passed to the ordering sheet behind "order a la carte" */
   modifiers?: Modifier[]
   onCancel: () => void
   onConfirm: (
@@ -51,11 +51,11 @@ export default function OpenSheet({
     lines: NewLine[],
   ) => void | Promise<void>
 }) {
-  // 默认 2 位成人 —— 最常见的情况，很多时候直接点确认就完事
+  // Two adults by default -- the common case, and often Confirm is the only tap needed
   const [guests, setGuests] = useState<Guests>({ adult: 2, child: 0, senior: 0 })
   const [drinks, setDrinks] = useState<Drinks>({ adult: 0, child: 0 })
   const [busy, setBusy] = useState(false)
-  // 整桌不吃自助、直接点菜 —— 这在店里很常见，不该逼人先填 0 个人
+  // A whole table ordering a la carte instead of the buffet -- common enough that nobody should have to enter 0 guests first
   const [ordering, setOrdering] = useState(false)
 
   const total = guests.adult + guests.child + guests.senior
@@ -63,9 +63,9 @@ export default function OpenSheet({
   const sub = estimateCents(prices, period, guests, drinks)
   const svc = serviceCents(sub, partySize(guests, drinks))
   const est = sub + svc + taxCents(sub, svc, taxRate)
-  // 饮料数**可以**超过吃 buffet 的人数 —— 陪同的人不吃自助只要饮料
+  // Drinks **may** exceed the number of buffet guests -- someone tagging along has a drink without eating
 
-  // 一键：成人饮料 = 成人 + 长者（长者饮料按成人价），儿童饮料 = 儿童
+  // One tap: adult drinks = adults + seniors (seniors pay the adult price), child drinks = children
   const suggested: Drinks = { adult: guests.adult + guests.senior, child: guests.child }
   const suggestionApplied =
     drinks.adult === suggested.adult && drinks.child === suggested.child
@@ -93,10 +93,10 @@ export default function OpenSheet({
         menu={menu}
         categories={categories}
         modifiers={modifiers}
-        title={`${tableLabel} · ${tr('直接点餐')}`}
+        title={`${tableLabel} · ${tr('Order à la carte')}`}
         onCancel={() => setOrdering(false)}
         onConfirm={async (lines) => {
-          // 人数和饮料都是 0，整桌走单品
+          // No guests and no drinks: the whole table is a la carte
           await onConfirm(tableLabel, { adult: 0, child: 0, senior: 0 },
                           { adult: 0, child: 0 }, lines)
         }}
@@ -108,25 +108,25 @@ export default function OpenSheet({
     <div className="sheet-back" onClick={onCancel}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <h2>
-          {tableLabel} · {tr('开桌')}
+          {tableLabel} · {tr('Seat table')}
           <span className="period-tag">
-            {tr(period === 'lunch' ? '午市' : '晚市')}
+            {tr(period === 'lunch' ? 'Lunch' : 'Dinner')}
           </span>
           <span className="grow" />
-          {/* 放在标题行右侧：整桌点餐的人一进来就该看到这个岔路，
-              而不是填完人数滚到底部才发现走错了 */}
-          <button className="headbtn" onClick={() => setOrdering(true)}>{tr('直接点餐')}</button>
+          {/* On the right of the title row: whoever is ordering a la carte should
+              see that fork immediately, not after filling in guests and scrolling to the bottom */}
+          <button className="headbtn" onClick={() => setOrdering(true)}>{tr('Order à la carte')}</button>
         </h2>
 
-        <Row label={tr('成人')} k="adult" />
-        <Row label={tr('儿童')} k="child" />
-        <Row label={tr('长者')} k="senior" />
+        <Row label={tr('Adult')} k="adult" />
+        <Row label={tr('Child')} k="child" />
+        <Row label={tr('Senior')} k="senior" />
 
         <div className="divider" />
 
         <div className="stepper">
           <span className="sl">
-            {tr('成人饮料')}<small>{tr('（长者同价 · 按人无限续）')}</small>
+            {tr('Adult drink')}<small>{tr('(seniors same as adults, free refills)')}</small>
           </span>
           <button onClick={() => bumpDrink('adult', -1)} disabled={drinks.adult === 0}>
             −
@@ -137,7 +137,7 @@ export default function OpenSheet({
 
         <div className="stepper">
           <span className="sl">
-            {tr('儿童饮料')}<small>{tr('（另有价格）')}</small>
+            {tr('Child drink')}<small>{tr('(priced separately)')}</small>
           </span>
           <button onClick={() => bumpDrink('child', -1)} disabled={drinks.child === 0}>
             −
@@ -146,14 +146,14 @@ export default function OpenSheet({
           <button onClick={() => bumpDrink('child', 1)}>+</button>
         </div>
 
-        {/* 全员要饮料是高频操作。按人数自动分档：
-            成人+长者 → 成人饮料，儿童 → 儿童饮料 */}
+        {/* "Drinks for everyone" is frequent. The tiers follow the guest counts:
+            adults + seniors -> adult drinks, children -> child drinks */}
         {total > 0 && !suggestionApplied && (
           <button className="quickbtn" onClick={() => setDrinks(suggested)}>
-            {tr('全部都要饮料')}
+            {tr('Drinks for everyone')}
             {paren(
-              `${tr('成人')} ${suggested.adult}` +
-                (suggested.child > 0 ? ` · ${tr('儿童')} ${suggested.child}` : ''),
+              `${tr('Adult')} ${suggested.adult}` +
+                (suggested.child > 0 ? ` · ${tr('Child')} ${suggested.child}` : ''),
             )}
           </button>
         )}
@@ -161,13 +161,13 @@ export default function OpenSheet({
         <p className="total">{money(est)}</p>
         {svc > 0 && (
           <p className="hint">
-            {tr('含大桌服务费')} {money(svc)}
-            {paren(tr('满 5 人 10%'))}
+            {tr('incl. large-party fee')} {money(svc)}
+            {paren(tr('10% on parties of 5+'))}
           </p>
         )}
 
         <div className="sheet-actions">
-          <button onClick={onCancel}>{tr('取消')}</button>
+          <button onClick={onCancel}>{tr('Cancel')}</button>
           <button
             className="primary"
             disabled={busy || (total === 0 && totalDrinks === 0)}
@@ -183,8 +183,8 @@ export default function OpenSheet({
             {busy
               ? '…'
               : total === 0
-                ? tr('开桌（仅饮料）')
-                : `${tr('开桌')} ${total} ${tr('位')}`}
+                ? tr('Open (drinks only)')
+                : `${tr('Seat table')} ${total} ${tr('guests')}`}
           </button>
         </div>
       </div>

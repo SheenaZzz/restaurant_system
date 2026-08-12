@@ -4,18 +4,20 @@ import { loadCatalog, type Catalog } from './catalog'
 import db, { getMeta, setMeta, type LocalCheck, type LocalLine } from './db'
 
 /**
- * 后厨订单队列。前台点的单品**自动出现在这里**。
+ * The kitchen order queue. A la carte dishes from the front **appear here by themselves**.
  *
- * 数据没有走任何新接口：每台设备的本地镜像里本来就有所有账单和菜品明细
- * （同步下发的），后厨缺的只是一页界面。所以这一页**离线照样有单** ——
- * 断网时前台照录、后厨照做，恢复后各自补齐。
+ * No new endpoint is involved: every device's local mirror already holds all
+ * the checks and their lines (sync sends them), and the kitchen was only missing
+ * a screen. So this page **still has tickets offline** -- the front keeps
+ * entering, the kitchen keeps cooking, and both catch up afterwards.
  *
- * ⚠️ 「做好了」是**这台设备上的显示状态，不是账单的事实**，存本地不进同步。
- *    理由：真要做成共享状态，就得给每一行菜一个客户端生成的 id
- *    （现在本地明细是从 op 的 payload 重建的，没有服务端行号），
- *    那是一整条改动，而 DESIGN.md 自己写着这一页要先看两周真实使用量
- *    ——「2 个厨师的小厨房里，服务员走五步喊一声可能更快」。
- *    先用最小的东西把它送上去，用起来了再谈共享状态。
+ * ⚠️ "Done" is **display state on this device, not a fact about the check**;
+ *    it is stored locally and never synced. Why: sharing it would need a
+ *    client-generated id per dish (local lines are rebuilt from the op payload
+ *    and have no server line number), which is a whole change of its own --
+ *    and DESIGN.md itself says to watch two weeks of real use first ("in a
+ *    two-cook kitchen, a server walking five steps may well be faster").
+ *    Ship the smallest thing; talk about shared state once it is being used.
  */
 
 const DONE_KEY = 'kitchen_done'
@@ -27,14 +29,14 @@ interface Ticket {
   lines: LocalLine[]
 }
 
-/** 一张单里还没做的菜。作废的不算。 */
+/** Dishes on a check that are not done yet. Voided ones do not count. */
 function pending(c: LocalCheck, done: Set<string>): LocalLine[] {
   return (c.lines ?? []).filter(
     (l, i) => !l.voided && !done.has(`${c.check_uuid}#${i}`),
   )
 }
 
-/** 这张单上有没有要后厨做的东西（纯自助的桌子不进队列）。 */
+/** Whether this check has anything for the kitchen (a pure buffet table does not enter the queue). */
 function hasFood(c: LocalCheck): boolean {
   return (c.lines ?? []).some((l) => !l.voided)
 }
@@ -48,15 +50,17 @@ export default function KitchenView() {
   const refresh = useCallback(async () => {
     const marks = new Set(await getMeta<string[]>(DONE_KEY, []))
     const rows = await db.checks.toArray()
-    // 做完的单**不消失**，变绿留在下面 —— 厨师要能看见自己刚做完什么，
-    // 也才有机会撤销误点。真正让它离开屏幕的是前台关单：
-    // 客人结账走人，这张单对后厨就结束了，这个界限比任何超时规则都准。
+    // A finished ticket **does not disappear**; it turns green and stays below --
+    // a cook has to see what they just finished, and that is the only chance to
+    // undo a mistap. What takes it off the screen is the front closing the check:
+    // the guests paid and left, so it is over for the kitchen. That boundary is
+    // truer than any timeout.
     const open = rows
       .filter((c) => c.status === 'open' && hasFood(c))
       .sort((a, b) => {
         const da = pending(a, marks).length === 0
         const db_ = pending(b, marks).length === 0
-        // 没做完的排前面；同类按下单先后
+        // Unfinished first; within each group, oldest order first
         if (da !== db_) return da ? 1 : -1
         return a.opened_at.localeCompare(b.opened_at)
       })
@@ -74,9 +78,9 @@ export default function KitchenView() {
   useEffect(() => {
     void loadCatalog().then(setCat)
     void refresh()
-    // 5 秒一刷：同步心跳最长 20 秒，加上这个轮询，
-    // 前台点完菜到后厨看见最长 25 秒。厨房不需要更快，也不该更快 ——
-    // 每秒重渲染会让正在看的人失去位置感。
+    // Refreshed every 5 seconds: the sync heartbeat is at most 20, so ordering to
+    // ticket is at most 25 seconds. The kitchen does not need faster, and should
+    // not have it -- re-rendering every second makes whoever is reading lose their place.
     const t = window.setInterval(() => {
       tick((n) => n + 1)
       void refresh()
@@ -84,7 +88,7 @@ export default function KitchenView() {
     return () => window.clearInterval(t)
   }, [refresh])
 
-  /** 标记 / 撤销标记。误点「做好了」在厨房里太容易发生，必须能改回来。 */
+  /** Mark and unmark. Tapping "done" by mistake is normal in a kitchen, so it has to be reversible. */
   async function mark(uuid: string, idx: number, undo = false) {
     const next = new Set(done)
     const key = `${uuid}#${idx}`
@@ -95,10 +99,10 @@ export default function KitchenView() {
     await refresh()
   }
 
-  if (tickets === null) return <p className="hint">{tr('载入中…')}</p>
+  if (tickets === null) return <p className="hint">{tr('Loading…')}</p>
 
   if (!tickets.length) {
-    return <p className="hint big-hint">{tr('现在没有单。')}</p>
+    return <p className="hint big-hint">{tr('No orders right now.')}</p>
   }
 
   const now = Date.now()
@@ -116,8 +120,8 @@ export default function KitchenView() {
           >
             <div className="kq-head">
               <span className="kq-table">{tr(t.table)}</span>
-              {/* 等了多久比几点下的单有用得多 —— 厨房排的是先后，不是钟点 */}
-              <span className="kq-wait">{allDone ? tr('已完成') : `${waited}′`}</span>
+              {/* How long it has waited is far more use than when it was ordered -- a kitchen queues by order, not by clock */}
+              <span className="kq-wait">{allDone ? tr('All done') : `${waited}′`}</span>
             </div>
             <ul className="kq-lines">
               {t.lines.map((l, i) => {
@@ -140,7 +144,7 @@ export default function KitchenView() {
                       className={isDone ? 'kl-undo' : 'kl-done'}
                       onClick={() => void mark(t.uuid, i, isDone)}
                     >
-                      {tr(isDone ? '撤销' : '做好了')}
+                      {tr(isDone ? 'Undo' : 'Done')}
                     </button>
                   </li>
                 )
