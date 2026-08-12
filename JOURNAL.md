@@ -1,702 +1,777 @@
-# 工程日志
+# Engineering journal
 
-> **每天记，事后补是编不出来的。** 这份日志是 deep dive 的全部弹药 ——
-> 面试里最强的回答永远是「我量到了 X，所以改成了 Y，结果变成 Z」。
+> **Written the same day; it cannot be reconstructed afterwards.** This journal is
+> all the ammunition a deep dive needs -- the strongest answer in an interview is
+> always "I measured X, so I changed it to Y, and it became Z".
 
-三类条目，按需记：
+Three kinds of entry, as they come up:
 
-- **决策** — 选了什么 / 否掉了什么 / 为什么 / 代价
-- **测量** — 改动前后的具体数字
-- **故障** — 现象 / 我的错误假设 / 怎么定位 / 根因
-
----
-
-## 2026-08-08 — Step 0 环境搭建
-
-**决策：项目移出 OneDrive 同步目录**
-- 选了 `C:\Users\Welcome\dev\restaurant_system`，否掉了 `Desktop`（OneDrive 同步）
-- 原因：`node_modules` 有数万个小文件，OneDrive 实时同步会拖慢构建、锁文件、偶发损坏；
-  `.gitignore` 管不了 OneDrive
-- 代价：不再自动云备份 → 靠 git remote 兜底
-
-**决策：Docker Desktop 而非原生 Postgres**
-- 原因：生产环境（店内 Ubuntu 主机）用 Docker Compose，本地保持一致，避免"我本地能跑"
-- 代价：Windows 上要走 WSL2，安装较重
-
-**故障：以为 Docker 装失败了**
-- 现象：`C:\Program Files\Docker` 不存在，`docker` 命令 not found
-- 错误假设：安装器失败了
-- 定位：读 `%LOCALAPPDATA%\Docker\install-log.txt`，末行是 `Installation succeeded`
-- 根因：Docker Desktop 4.85 默认改为**用户级安装**，装到
-  `%LOCALAPPDATA%\Programs\DockerDesktop`；且 PATH 变更不会作用于已打开的终端
-- 教训：**先读安装日志再下结论**
+- **Decision** -- what was chosen / what was rejected / why / what it costs
+- **Measurement** -- the actual numbers before and after
+- **Failure** -- symptom / what I wrongly assumed / how I found it / root cause
 
 ---
 
-## 2026-08-08 — Step 1 Walking Skeleton
+## 2026-08-08 -- Step 0, environment
 
-**决策：先建骨架，不先写业务**
-- 选了「一条不含业务逻辑的端到端最小闭环」，否掉了「先做开桌页再补离线」
-- 原因：iPad Safari 要求 Service Worker 必须 HTTPS，而店内服务器是内网 IP。
-  这条打不通，离线能力就是零，整个架构要推翻 —— 必须在写业务代码**之前**验证
-- 代价：多花两天，产出的 `ping_event` 表 Step 2 就会被删掉
+**Decision: move the project out of the OneDrive folder**
+- Chose `C:\Users\Welcome\dev\restaurant_system` over `Desktop` (which OneDrive syncs)
+- Reason: `node_modules` is tens of thousands of small files; live OneDrive sync
+  slows builds, locks files and occasionally corrupts them, and `.gitignore` has
+  no effect on OneDrive
+- Cost: no automatic cloud backup -> a git remote covers it instead
 
-**决策：幂等靠数据库主键，不靠应用层查重**
-- 选了 `INSERT ... ON CONFLICT (op_id) DO NOTHING RETURNING op_id`
-- 否掉了「先 SELECT 查在不在，再 INSERT」—— 那是 TOCTOU 竞态，
-  两个并发请求会双双查到"不存在"然后都插入
-- 代价：业务副作用的判断依赖 RETURNING 是否有行，可读性略差
+**Decision: Docker Desktop rather than a native Postgres**
+- Reason: production (an Ubuntu box in the store) runs Docker Compose, so keeping
+  local identical avoids "it works on my machine"
+- Cost: WSL2 on Windows, which is a heavy install
 
-**决策：sync_op 写入与业务副作用必须同事务**
-- 否掉了「先记 sync_op，再单独提交业务写入」
-- 原因：崩在中间会留下"记了但没生效"的洞，而重放又会被幂等判断跳过 →
-  数据永久少一条，且**无法察觉**
-- 这是整个离线架构里最危险的一个点
-
-**决策：单条失败用 SAVEPOINT 隔离**
-- 一条坏 op 不能拖垮整批。前台离线两小时攒了 200 条，
-  不能因为第 3 条格式错误就全部退回
-
-**测量（Step 1 验收）**
-- 在线点 3 次 → 立即落库，计数 3→6
-- 停 API 容器 → 点 10 次 → outbox=10，本地镜像=16，UI「待同步 10」
-- 起 API → 重放 → **16/16/16，distinct_op=16，零重复**
-- 强制重发 3 条已应用的 op → `applied:0 duplicate:3`，计数仍是 16
-- 电脑休眠 35 分钟后容器自动恢复，数据完整（命名卷有效）
-
-**故障：TS 把 `crypto` 收窄成 `never`**
-- 现象：`tsc` 报 `Property 'getRandomValues' does not exist on type 'never'`
-- 错误假设：以为是 `@types/node` 和 lib.dom 冲突
-- 定位：`'randomUUID' in crypto` 这个 `in` 收窄，让 TS 认为 else 分支不可达
-- 根因：lib.dom 把 `crypto` 声明为必然存在且必然有 `randomUUID`
-- 处理：显式 `globalThis.crypto as Crypto | undefined` 放宽类型
-- **顺带发现的真问题**：`crypto.randomUUID` 只在安全上下文可用 ——
-  iPad 走明文 HTTP 时它是 undefined。又一个"必须上 HTTPS"的理由
-
-**故障：状态栏残留"同步失败"**
-- 现象：outbox 已清零（说明同步成功），状态栏却still显示失败
-- 根因：「立即同步」按钮没走 `report` 回调，显示的是上一次自动触发的结果
-- 处理：手动和自动共用同一个上报路径
-- 教训：**离线系统里"骗人的状态显示"比崩溃更危险** ——
-  员工会以为没同步而重复操作
+**Failure: assumed the Docker install had failed**
+- Symptom: `C:\Program Files\Docker` did not exist and `docker` was not found
+- Wrong assumption: the installer had failed
+- Found it by: reading `%LOCALAPPDATA%\Docker\install-log.txt`, whose last line was `Installation succeeded`
+- Root cause: Docker Desktop 4.85 defaults to a **per-user install** at
+  `%LOCALAPPDATA%\Programs\DockerDesktop`, and a PATH change does not reach an already-open terminal
+- Lesson: **read the install log before drawing a conclusion**
 
 ---
 
-## 2026-08-09 — iPad 真机测试暴露的三个问题
+## 2026-08-08 -- Step 1, the walking skeleton
 
-**测量：HTTP / HTTPS 对照实验（在同一台 iPad 上）**
+**Decision: build the skeleton before any business logic**
+- Chose "one end-to-end loop containing no business logic" over "build the open-table screen and add offline later"
+- Reason: iPad Safari requires HTTPS for a Service Worker, and the store's server
+  is a private LAN address. If that cannot be solved, offline capability is zero
+  and the architecture has to be replaced -- which has to be discovered **before**
+  any business code exists
+- Cost: two extra days, and the `ping_event` table it produced gets deleted in Step 2
+
+**Decision: idempotency from a database key, not an application-level check**
+- Chose `INSERT ... ON CONFLICT (op_id) DO NOTHING RETURNING op_id`
+- Rejected "SELECT to see whether it exists, then INSERT" -- that is a TOCTOU
+  race where two concurrent requests both find nothing and both insert
+- Cost: whether the side effect runs depends on whether RETURNING gave a row, which reads slightly less obviously
+
+**Decision: the sync_op write and the business side effect share one transaction**
+- Rejected "record the sync_op, then commit the business write separately"
+- Reason: a crash in between leaves a "recorded but never applied" hole, which
+  replay then skips as a duplicate -> one row gone forever, and **undetectably**
+- This is the most dangerous point in the whole offline design
+
+**Decision: isolate a single failure with a SAVEPOINT**
+- One bad op must not take the batch down. The front spends two hours offline and
+  accumulates 200 ops; the third one being malformed cannot reject all of them
+
+**Measurement (Step 1 acceptance)**
+- Three taps online -> stored immediately, count 3 -> 6
+- Stop the API container -> 10 taps -> outbox=10, local mirror=16, UI says "10 pending"
+- Start the API -> replay -> **16/16/16, distinct_op=16, zero duplicates**
+- Force-resend 3 already-applied ops -> `applied:0 duplicate:3`, count still 16
+- After the computer slept for 35 minutes the containers came back with the data intact (named volumes work)
+
+**Failure: TypeScript narrowed `crypto` to `never`**
+- Symptom: `tsc` reported `Property 'getRandomValues' does not exist on type 'never'`
+- Wrong assumption: a conflict between `@types/node` and lib.dom
+- Found it by: the `in` narrowing in `'randomUUID' in crypto`, which makes TS think the else branch is unreachable
+- Root cause: lib.dom declares `crypto` as always present and always having `randomUUID`
+- Fix: widen explicitly with `globalThis.crypto as Crypto | undefined`
+- **The real problem it uncovered**: `crypto.randomUUID` only exists in a secure
+  context -- on an iPad over plaintext HTTP it is undefined. One more reason HTTPS is mandatory
+
+**Failure: "sync failed" left on the status bar**
+- Symptom: the outbox had reached zero (so the sync had worked) while the status bar still said failed
+- Root cause: the "sync now" button did not go through the `report` callback, so it was showing the last automatic result
+- Fix: manual and automatic share one reporting path
+- Lesson: **in an offline system a lying status display is more dangerous than a
+  crash** -- staff assume it did not sync and redo the work
+
+---
+
+## 2026-08-09 -- Three problems a real iPad exposed
+
+**Measurement: HTTP against HTTPS (on the same iPad)**
 
 | | HTTP `:8080` | HTTPS |
 |---|---|---|
-| 断网后从主屏幕重开 | **一片空白** | **正常进入，可继续操作** |
+| Reopened from the home screen with no network | **Blank page** | **Opens normally, work continues** |
 
-结论：Service Worker 需要安全上下文；没有它，离线时连界面都加载不出来，
-IndexedDB 里的数据再完整也没用 —— 员工走不到那个按钮。
+Conclusion: a Service Worker needs a secure context, and without it the interface
+will not even load offline -- however intact the data in IndexedDB is, nobody can
+reach the button.
 
 ---
 
-### 故障 A（最严重）：同步彻底停止，且不报任何错
+### Failure A (the worst): syncing stopped completely, with no error
 
-- **现象**：UI 显示「待同步 6」一直不减少；显示"在线"却停在
-  「同步失败（离线？）」；反复重开 App 也没用
+- **Symptom**: the UI showed "6 pending" and never decreased; it said "online"
+  while stuck on "sync failed (offline?)"; repeatedly reopening the app changed nothing
 
-- **第一次诊断（错的，值得记下来）**
+- **The first diagnosis (wrong, and worth recording)**
 
-  当时看到 Caddy 日志里请求体是 55 字节（`ops: []`），而 UI 说有待同步，
-  就推断是 `db.outbox.orderBy('client_seq')` 走索引查询、
-  IndexedDB 静默排除了索引键无效的记录。
+  Caddy's logs showed request bodies of 55 bytes (`ops: []`) while the UI claimed
+  work was pending, which suggested that `db.outbox.orderBy('client_seq')` was an
+  index query and IndexedDB was silently excluding records with an invalid index key.
 
-  **推翻它的证据**：把时间线对齐后发现，那批 55 字节的请求发生在
-  20:00:44 之前，而第一条卡住的记录产生于 20:01:02 —— **当时 outbox
-  确实是空的**，55 字节是完全正确的行为。我把"正常"当成了"异常"。
+  **What disproved it**: lining up the timeline showed those 55-byte requests all
+  happened before 20:00:44, while the first stuck record was created at 20:01:02 --
+  **the outbox really was empty at the time**, and 55 bytes was entirely correct
+  behaviour. I had read "normal" as "broken".
 
-  教训：**对齐时间线再下结论。** 两个现象同时存在不等于有因果。
+  Lesson: **line up the timeline before concluding.** Two symptoms coexisting is not causation.
 
-- **真正的定位**：统计 Caddy 全部请求 → **20:00:44 之后一条都没有**。
-  不是被拒绝，是**客户端根本没再发出任何请求**。
+- **The actual diagnosis**: counting every Caddy request showed **not one after
+  20:00:44**. Nothing was being rejected -- **the client had stopped sending anything**.
 
-- **根因**：
+- **Root cause**:
 
   ```ts
   let inFlight: Promise<...> | null = null
   export async function sync() {
-    if (inFlight) return inFlight          // ← 永久死锁点
+    if (inFlight) return inFlight          // <- the permanent deadlock
     inFlight = doSync().finally(() => { inFlight = null })
     return inFlight
   }
   ```
 
-  **Fetch API 没有默认超时。** 开飞行模式的瞬间正好有一个 fetch 在途，
-  这个 promise **永远不会 settle** → `inFlight` 永久挂着 →
-  之后每次 `sync()` 都直接返回这个卡死的 promise，**再也不发起新请求**。
+  **Fetch has no default timeout.** Airplane mode went on with a fetch in flight,
+  so that promise **never settles** -> `inFlight` stays set forever -> every later
+  `sync()` returns the same dead promise and **never issues another request**.
 
-  定时器照常跑、`visibilitychange` 照常触发，但全都撞在那一行 return 上。
-  UI 停在死锁前最后一次上报，所以看上去像"一直同步不了"。
+  The timers kept firing and `visibilitychange` kept triggering, and all of them
+  hit that one return. The UI froze on the last report before the deadlock, which
+  reads as "it just will not sync".
 
-  iOS 会挂起后台页面而不是杀掉它 —— 所以"重开 App"恢复的是同一个
-  卡死的页面状态，怎么重开都没用。
+  iOS suspends a background page rather than killing it -- so "reopening the app"
+  restores the same wedged page state, however many times you do it.
 
-- **处理**：
-  - fetch 加 `AbortController` 硬超时（10s）
-  - `inFlight` 看门狗：超过 30s 认定卡死，丢弃重发
-    （重复发送安全 —— `op_id` 保证幂等，这正是幂等设计的回报）
-  - 注入构建时间戳显示在头部，真机调试时一眼看出设备有没有拿到新代码
+- **Fix**:
+  - an `AbortController` hard timeout (10s) on the fetch
+  - an `inFlight` watchdog: past 30s it counts as dead, is dropped and resent
+    (resending is safe -- `op_id` guarantees idempotency, which is exactly what that design buys)
+  - a build timestamp injected and shown in the header, so on-device debugging shows at a glance whether the device has the new code
 
-- **教训**：
-  1. **任何没有超时的网络调用，都是一个潜在的永久死锁。**
-  2. **在离线系统里，"静默停止"比崩溃危险得多** —— 崩溃立刻发现，
-     静默停止要等月底对账才发现少了一单。
+- **Lessons**:
+  1. **Any network call without a timeout is a potential permanent deadlock.**
+  2. **In an offline system, stopping silently is far more dangerous than
+     crashing** -- a crash is noticed immediately, a silent stop is noticed at
+     month-end when a check is missing.
 
-- **顺带保留的加固**（不是本次根因，但是真实缺口）：
-  `takePending()` 改为 `toArray()` + JS 排序，不依赖索引；
-  `nextClientSeq()` 做 NaN 防护。索引键无效导致记录对
-  `orderBy` 隐形、对 `count()` 可见，是 IndexedDB 的真实陷阱，
-  只是这次不是它。
+- **Hardening kept along the way** (not this root cause, but a real gap):
+  `takePending()` now uses `toArray()` plus a JS sort and depends on no index;
+  `nextClientSeq()` is NaN-guarded. An invalid index key making a record invisible
+  to `orderBy` while `count()` still sees it is a genuine IndexedDB trap -- it
+  just was not this one.
 
-### 故障 B：离线被显示成"同步失败"
+### Failure B: offline displayed as "sync failed"
 
-- 断网时 `fetch` 抛错 → UI 显示「同步失败（离线？）」
-- 但离线**不是失败**，是正常排队。服务员看到"失败"会**重复操作**
-- 处理：区分 `offline` / `error` 两种性质，配色也区分
-- **教训**：骗人的状态提示比崩溃更危险
+- `fetch` throws when there is no network -> the UI said "sync failed (offline?)"
+- But offline **is not a failure**, it is normal queuing. A server who reads "failed" **redoes the work**
+- Fix: distinguish `offline` from `error`, including the colour
+- **Lesson**: a lying status is more dangerous than a crash
 
-### 故障 C：跨设备变更的时间戳是错的
+### Failure C: timestamps on cross-device changes were wrong
 
-- `changes` 下发时不带 `client_ts`，接收端只能 `new Date()` 兜底
-- 结果：离线积压两小时的记录，到了别的设备上全被打上「刚刚」
-- 处理：服务端在 `ChangeOut` 里带上 `client_ts`
+- `changes` were sent without `client_ts`, so the receiver fell back to `new Date()`
+- Result: two hours of records queued offline all arrived on other devices stamped "just now"
+- Fix: the server includes `client_ts` in `ChangeOut`
 
-### 顺带修的设计缺口：死信队列
+### A design gap fixed along the way: the dead letter queue
 
-被服务端拒绝的 op 原本会留在 outbox 里**无限重试**，
-"待同步"永远不归零。现在移进 `deadletter` 表，
-UI 上以红色「失败 N」徽章暴露 —— **看不见的失败等于丢单**。
-
----
-
-## 2026-08-09 — 局域网 HTTPS：SNI 不能填 IP
-
-- **现象**：`https://192.168.1.148` TLS 握手直接失败
-  （curl 报 `SEC_E_ILLEGAL_MESSAGE`）
-- **根因**：RFC 6066 规定 SNI 只能是**主机名**，不能是 IP 字面量。
-  用 IP 访问时客户端不发 SNI → Caddy 匹配不到站点 → 拒绝握手
-- **处理**：改用 mDNS 主机名 `restaurant.local`（iOS 原生支持，
-  Windows 10+ 自带响应器），额外好处是不受 DHCP 换 IP 影响
-- **决策影响**：这直接强化了生产环境**买域名**而不是用裸 IP 的理由
+Ops the server rejected used to sit in the outbox **retrying forever**, so
+"pending" never reached zero. They now move to a `deadletter` table and surface
+as a red "N failed" badge -- **a failure nobody can see is a lost check**.
 
 ---
 
-## 2026-08-10 — 营业日：跨零点归档，以及一个差点收错钱的时区
+## 2026-08-09 -- HTTPS on the LAN: SNI cannot be an IP
 
-**起因**：8/9 做实验开的单，8/10 还挂在楼面和「当日汇总」里。
-
-### 根因不是"少了个归档功能"，是前端根本没有营业日概念
-
-后端一直有 `business_date_of()`，月报也按它汇总。前端三处全是无过滤的全量查询：
-
-| 位置 | 原来 | 实际效果 |
-|---|---|---|
-| `allChecks()` | `db.checks.toArray()` | 清单页显示开业至今所有单 |
-| `totalsOf(rows)` | 传进来多少算多少 | 「营业额」是**开业至今累计** |
-| `openChecksByTable()` | 所有 `status='open'` | 昨天没结的单永远占着桌 |
-
-最危险的是第二条：头部时钟显示「8月10日」，下面的数字却是全历史。
-**它看起来完全正常** —— 比没有汇总更糟，因为没人会去怀疑它。
-
-### 顺带挖出来一个会多收客人钱的 bug
-
-`STORE_UTC_OFFSET` 默认 `-5`（EST），docker-compose 里根本没设。
-但店在 Douglas County NV —— **太平洋时区**，八月是 UTC-7。差两小时：
-
-- 下午 **13:00** 店里真实时间 → 后端算成 15:00 → **提前两小时切晚市价**
-- 午市 $14.05 的单按晚市 $15.88 收
-
-查了现有数据：没有一张单落在 13:00–15:00 PT 这个窗口，**所以还没真的收错过**。
-纯属运气 —— 再多测几天必然踩到。
-
-### 决策
-
-**1. 日界定在 0 点整**（原来是凌晨 2 点）
-
-代价说清楚：0 点之后补录的单会落到第二个营业日。店里 20:30 收市，
-正常不会有跨零点录入。分界值现在是设置项，真发生了改回 2 即可。
-
-**2. 固定偏移 → IANA 时区名**
-
-原来的 2 点 cutoff 其实**顺带**当了夏令时的缓冲 —— DST 切换点正好是 2:00，
-挡在营业日之外，所以偏移写错了也看不出来。分界移到 0 点之后这层缓冲没了，
-必须用真时区。`zoneinfo` + `tzdata`（slim 镜像不保证有 tz 数据库）。
-
-**3. 时区和日界做成设置项，不是 env**
-
-env 改一次要重建容器，店里没有 IT。
-
-关键设计点 —— **它和税率的存法故意不一样，没有 `effective_from`：**
-
-> 税率、菜价是**事实**：那天就是按 7.1% 收的，历史账单必须冻住。
-> 时区、日界是**解释规则**：它回答"这个时间戳算哪一天"。
-> 规则发现设错了（比如写死 UTC-5），正确做法是**连过去的账一起重新归属**，
-> 而不是把错误冻在历史里。留生效日反而会让错误永久留存，
-> 且再也说不清哪一段是对的。
-
-代价：改时区会让月报里靠近日界的账单换一天。UI 上明确警告。
-
-**4. 楼面清空，但未结单绝不隐藏**
-
-用户选的是「楼面清空 + 另设入口」。这里有个不能糊弄的点：
-清空的只是楼面，不是账。开了桌、有应收、没结账 = 钱还没收到，
-而这套系统是店里唯一的主记录 —— 从界面上消失就等于再也没人会想起来。
-
-所以横幅一直挂着直到处理完，不是弹一次就算通知过了。
-
-### 清空楼面撞出来的真实边界
-
-服务端有唯一偏索引 `uq_check_open_per_table`（一张桌同时只能有一张未结单）。
-楼面清空后，昨天那张单**仍然在服务端占着那张桌** —— 今天在同一张桌开新单
-会被拒绝、掉进死信队列。楼面上那张桌看起来是空的，员工点了却"没反应"。
-
-处理方式和 `restore_check` 那次一致：前端提前拦住并给出能自己解决的提示
-（「A2 还有一张 8月9日 的未结账单，$51.14 —— 去处理」）。
-**约束负责保证正确性，错误信息负责让人知道下一步做什么。**
-
-### 另一个安全网：设备时区 ≠ 店里时区
-
-前端算营业日用的是**设备时钟**（离线时没有别的可用）。
-开发机在 America/Chicago，店设在 Los_Angeles —— 差两小时。
-
-一开始想「营业日算出来不一致时才告警」，但那是错的：
-两个时区一天里大部分时间会得到**相同**的营业日，只有靠近日界的几小时才分叉。
-等分叉了才提示 = 每天有几小时在静默归错日，而那几小时正好是晚市高峰。
-
-改成后端下发店里的 UTC 偏移，前端直接比偏移，不一致就一直红着。
-
-> 踩到的小坑：这个横幅本来 60 秒查一次。冷启动那一下缓存里还是**上一版**
-> catalog（没有新字段），判定为不偏；等 catalog 刷新回来还要再等一分钟 ——
-> 而那一分钟正好是员工刚打开 iPad、最可能开第一桌的时候。改成 10 秒。
-
-### 本地镜像加了归档
-
-本地镜像原本只增不减，而楼面/清单每 2 秒轮询、每次全表扫一遍算营业日。
-一年几万条，iPad 上会明显变卡。现在只保留最近 7 个营业日，
-且**三条都满足才删**：已结清 + outbox 里没有引用它的 op + 早于窗口。
-只删本机缓存，服务端一条不动，月报照样查得到。
-
-### 测量
-
-| | 改前 | 改后 |
-|---|---|---|
-| 清单页条数 | 9（含 8/9 的 4 张） | 5（仅 8/10） |
-| 「营业额」 | 开业至今累计 | 当日 $238.50 |
-| 楼面开台 | 3/20（含 8/9 的 A2） | 3/20（A2 已移出） |
-| 跨天未结 | 无处可见 | 横幅 1 张 · $51.14 |
-
-**跨零点实测**（页面不刷新，把设备时钟推到 8/11 00:01）：
-4 秒内楼面自动翻到「8月11日周二」、开台 0/20、跨天未结变成 6 张 $289.64。
-6 张一张没丢，全在处理入口里。
+- **Symptom**: the TLS handshake to `https://192.168.1.148` failed outright (curl reported `SEC_E_ILLEGAL_MESSAGE`)
+- **Root cause**: RFC 6066 allows SNI to be a **hostname** only, never an IP
+  literal. Over an IP the client sends no SNI -> Caddy matches no site -> the handshake is refused
+- **Fix**: switch to the mDNS hostname `restaurant.local` (native on iOS, with a
+  responder built into Windows 10+), which also survives a DHCP address change
+- **Effect on decisions**: this directly strengthens the case for **buying a domain** in production rather than using a bare IP
 
 ---
 
-## 2026-08-10 — 补收差额：为什么它不能复用「改支付方式」
+## 2026-08-10 -- The business day: rolling over at midnight, and a time zone that nearly overcharged
 
-**起因**：月报里「支付与账单不符」最常见的成因是**结完账又加了菜**
-（系统故意允许改已结的单）。账单从 $55.47 涨到 $62.46，已收还停在 $55.47。
-需求是：二次结算时只显示未付的那部分。
+**Trigger**: checks opened while testing on 8/9 were still on the floor and in the day summary on 8/10.
 
-### 看着是 UI 需求，实际卡在写入语义上
+### The root cause was not "a missing archive feature", it was that the front end had no concept of a business day
 
-现有的「改支付方式」(`set_payment`) 是**整体替换**。如果补收 $6.99 走它，
-录进去的 $6.99 会**冲掉**原来那笔 $55.47 —— 不符从差 $6.99 变成差 $55.47。
-所以必须先承认这是两种不同的操作：
+The backend has always had `business_date_of()` and the month report aggregates by it. Three places in the front end queried everything with no filter:
 
-| 操作 | 场景 | 语义 |
+| Where | Was | What that produced |
 |---|---|---|
-| 改支付方式 | 方式录错了（记成现金其实是刷卡） | **整体替换** |
-| 补收差额 | 结完账又加了菜 | **在已收之上累加** |
+| `allChecks()` | `db.checks.toArray()` | The check list showed every check since opening day |
+| `totalsOf(rows)` | Whatever it was handed | "Sales" was **the total since opening day** |
+| `openChecksByTable()` | Every `status='open'` | Yesterday's unsettled checks held their tables forever |
 
-### 加法必须在服务端做
+The second is the dangerous one: the header clock said "10 August" while the
+number underneath was all of history. **It looks completely normal** -- which is
+worse than no summary at all, because nobody thinks to doubt it.
 
-客户端只说"这次收了多少"，**不说"总共收了多少"**。
-它手上那份已收金额可能是过期的（别的设备刚补收过），
-拿过期的总额去覆盖就是丢钱。服务端从自己的当前值加。
+### It also uncovered a bug that would have overcharged guests
 
-这跟 `modify_check` 当初选"整体替换而非增量"看似矛盾，其实不是同一类：
-改人数是在描述**最终状态**（两台设备各加一人，意图是最终三人，
-增量会算成加两人）；收款是在记录**已经发生的事实**
-（两个服务员各收了一部分，两笔都该算）。
-状态用替换，事实用追加。
+`STORE_UTC_OFFSET` defaulted to `-5` (EST) and docker-compose never set it. But
+the store is in Douglas County NV -- **Pacific time**, UTC-7 in August. Two hours out:
 
-### 没有建 payment_event 表
+- **13:00** real store time -> the backend computed 15:00 -> **the dinner price two hours early**
+- A lunch check at $14.05 charged at the dinner $15.88
 
-一度想把支付改成事件流。但每次补收本身就是一条 `sync_op`，
-带 `client_ts` 和操作人 —— 「这单分两次收的，先刷卡 $55.47，
-后收现金 $6.99」这段历史，用现有的操作历史就能重放出来。
-和账单操作历史一个思路：**数据本来就在审计日志里，不必再存一份。**
+Checking the existing data: no check fell in the 13:00-15:00 PT window, **so
+nobody was actually overcharged**. Pure luck -- a few more days of testing and it
+would certainly have happened.
 
-支付方式（cash/card/mixed/other）改成由三个金额桶**推导**，
-不接受客户端传的 method —— 一笔刷卡加一笔现金合起来是 mixed，
-这不该由客户端判断。
+### Decisions
 
-### 边界（都实测过）
+**1. The day boundary is midnight** (it was 02:00)
 
-| 情况 | 处理 |
+The cost, stated plainly: a check entered after midnight lands on the next
+business day. The store closes at 20:30, so entry across midnight is not normal.
+The boundary is a setting now, so if it does happen it can go back to 2.
+
+**2. A fixed offset becomes an IANA time zone name**
+
+The old 02:00 cutoff had **incidentally** been absorbing daylight saving -- the
+switch is at exactly 02:00, outside the business day, so a wrong offset was
+invisible. Moving the boundary to midnight removed that cushion, so the real zone
+became mandatory. `zoneinfo` + `tzdata` (a slim image does not guarantee a tz database).
+
+**3. The time zone and the boundary are settings, not env vars**
+
+Changing an env var means rebuilding the container, and the store has no IT.
+
+The design point that matters -- **it is deliberately stored differently from the tax rate, with no `effective_from`:**
+
+> A tax rate or a dish price is a **fact**: that day really was charged at 7.1%,
+> so past checks have to be frozen.
+> A time zone or a day boundary is an **interpretation rule**: it answers "which
+> day does this timestamp belong to". When a rule turns out to be wrong (a
+> hard-coded UTC-5, say), the right move is to **re-file the past along with it**
+> rather than freeze the mistake. An effective date would preserve the error
+> forever and make it impossible to say which stretch was right.
+
+The cost: changing the time zone moves checks near the boundary to a different day in the month report. The UI says so explicitly.
+
+**4. The floor clears, but an unsettled check is never hidden**
+
+The choice was "clear the floor and give them their own entry point". There is
+one thing here that cannot be fudged: what clears is the floor, not the books. A
+table was opened, an amount is owed, nothing was collected -- that is money not
+yet received, and this system is the store's only record, so disappearing from
+the screen means nobody will ever think of it again.
+
+So the banner stays up until it is dealt with, rather than appearing once as a notification.
+
+### A real edge that clearing the floor exposed
+
+The server has a partial unique index `uq_check_open_per_table` (one open check
+per table). After the floor clears, yesterday's check **still holds that table on
+the server** -- opening a new check there today is rejected and lands in the dead
+letter queue. The table looks free, and the tap "does nothing".
+
+Handled the same way as the `restore_check` case: the front end catches it first
+and says something actionable ("A2 still has an unsettled check from 9 August,
+$51.14 -- deal with it").
+**The constraint guarantees correctness; the message makes it actionable.**
+
+### Another safety net: the device's time zone is not the store's
+
+The front end computes the business day from **the device clock** (offline there
+is nothing else). The development machine is on America/Chicago while the store
+is Los_Angeles -- two hours apart.
+
+The first idea was "warn when the computed business days disagree", which is
+wrong: two time zones produce the **same** business day for most of the day and
+only diverge for the few hours near the boundary. Waiting for divergence means a
+few hours a day are silently filed wrong -- and those hours are the dinner peak.
+
+Changed to: the backend publishes the store's UTC offset and the front end
+compares offsets, staying red for as long as they differ.
+
+> A small trap hit here: the banner originally checked once a minute. On a cold
+> start the cache still holds the **previous** catalog (without the new field), so
+> it decides there is no drift; once FloorPlan refreshes the catalog it would
+> still take another minute to notice -- and that minute is exactly when someone
+> has just opened the iPad and is most likely to seat the first table. Changed to 10 seconds.
+
+### The local mirror gained archiving
+
+The mirror only ever grew, while the floor and the check list poll every 2
+seconds and scan the whole table to work out business days. Tens of thousands of
+rows a year is noticeably slow on an iPad. It now keeps the last 7 business days,
+and **all three conditions have to hold before a row is deleted**: settled, no op
+in the outbox references it, and older than the window. Only this device's cache;
+the server keeps everything and the month report still finds it.
+
+### Measurement
+
+| | Before | After |
+|---|---|---|
+| Rows in the check list | 9 (including four from 8/9) | 5 (8/10 only) |
+| "Sales" | Everything since opening day | $238.50 for the day |
+| Tables open on the floor | 3/20 (including A2 from 8/9) | 3/20 (A2 moved out) |
+| Carried over | Nowhere to be seen | A banner: 1 check, $51.14 |
+
+**Tested across midnight** (without reloading the page, pushing the device clock to 8/11 00:01):
+within 4 seconds the floor turned over to "Tuesday 11 August", tables open went to
+0/20, and carried over became 6 checks totalling $289.64.
+All six survived, every one of them reachable from the handling screen.
+
+---
+
+## 2026-08-10 -- Top-up: why it cannot reuse "change the payment method"
+
+**Trigger**: the most common cause of "payment does not match" in the month
+report is **dishes added after collecting** (the system deliberately allows
+editing a closed check). The check goes from $55.47 to $62.46 while the collected
+amount stays at $55.47. The requirement: when settling again, show only the part
+not yet paid.
+
+### It looks like a UI requirement and is actually about write semantics
+
+The existing "change the payment method" (`set_payment`) **replaces wholesale**.
+Putting a $6.99 top-up through it would **wipe** the original $55.47 -- turning a
+$6.99 discrepancy into a $55.47 one. So the first step is admitting these are two
+different operations:
+
+| Operation | When | Semantics |
+|---|---|---|
+| Change the payment method | The method was recorded wrong (cash when it was card) | **Replace wholesale** |
+| Top up | Dishes were added after collecting | **Add to what was collected** |
+
+### The addition has to happen on the server
+
+The client says "this much was collected now" and **never "this much in total"**.
+Its copy of the collected amount may be stale (another device just topped up),
+and overwriting with a stale total loses money. The server adds to its own
+current value.
+
+That looks contradictory to `modify_check` choosing "replace, not increment", but
+they are not the same category: changing the guest count describes a **final
+state** (two devices each adding one person mean "there are three", and
+increments would make it five); collecting records **a fact that has already
+happened** (two servers each took part of it, and both count).
+State replaces, facts append.
+
+### No payment_event table was created
+
+Turning payments into an event stream was considered. But every top-up is already
+a `sync_op` carrying its `client_ts` and its operator -- "this one was collected
+in two goes, $55.47 on card then $6.99 in cash" replays out of the existing
+operation history. Same reasoning as the check history: **the data is already in
+the audit log, so it does not need storing twice.**
+
+The payment method (cash/card/mixed/other) became **derived** from the three
+amount buckets, and a client-supplied method is ignored -- one card payment plus
+one cash payment is mixed, and that is not the client's call.
+
+### Edge cases (all tested)
+
+| Case | Handling |
 |---|---|
-| 补收 > 待收 | 拒绝，并把待收金额写进错误信息 |
-| 补收 = 0 | 拒绝 |
-| 已收齐再补收 | 拒绝「这张单已经收齐」 |
-| 用「其它」方式不写说明 | 拒绝 |
-| 退菜导致多收（待收为负） | **不自动退**。系统不碰钱，实际退了多少只有经手人知道；界面说清差在哪，退款和改数由人做 |
+| Top-up greater than outstanding | Rejected, with the outstanding amount in the message |
+| Top-up of 0 | Rejected |
+| Topping up an already-settled check | Rejected: "this check is fully paid" |
+| "Other" with no note | Rejected |
+| A voided dish leaving an overpayment (negative outstanding) | **No automatic refund.** The system does not touch money, and only the person who handled it knows what was actually refunded; the screen says where the gap is and the refund and the correction are theirs |
 
-### 测量
+### Measurement
 
-C4：应收 $51.37、已刷卡 $39.37 → 补收 $12 现金 → 变成 mixed(1200+3937)=5137，
-当日「支付不符」计数里不再有它。
-A5 在界面上走了一遍：弹层大字显示 **$7.44 而不是 $112.25**，
-三行拆解「账单应收 / 之前已收 / 本次待收」。
-
----
-
-## 2026-08-10 — 月报日详情：告警要能点开，键盘要放得下
-
-**两个来自实际使用的要求**：小费键盘挤得要上下翻页；
-「作废 2 单」「支付不符 2 单」只给数字，没法处理。
-
-### 下钻列表和它解释的那个数字，必须共用同一段谓词
-
-新加的 `/api/reports/day-checks?date=&kind=` 和日聚合 `_SQL`
-里算 `mismatch_count / unpaid_count / voided_count` 的条件写成同一份
-（`_PER_CHECK` + `_KIND_WHERE`）。
-
-不这么做的话，早晚会出现「报表说 3 单、点进去列 2 单」。
-那比不给下钻更糟 —— 它会让人开始怀疑**所有**数字，
-而这套系统全部的价值就建立在数字可信上。
-
-实测：mismatch 2 = 列出 2 单，voided 2 = 2 单，unpaid 0 = 空。
-
-### 布局：真正的问题不是"太长"，是主按钮在错误的位置
-
-一开始只把小费键盘挪到右栏，量了一下**还是要滚**（733 > 632）。
-右栏本身就有 530px，横过来并不会变矮。
-
-真正的毛病是「保存小费」是小费框里一个 `linkbtn`，
-而底部动作条上只有「关闭」—— 显眼的按钮不是你要按的那个，
-键盘一高就把真正要按的挤出屏幕。**和设置页那次是同一个错误**
-（改了时区、点了底部的保存，存的却是税率）。
-
-改成：h2 和底部动作条固定，中间分栏可滚；「保存小费」升为底部主按钮。
-1280×720 和 iPad 竖屏 768×1024 都测过：**不需要滚动，保存按钮始终可见。**
-
-> 教训记一次就够：**一屏里如果有多个保存动作，最显眼的那个必须是主操作。**
-> 这个错误在这个项目里已经犯了两次。
-
-### 顺手修掉一处过时说明
-
-日详情底部原来写着「凌晨 2 点前的单算前一天」。日界改成 0 点、
-并且变成设置项之后，这句就是假的了。改成「分界时间见 ⚙︎ 设置」——
-**不写死会变的值**，过时的说明比没有说明更糟。
+C4: $51.37 owed, $39.37 taken on card -> a $12 cash top-up -> mixed(1200+3937)=5137,
+and it left the day's "payment does not match" count.
+A5 was walked through in the UI: the sheet's large figure showed **$7.44 rather
+than $112.25**, with three lines breaking out owed / already collected / outstanding.
 
 ---
 
-## 2026-08-11 — 加料：折进单价，而不是新增一路算钱
+## 2026-08-10 -- Month report day detail: a warning has to open, and the keypad has to fit
 
-需求：点进一道菜能加辣、加牛/鸡/虾（$2）、加蔬菜（$1），
-还要能手写要求并当场定价。
+**Two requirements straight from real use**: the tip keypad was cramped enough to
+need scrolling, and "2 voided" / "2 mismatched" gave a number with nothing to act on.
 
-### 关键选择：加料的钱**折进 order_line.unit_price_cents**
+### A drill-down and the number it explains have to share one predicate
 
-另一条路是让加料自己参与合计。那意味着要同时改：
-应收合计、服务费基数、税基、月报的四五处 SQL、日详情下钻、
-本地镜像的估算…… 漏改其中任何一处，就是一个只有对账时才会发现的洞。
+The new `/api/reports/day-checks?date=&kind=` and the day aggregate `_SQL` that
+computes `mismatch_count / unpaid_count / voided_count` are written once
+(`_PER_CHECK` + `_KIND_WHERE`).
 
-折进单价之后，所有算钱的地方都还是 `SUM(qty × unit_price_cents)`，
-**一行都不用改**。加了什么另存 `order_line_modifier`：
-账单和后厨要看，将来也能查"多少客人加虾"——
-那正是折进单价之后会丢掉的信息。
+Without that, sooner or later the report says 3 and the drill-down lists 2. That
+is worse than offering no drill-down -- it makes **every** number suspect, and
+this system's entire value rests on the numbers being trustworthy.
 
-代价：`unit_price_cents` 不再等于菜单价。所以注释里写死了这一点，
-本地 `LocalLine.unit_price_cents` 也标了"已含加料"，
-免得以后有人再去加一次。
+Measured: mismatch 2 lists 2, voided 2 lists 2, unpaid 0 is empty.
 
-按**份**收：点 2 份都加虾就是两份的钱。折进单价天然就是这个语义。
+### Layout: the real problem was not "too tall", it was the main button in the wrong place
 
-### 价格权威性分两类
+The first attempt only moved the tip keypad into the right column, and measuring
+showed it **still scrolled** (733 > 632). The right column is 530px on its own,
+and turning it sideways does not make it shorter.
 
-| 来源 | 谁定价 |
+The actual fault was that "save tips" was a `linkbtn` inside the tip box while
+the bottom action bar only had "close" -- the prominent button is not the one you
+want, and a tall keypad pushes the real one off screen. **The same mistake as the
+settings sheet** (change the time zone, tap save at the bottom, and the tax rate
+gets saved).
+
+Changed to: the h2 and the bottom action bar are fixed, the middle scrolls, and
+"save tips" is promoted to the primary button at the bottom. Tested at 1280x720
+and at 768x1024 in portrait: **no scrolling needed, and the save button is always visible.**
+
+> One lesson is enough: **when a screen has more than one save action, the most
+> prominent one has to be the main one.** This project has now made that mistake twice.
+
+### An out-of-date note fixed along the way
+
+The bottom of the day detail used to say "checks before 2 AM count as the
+previous day". Once the boundary moved to midnight and became a setting, that
+sentence was false. It now says "the boundary is in Settings" --
+**do not hard-code a value that changes**; an out-of-date explanation is worse than none.
+
+---
+
+## 2026-08-11 -- Add-ons: folded into the unit price rather than a second money path
+
+The requirement: opening a dish should offer extra spicy, add beef/chicken/shrimp
+($2) and add vegetables ($1), plus a hand-typed request priced on the spot.
+
+### The key choice: add-on money is **folded into order_line.unit_price_cents**
+
+The alternative is letting add-ons take part in the totals themselves. That would
+mean changing, at the same time: the total owed, the service charge base, the tax
+base, four or five queries in the month report, the day drill-down, the local
+estimate... and missing any one of them is a hole that only surfaces at reconciliation.
+
+Folded into the unit price, every money calculation stays
+`SUM(qty x unit_price_cents)` and **not one line changes**. What was added is
+stored separately in `order_line_modifier`: the check and the kitchen have to see
+it, and "how many guests add shrimp" stays answerable -- which is exactly what
+folding the price in would otherwise lose.
+
+The cost: `unit_price_cents` no longer equals the menu price. So the comment says
+so outright, and the local `LocalLine.unit_price_cents` is marked "already
+includes add-ons" so nobody adds them a second time.
+
+Charged **per portion**: two dishes with shrimp is twice the money. Folding into
+the unit price gives exactly that semantics for free.
+
+### Two classes of price authority
+
+| Source | Who sets the price |
 |---|---|
-| 目录里的（加辣、加虾…） | **服务端查表**，客户端传什么都不看 |
-| 前台手写的要求 | 客户端传，因为这个数**本来就只存在于现场** |
+| From the catalogue (extra spicy, add shrimp...) | **The server looks it up**; whatever the client sent is ignored |
+| Typed by the front | The client sends it, because that number **only exists at the counter** |
 
-第二类和 Buffet To Go 按重量称是同一类例外 —— 不是偷懒，
-是客人当场提的要求只能当场谈价。所以它归属到人（sync_op 带 user_id），
-事后查得到是谁定的。
+The second is the same class of exception as weighing Buffet To Go -- not
+laziness, but that a request a guest makes on the spot can only be priced on the
+spot. So it is attributed to a person (sync_op carries user_id) and can be traced.
 
-### 购物车不能再是「菜品 id → 份数」
+### The cart can no longer be "dish id -> quantity"
 
-同一道菜可以带不同加料出现多次（一份加虾、一份加辣）。
-用 Map 会把它们合成一条 —— 客人要的东西直接上错。
-改成数组，加料完全相同的才合并份数。
+The same dish can appear several times with different add-ons (one with shrimp,
+one extra spicy). A Map merges them into one line -- and the guest gets the wrong
+food. Changed to an array, where only identical add-ons merge quantities.
 
-### 交互上保留了快路
+### The fast path was preserved
 
-点菜名 = 直接加一份（不弹窗）；要加料才点卡片角上的「定制」。
-高峰期绝大多数菜是不带要求的，如果每道菜都要先弹窗再点确认，
-一晚上多按几百次。
+Tapping the dish name adds one immediately, with no sheet; "customise" in the
+corner of the card is for add-ons. Most dishes at peak carry no request, and a
+sheet plus a confirm tap on every dish is hundreds of extra taps a night.
 
-### 顺带挖出一个自提单从不收税的 bug
+### It also uncovered a bug where to-go checks were never taxed
 
-验证本地估算和服务端是否逐分一致时对不上：本地 4188、服务端 3910，
-差 278 正好是税。查下去发现 `open_togo_check` 调了 `_add_lines`
-却**没调 `_recalc_service_charge`** —— 所有自提单的 `tax_cents` 都是 0。
+Verifying that the local estimate and the server agreed to the cent, they did
+not: 4188 locally against 3910 on the server, a difference of 278, which is
+exactly the tax. Digging in, `open_togo_check` called `_add_lines` but
+**never called `_recalc_service_charge`** -- every to-go check had `tax_cents` of 0.
 
-| source | 单数 | 税合计 |
+| source | Checks | Tax total |
 |---|---|---|
 | dine_in | 16 | $53.12 |
 | buffet_togo | 3 | **0** |
 | phone_order | 3 | **0** |
 
-后果不只是少收税：客户端估价**是加税的**，员工照着屏幕收钱，
-服务端记的却是不含税总额 → 这单立刻变成"多收"，月报一直挂着不符。
-而且 `add_order_lines` 本来就调了重算，等于同一种单两条路的税还不一样。
+The damage was more than the missing tax: the client's estimate **does** include
+tax, staff collect what the screen says, and the server recorded a pre-tax total
+-> the check immediately reads as overpaid and the month report keeps flagging it.
+And `add_order_lines` already recalculated, so the same kind of check was taxed
+two different ways depending on the path.
 
-补上那一行。服务费不受影响 —— `_party_size` 对自提本来就是 0，
-函数自己会算出 0，不需要特判。
+One line added. The service charge is unaffected -- `_party_size` is 0 for to-go,
+so the function returns 0 by itself with no special case.
 
-修复后实测：2 份宫保鸡加虾 = 单价 1320 × 2 = 2640，服务费 0，
-税 187，合计 2827，和手算一致。
+Measured after the fix: two Kung Pao Chicken with shrimp = 1320 x 2 = 2640,
+service charge 0, tax 187, total 2827, matching the arithmetic by hand.
 
 ---
 
-## 2026-08-11 — 老板改价页：三块数据，三种改法
+## 2026-08-11 -- The owner's pricing page: three kinds of data, three ways to edit
 
-老板要能改「所有价格」。听起来是一个 CRUD，实际是三种**时间语义**，
-写成一种就一定错一边。
+The owner has to be able to change "all the prices". That sounds like one CRUD
+screen and is actually three different **temporal semantics**, and writing them as
+one is guaranteed to get a side wrong.
 
-| | 语义 | 为什么不能用别的写法 |
+| | Semantics | Why nothing else works |
 |---|---|---|
-| 人头价 / 饮料价 | 换生效日 = 新增一版；同一天改 = 覆盖那一版 | 月报要能回查"那天卖多少"。但一天里改三次不该留三版，否则 `effective_from` 唯一性和历史可读性都毁了 |
-| 菜价（143 条） | 就地改 | 账单落的是 `order_line.unit_price_cents` 快照，历史根本不看菜单表 —— 再建一张版本表是纯负债 |
-| 加料目录 | 整份替换，顺序 = 数组下标 | 老板要能拖顺序。顺序是列表的属性，不是单条的属性，逐条 PATCH 表达不了 |
+| Per-head and drink prices | A new effective date adds a version; editing on the same date overwrites it | The month report has to be able to look up "what a seat cost that day". But editing three times in one day should not leave three versions, or `effective_from` uniqueness and readability are both ruined |
+| Dish prices (143 of them) | Edited in place | A check stores an `order_line.unit_price_cents` snapshot and never reads the menu table -- another version table would be pure liability |
+| The add-on catalogue | Replaced wholesale, order = array index | The owner drags the order. Order is a property of the list, not of a row, and per-row PATCH cannot express it |
 
-**加料"删除"落成 `active = False`，不是 DELETE。**
-`order_line_modifier` 的外键指着它 —— 真删了，上个月那单"加虾"就变成
-一条指向虚空的记录，账单详情打不开。停用的行不再出现在点菜界面，
-历史账单照样查得到名字。
+**Deleting an add-on becomes `active = False`, not DELETE.**
+`order_line_modifier` has a foreign key into it -- delete it and last month's
+"add shrimp" becomes a row pointing at nothing, and that check's detail will not
+open. A deactivated row stops appearing when ordering; past checks still show its name.
 
-**权限比设置页更严**：设置页是 manager/admin，这页只有 admin。
-理由很直白 —— 前台经理需要在营业中改税率生效日，但不该能改菜价。
+**Stricter permissions than the settings sheet**: settings is manager/admin, this
+page is admin only. The reasoning is plain -- a front manager needs to set a tax
+rate's effective date during service, but should not be able to change dish prices.
 
-**故障：`set_modifiers` 把自己刚建的行停用了**
-- 现象：保存后新增的加料立刻消失
-- 错误假设：前端没刷新
-- 根因：逻辑是"收集这次提交里的 id，不在里面的停用"。
-  新建的对象在 `flush()` 之前 `id` 是 `None`，`None not in seen_ids` 恒真 →
-  刚 add 进 session 的行当场被自己判成"已删除"
-- 修法：跟踪**对象**而不是 id，`db.flush()` 拿到主键之后再比
-
----
-
-## 2026-08-11 — 中英切换：翻译的单位是句子，不是文本节点
-
-店里有讲英文的员工。要求是右上角一键全站切换。
-
-**决策：不引 i18n 库，词表用中文原文当 key**（gettext 的 msgid 路子）。
-
-- 这套界面的**源语言就是中文**，抽成 `settings.tz.hint` 只是多一层
-  查得到查不到都不知道的间接层
-- 漏翻的回落是**显示中文**，不是显示 key —— 最坏情况仍然可用
-- 代价：改中文文案等于换 key。可接受，因为文案基本不动；
-  而且有个脚本能扫出"用到但表里没有"的词，漏了会被抓出来
-
-**决策：菜名 / 分类 / 加料名 / 时区名不进词表。**
-它们是**数据**不是文案 —— 后端各给一列 `name_en` / `label_en`，
-老板在改价页自己就能改。塞进前端词表的话，老板加一道菜就得等我改代码发版。
-
-**故障（同一个根因犯了两次）：自动改写的匹配单位错了**
-
-我写了个脚本批量把 JSX 里的中文包成 `tr('…')`，规则是
-「元素的完整文本子节点」。两次翻车：
-
-1. **被 `<b>` 切开的句子逐段翻译**，出来是半中半英：
-   `时区决定where lunch becomes dinner（15:00 分界）和which day a check belongs to`。
-   根因：翻译的单位是句子，`<b>` 把一句话切成三个文本节点，
-   每段单独翻在语法上就拼不回去。修法是整句合并成一个字符串
-   （顺带按用户要求精简 —— 那三段大半在解释设计，看的人据此只做一个决定）
-2. **`<label>姓名<input/></label>` 整片漏掉**：文本后面跟着元素，
-   不满足"完整文本子节点"。7 个文件 14 处表单标签全军覆没，
-   而且**只在点完菜之后才出现**，随手点几下测不到
-
-第二次是用户截图指出来的。教训是：批量改写必须配一个**独立的检查**，
-不能拿改写脚本自己的规则当验收标准 —— 它漏掉的正是它看不见的。
-后来的检查是在浏览器里逐页扫 `innerText` 里的 CJK 字符，
-和改写规则完全无关，一扫就把 Settings 页剩下的中文全揪出来了。
-
-**测量：** 词表 305 条，界面用到 239 条（其余是 `tr(变量)` 动态取的
-角色名 / 服务端错误串），missing 0；五个主页面 + 设置页扫描 CJK 残留 = 0
-（老板自己填的备注除外 —— 那是数据）。
+**Failure: `set_modifiers` deactivated the rows it had just created**
+- Symptom: newly added add-ons disappeared the moment they were saved
+- Wrong assumption: the front end had not refreshed
+- Root cause: the logic was "collect the ids in this submission and deactivate
+  anything not in it". A newly created object has `id` of `None` before
+  `flush()`, so `None not in seen_ids` is always true -> a row just added to the
+  session judged itself deleted
+- Fix: track **objects** rather than ids, and compare after `db.flush()` has assigned the keys
 
 ---
 
-## 2026-08-11 — 清测试数据：服务端删了，iPad 上还在
+## 2026-08-11 -- The language switch: the unit of translation is a sentence, not a text node
 
-三天的实验单（28 张、79 条 op）一次性清掉。删数据本身是一条 SQL，
-真正的问题在后面：**这台服务器删的东西，没有任何机制会传到设备上。**
+The store has English-speaking staff. The requirement was one tap in the top right that switches everything.
 
-同步协议是**只追加**的：客户端带游标来问"比这个新的给我"，
-服务端回一批变更。删除不是变更 —— 它不产生 op，所以永远不会被下发。
-每台 iPad 的本地镜像里那 28 张单会一直留着，界面上显示的是
-**服务端已经不存在的账单**。而且这不是显示问题：楼面按镜像判断桌子占没占。
+**Decision: no i18n library, and the catalogue is keyed by the source string** (gettext's msgid approach).
 
-原本只有一个手动按钮（⚙︎ 里的"重置本机数据"），意味着清一次数据
-要挨个设备去点。改成自动检测：
+- What you read in the JSX is the sentence itself; inventing `settings.tz.hint`
+  only adds a layer of indirection nobody can resolve by reading
+- A missing entry falls back to **readable text**, not to a key -- the worst case is still usable
+- The cost: editing the copy means changing a key. Acceptable, because the copy
+  rarely moves, and a script scans for strings that are used but absent from the
+  table, so anything missed gets caught
 
-**判据**：客户端说自己消费到 seq = N，而日志里 **seq ≤ N 的记录一条都不剩**。
-正常运转时这不可能发生 —— 游标是 N 就说明 1..N 曾经存在，其中总有一条还在。
+**Decision: dish, category and add-on names stay out of the catalogue.**
+They are **data**, not copy -- the backend carries a `name_en` column for each,
+and the owner edits them on the pricing page. In the catalogue, adding a dish
+would mean waiting for a code change and a release.
 
-第一版写的是 `since_cursor > MAX(seq)`，**错的**：`seq` 是 bigserial，
-DELETE 不会把序列退回去。清空后别的设备写一条就是 seq 80，
-游标停在 79 的那台反而"看起来正常"，然后永远对不上。
+**Failure (the same root cause twice): the batch rewrite matched the wrong unit**
 
-**三个必须踩准的点**（每一个错了都会丢真钱）：
+A script wrapped the strings in the JSX into `tr('...')`, matching on "an
+element's complete text child". It came off the rails twice:
 
-1. **截断判定要在写入这批 op 之前**。先写再判的话，这批 op 自己就把
-   MAX(seq) 顶过了游标，永远判不出来。
-2. **要求重置也照样先收下客户端带来的 op**。outbox 里可能是断网期间
-   真实录的单。为了"干净"把它丢掉 = 丢店里的钱。
-3. **只清 synced=1 的镜像行**。synced=0 的还在 outbox 里没发出去。
+1. **Sentences split across `<b>` tags were handled piece by piece**, which comes
+   out half in one language and half in the other. Root cause: the unit is a
+   sentence, and `<b>` cuts one sentence into three text nodes that cannot be
+   reassembled grammatically. The fix was merging each into one string (and
+   trimming them while there -- most of those paragraphs explained design, and the
+   reader makes exactly one decision from them)
+2. **`<label>Name<input/></label>` was skipped entirely**: text followed by an
+   element is not a "complete text child". Fourteen form labels across seven
+   files, all missed -- and **they only appear after ordering**, so casual tapping
+   never reaches them
 
-**顺带挖出手动重置按钮的一个静默 bug**：`/api/sync` 平时会过滤掉
-**本设备自己产生的** op（避免把刚写的再应用一遍）。所以游标归零重拉，
-拿回来的只有别人写的单 —— 这台 iPad 自己开的单会永远缺席，
-而且缺得无声无息。加了个 `resync` 标记让服务端这一轮不过滤。
+The second one was caught from a screenshot. The lesson: a batch rewrite needs an
+**independent check**, and the rewrite script's own rule cannot be the acceptance
+criterion -- what it misses is precisely what it cannot see. The check that
+followed scans each page's `innerText` in the browser, which is unrelated to the
+rewrite rule, and it immediately turned up everything left on the Settings page.
 
-**实测**（不是"应该可以"）：
+**Measurement**: 305 entries in the catalogue, 239 used by the interface (the rest
+are reached through `tr(variable)` for role names and server error strings),
+0 missing; a scan of the five main pages and the settings sheet found 0 residue
+(other than notes the owner typed in, which are data).
 
-| 场景 | 结果 |
+---
+
+## 2026-08-11 -- Clearing test data: deleted on the server, still on the iPad
+
+Three days of test checks (28 of them, 79 ops) cleared in one go. Deleting is one
+SQL statement; the real problem comes after: **nothing carries a deletion on this
+server out to the devices.**
+
+The sync protocol is **append-only**: the client arrives with a cursor asking for
+anything newer, and the server returns a batch of changes. A deletion is not a
+change -- it produces no op, so it is never sent. Those 28 checks stay in every
+iPad's local mirror and the screen shows **checks the server no longer has**. And
+this is not cosmetic: the floor decides whether a table is occupied from that mirror.
+
+There was only a manual button for it (⚙︎ "reset local data"), which means
+clearing data once requires visiting every device. Replaced with automatic detection:
+
+**The test**: the client says it has consumed up to seq = N, and **not one record
+with seq <= N is left in the log**. That cannot happen in normal operation -- a
+cursor of N means 1..N existed and one of them is still there.
+
+The first version was `since_cursor > MAX(seq)`, which is **wrong**: `seq` is a
+bigserial and DELETE does not wind the sequence back. After a purge, one write
+from another device is seq 80, so the device sitting at 79 looks fine and never
+agrees again.
+
+**Three points that all have to be right** (each one wrong loses real money):
+
+1. **The truncation test runs before this batch of ops is written.** Written
+   first, the batch itself pushes MAX(seq) past the cursor and it can never be detected.
+2. **The client's ops are accepted even while telling it to start over.** The
+   outbox may hold checks really entered while the network was down. Dropping
+   them for cleanliness is dropping the store's money.
+3. **Only synced=1 mirror rows are cleared.** synced=0 means it is still in the outbox and has never been sent.
+
+**A silent bug in the manual reset button, found along the way**: `/api/sync`
+normally filters out ops **produced by this device** (so it does not re-apply its
+own writes). So zeroing the cursor and pulling again returns only other devices'
+checks -- this iPad's own would be missing forever, and silently. A `resync` flag
+now tells the server not to filter for that round.
+
+**Measured** (not "it should work"):
+
+| Scenario | Result |
 |---|---|
-| 游标 79、镜像 28 单、服务端已清空 | 一个心跳内镜像归零，楼面回到 0/20 |
-| 停 API → 离线开 A1 单 → 游标推回 79 → 起 API | outbox 那单**上了服务端**，重置后又从服务端拉回来，`synced=1`，金额 $34.01 一分不差 |
-| 再删这一单 | 第二次自动重置，镜像归零，outbox 空、死信空 |
+| Cursor 79, mirror of 28 checks, server cleared | Within one heartbeat the mirror is empty and the floor is back to 0/20 |
+| Stop the API -> open A1 offline -> push the cursor back to 79 -> start the API | That outbox check **reached the server**, came back from the server after the reset, `synced=1`, $34.01 to the cent |
+| Delete that check too | A second automatic reset; mirror empty, outbox empty, dead letters empty |
 
 ---
 
-## 2026-08-11 — 账户页：能改的和不能改的
+## 2026-08-11 -- The accounts page: what can be changed and what cannot
 
-老板要能"查看并修改所有账户名字和密码"。名字可以，密码**不能查看** ——
-库里是 argon2 哈希，不可逆。这不是功能缺失：真能查出来就意味着
-拖库的人也查得出来。界面上必须把这句话写出来，否则老板会以为是自己没找到。
+The owner wanted to "see and change every account's name and password". Names
+yes; a password **cannot be seen** -- what is stored is an argon2 hash and it is
+irreversible. That is not a missing feature: being able to read one back would
+mean whoever dumps the database can too. The page has to say so, or the owner
+will assume they simply cannot find it.
 
-**改密码要连着吊销会话，否则等于什么都没做。**
-老板改员工密码的典型场景就是这个人离职了。而他那台 iPad 上的
-refresh token 能一直续到 30 天后 —— 不吊销的话，改完密码他照样进得来。
-所以 `set_password` 顺手把该账号所有未撤销的 session 标记 revoked。
+**Changing a password has to revoke sessions, or it does nothing.**
+The typical reason an owner changes a staff password is that the person left. The
+refresh token on their iPad keeps renewing for another 30 days -- without
+revoking, they can still sign in after the change. So `set_password` marks every
+unrevoked session on that account revoked.
 
-留了一个 15 分钟的窗口：已经发出去的 access token 是 JWT、不落库，
-撤不回来。这是**刻意的取舍** —— 要立刻断掉就得每个请求都查库，
-而"断网时也要能快速响应"是这个系统的前提。
+A 15-minute window remains: access tokens already issued are JWTs, are not
+stored, and cannot be recalled. That is a **deliberate trade** -- cutting it to
+zero means a database lookup on every request, and "answer local requests quickly
+while the network is down" is a premise of this system.
 
-**两个小决定：**
+**Three small decisions:**
 
-- **密码框不遮码**。老板设完要念给员工听，遮起来只会让他打错了也不知道。
-  这不是在输入自己的密码。
-- **密码下限只有 4 位**。威胁模型是"离职的人还能进来"，不是互联网上的
-  暴力破解 —— 这台服务器只在店内局域网上。强制复杂密码的真实后果是
-  被写在收银台的便利贴上，那更糟。
-- 登录名一律转小写存。登录是精确匹配，`Admin` 和 `admin` 是两个账号，
-  这只会造成"我明明输对了却登不进去"。
+- **The password field is not masked.** The owner reads it out to the member of
+  staff, and masking only hides their own typos. This is not them entering their own password.
+- **The floor is four characters.** The threat is "someone who left can still
+  sign in", not brute force from the internet -- this server only lives on the
+  store LAN. Forcing complex passwords really produces a sticky note on the till, which is worse.
+- **Usernames are stored lower-cased.** Sign-in is an exact match, so `Admin` and
+  `admin` would be two accounts, which only ever produces "I typed it right and it will not let me in".
 
 ---
 
-## 2026-08-11 — Step 5 补菜采集：为"事后能建模"设计，而不是为"界面好写"
+## 2026-08-11 -- Step 5, refill collection: designed for "can this be modelled later", not "is this easy to render"
 
-这一步的价值不在界面，在**尽早开始采数据** —— 消耗率模型要 4–6 周样本，
-晚上线一天就少一天，而且补不回来。所以取舍一律偏向"先能记下来"。
+The value of this step is not the interface, it is **starting collection as early
+as possible** -- the consumption model needs 4-6 weeks of samples, a day not
+collected is a day gone, and it cannot be back-filled. So every tradeoff leans
+toward "get it recorded".
 
-### 台面是新的一张表，不是菜单里那 12 道
+### The board is a new table, not the twelve dishes in the menu
 
-菜单里标了 `is_buffet_dish` 的有 12 条，但台面上摆的远不止，
-而且老板要能随时换。更根本的是：**菜单里的菜是"能点、有价、上账单"的东西，
-台面上的菜只有"位置"和"消耗速度"**，两者的生命周期完全不同。
-所以新建 `buffet_dish(period_kind, page, pos, name)`，
-`tray_event` 的外键从 `menu_item` 挪过来 —— 趁它还是空表，
-有数据之后再改就要写数据迁移了。
+Twelve menu rows are flagged `is_buffet_dish`, but far more than that sits on the
+buffet, and the owner has to be able to change it at any time. More
+fundamentally: **a menu dish is something that can be ordered, has a price and
+goes on a check; a dish on the buffet has only a position and a rate of
+consumption** -- their lifecycles have nothing in common. So
+`buffet_dish(period_kind, page, pos, name)` was created and `tray_event`'s foreign
+key moved from `menu_item` onto it -- while it was still an empty table, because
+changing it later would need a data migration.
 
-**同一道菜午市晚市是两行。** 看起来冗余，实际上它们是两个不同的消耗过程
-（客人构成、时长、补菜节奏都不一样）。合成一行，模型里还得再拆开。
+**The same dish is two rows, lunch and dinner.** That looks redundant, and in fact
+they are two different consumption processes (different crowd, length and refill
+pace). One row would only have to be split again in the model.
 
-### 一个没法用结构挡住的坑，只能用规矩挡
+### A trap that structure cannot prevent, only a rule can
 
-老板在改台面时"把第 5 格从左宗棠鸡改成宫保鸡丁"，是**改名**还是**换菜**？
-按 id 原地改的话，新菜会静默继承旧菜的全部消耗历史 —— 而这种污染
-事后从数据里完全看不出来。
+When the owner edits the board and changes slot 5 from General Tso's Chicken to
+Kung Pao Chicken, is that a **rename** or a **replacement**? Edited in place by id,
+the new dish silently inherits the old one's entire consumption history -- and
+that contamination is invisible in the data afterwards.
 
-理想解是"布局表 + 菜品表"两层，换菜 = 换外键。但那意味着老板要先在
-一个菜品库里挑，再摆到格子上 —— 为了一块 3×10 的板加两层交互。
-选了单表 + 一条明写在界面上的规矩：**改名是改名，换菜请先清空再填**。
-清空 = 停用（`active=false`），旧记录的外键还指着它。
+The clean solution is two layers, a layout table and a dish table, where
+replacing a dish means changing a foreign key. But that means the owner picks
+from a dish library and then places it in a slot -- two layers of interaction for
+a 3x10 board. What was chosen is a single table plus one rule written on the
+screen: **renaming is renaming; to swap in a different dish, clear the slot
+first**. Clearing means deactivating (`active=false`), and old records still point at it.
 
-这是本项目里少数几个"知道更严谨的做法但没选"的地方，写在这里备查。
+This is one of the few places in the project where the stricter approach was
+understood and not taken, so it is recorded here.
 
-### 三个按钮，没有填充度滑块
+### Three buttons, no fill-level slider
 
-`tray_event.fill_level` 字段留着但一律为空。多一个滑块，高峰期就没人点了，
-而**"没记录"比"记录得不够精细"损失大得多** —— 前者是数据缺失，
-后者只是精度低一档。`discard`（倒掉，浪费估算的唯一来源）同理，
-等这三个跑顺了再上。
+`tray_event.fill_level` exists but is always empty. One more slider and nobody
+taps anything at peak, and **"no record" costs far more than "a coarse record"**
+-- the first is missing data, the second is one notch less precision. `discard`
+(thrown away, the only source for waste estimates) is the same case: once these
+three are running smoothly.
 
-### 观察时刻 = client_ts − 回拨分钟，不是服务端的 now()
+### The observed time is client_ts minus the minutes backdated, not the server's now()
 
-厨师往往是**事后**才想起来点的。`observed_at` 直接决定区间截尾的区间宽度，
-用"服务端收到的时刻"等于把网络延迟和人的拖延一起喂进模型。
-所以：客户端只报**回拨了几分钟**（0/5/10/15），服务端拿这条 op 自己的
-`client_ts` 去减 —— 只有一套时钟，不会出现"设备时间"和"观察时间"
-两个来源各自漂移。
+Cooks usually tap **after** the fact. `observed_at` directly sets the width of the
+censoring interval, and using "when the server received it" feeds network latency
+and human delay into the model together.
+So: the client only reports **how many minutes back** (0/5/10/15) and the server
+subtracts from that op's own `client_ts` -- one clock, so "device time" and
+"observation time" cannot drift apart as two separate sources.
 
-回拨是**一次性**的，记完自动跳回"现在"。做成常驻状态的话，
-没人会记得自己十分钟前拨过，后面几十条会被静默记到过去。
+Backdating is **one-shot** and jumps back to "now" after each entry. As a
+persistent mode, nobody would remember having set it ten minutes earlier and the
+next few dozen records would be silently filed in the past.
 
-### append-only，没有撤销
+### Append-only, with no undo
 
-误点了就紧接着记一条对的：相隔几秒的两条事件在建模时是可分辨的，
-而一张"能改的事实表"会让整张表失去可信度 ——
-事后谁也说不清某条记录是当时记的还是后来改的。
+Tapped the wrong one? Record the right one straight after: two events seconds
+apart are distinguishable when modelling, while a fact table that can be edited
+loses all its credibility -- nobody could say afterwards whether a row was
+recorded at the time or changed later.
 
-### 订单传到后厨：没有加任何接口
+### Orders reaching the kitchen: no endpoint was added
 
-后厨要看的东西**本来就在每台设备的本地镜像里**（同步下发的全量账单），
-缺的只是一页界面。所以这一页离线照样有单。
+What the kitchen needs is **already in every device's local mirror** (sync sends
+all the checks); the only thing missing was a screen. So this page has tickets
+offline too.
 
-「做好了」故意做成**这台设备上的显示状态**，不进同步：
-要做成共享状态就得给每一行菜一个客户端生成的 id
-（现在本地明细是从 op 的 payload 重建的，没有服务端行号），那是一整条改动。
-而 DESIGN.md 自己写着这一页要先看两周真实使用量 ——
-「2 个厨师的小厨房里，服务员走五步喊一声可能更快」。
-先用最小的东西送上去，用起来了再谈。
+"Done" is deliberately **display state on this device** and is not synced: sharing
+it would need a client-generated id per dish (local lines are rebuilt from op
+payloads and have no server line number), which is a whole change of its own.
+And DESIGN.md itself says to watch two weeks of real usage first -- "in a
+two-cook kitchen, a server walking five steps and calling out may well be
+faster". Ship the smallest thing; talk about shared state once it is being used.
 
-### 实测
+### Measurements
 
 | | |
 |---|---|
-| 后厨记一次补满 | observed_at = 记录时刻，归属到 kitchen |
-| 回拨 15 分钟记"空了" | observed_at 正好早 15 分钟 |
-| 离线两小时后补发 | 落在**两小时前**，不是收到的时刻 |
-| 重放同一条 | duplicate，不重复落库 |
-| 4 种脏 payload | 全部 rejected，附人话原因 |
-| 前台账号记补菜 | 通过（前台后厨都能记） |
-| 前台另一台设备点两桌菜 | 后厨页两张卡，含加料和手写要求 |
-| 标完一张单的菜 | 整张卡消失 |
+| Kitchen logs one refill | observed_at = the moment recorded, attributed to kitchen |
+| "Empty" backdated 15 minutes | observed_at is exactly 15 minutes earlier |
+| Sent after two hours offline | Lands **two hours ago**, not at arrival |
+| The same op replayed | duplicate, not stored twice |
+| Four malformed payloads | All rejected, each with a readable reason |
+| A front account logging a refill | Accepted (front and kitchen can both log) |
+| Two tables ordered from another front device | Two cards in the kitchen, with add-ons and hand-typed requests |
+| Marking every dish on a ticket done | The whole card disappears |
 
 ---
 
-## 模板
+## Template
 
 ```
-## YYYY-MM-DD — Step N 主题
+## YYYY-MM-DD -- Step N, topic
 
-**决策：**
-- 选了 / 否掉了 / 为什么 / 代价
+**Decision:**
+- chosen / rejected / why / what it costs
 
-**测量：**
-- 指标：改前 → 改后
+**Measurement:**
+- metric: before -> after
 
-**故障：**
-- 现象 / 错误假设 / 定位过程 / 根因
+**Failure:**
+- symptom / wrong assumption / how it was found / root cause
 ```
