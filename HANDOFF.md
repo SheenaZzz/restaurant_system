@@ -1,322 +1,353 @@
-# 交接说明
+# Handover
 
-给接手这个项目的新会话看的。**先读这份，再读 [DESIGN.md](DESIGN.md)。**
-
----
-
-## 一句话
-
-一个中餐 buffet 店（20 桌、2 位厨师）的运营记录系统。
-**离线优先的 PWA，跑在店内 iPad 上，服务端在店里自己的机器上。**
-明确**不处理支付** —— 只记录应收，收款走店里现有的刷卡机。
-
-作者是本科生，这是简历项目 + 家里真实的店要用。所以两条都成立：
-代码要经得起 deep dive 追问，功能要真的能在高峰期被员工用。
+For whoever picks this project up next. **Read this first, then [DESIGN.md](DESIGN.md).**
 
 ---
 
-## 当前状态（2026-08-11）
+## In one sentence
+
+An operations log for a Chinese buffet restaurant (20 tables, 2 cooks).
+**An offline-first PWA running on iPads in the store, with the server on the
+store's own machine.** It deliberately **does not handle payment** -- it records
+what is owed, and money is taken on the card terminal the store already has.
+
+Written by an undergraduate as a portfolio project that the family's restaurant
+actually uses. Both of those constrain it: the code has to survive a deep dive,
+and the features have to work in the hands of staff at peak.
+
+---
+
+## Current state (2026-08-11)
 
 | | |
 |---|---|
-| 提交 | 53 |
-| 文件 | 92 |
-| 数据库表 | 22 |
-| Alembic 迁移 | 13（head `d7a2f4c19b60`） |
-| 菜单条目 | 143（真实菜单，照店里外卖单录的） |
-| 已完成 | Step 0–5 + 大量现场追加的业务需求 |
-| 未开始 | **Step 6：离线加固 + chaos test** |
+| Commits | 53 |
+| Files | 92 |
+| Database tables | 22 |
+| Alembic migrations | 13 (head `d7a2f4c19b60`) |
+| Menu items | 143 (the real menu, taken off the store's takeout sheet) |
+| Done | Steps 0-5, plus a lot of requirements added on the floor |
+| Not started | **Step 6: offline hardening + chaos testing** |
 
-跑起来：
+To run it:
 
 ```bash
 docker compose --profile lan up -d && cd frontend && npm run dev
 ```
 
-- 电脑：`http://localhost:8080`（省事，无证书问题）
-- iPad：`https://restaurant.local`（走 mDNS，装过 Caddy 本地 CA）
-- 账号见 [RUNBOOK.md](RUNBOOK.md)：`manager` / `front` / `kitchen` / `boss`，密码 `<账号>-dev-pw`
+- Computer: `http://localhost:8080` (simplest, no certificate involved)
+- iPad: `https://restaurant.local` (over mDNS, with Caddy's local CA installed)
+- Accounts are in [RUNBOOK.md](RUNBOOK.md): `manager` / `front` / `kitchen` / `boss`, password `<username>-dev-pw`
 
 ---
 
-## 架构的三条硬约束（改任何东西前先理解这三条）
+## Three hard constraints (understand these before changing anything)
 
-### 1. 所有写入都走 `POST /api/sync`
+### 1. Every write goes through `POST /api/sync`
 
-没有第二条路。一条写入路径 = 一套不变量；两条路的校验迟早漂移，
-而漂移出来的洞只有对账时才会发现。
+There is no second path. One write path means one set of invariants; two would
+drift apart, and the hole that drift opens only surfaces at reconciliation.
 
-**唯一的例外**：`PUT /api/reports/tips`（日聚合，在线专用，
-不在营业关键路径上）。这是权衡过的例外，不是先例 ——
-任何会在离线时发生的写入，仍然必须走 sync。
+**The one exception**: `PUT /api/reports/tips` (a daily aggregate, online-only,
+off the critical path). That is a considered exception, not a precedent --
+anything that can happen offline still has to go through sync.
 
-### 2. 幂等靠数据库主键，不靠应用层查重
+### 2. Idempotency comes from a database key, not an application-level check
 
 ```sql
 INSERT INTO sync_op (op_id, ...) ON CONFLICT (op_id) DO NOTHING RETURNING op_id
 ```
 
-拿到行 = 第一次写入 = 该产生副作用；拿不到 = 跳过。
-「先 SELECT 再 INSERT」是 TOCTOU 竞态，别改回去。
+Getting a row means this is the first write and the side effect is ours; no row
+means skip. "SELECT then INSERT" is a TOCTOU race -- do not put it back.
 
-**`sync_op` 记录和业务副作用必须在同一个事务里。**
-崩在中间会留下"记了但没生效"的洞，而重放又被幂等判断跳过 —— 静默丢数据。
+**The sync_op record and the business side effect have to share one transaction.**
+A crash in between leaves a "recorded but never applied" hole that replay then
+skips as a duplicate, which is silent data loss.
 
-**推论：服务端删数据不会传到设备上。** 同步只追加，删除不产生 op，
-所以每台 iPad 的镜像里会一直留着已经不存在的单（楼面还会按它判断桌子占没占）。
-`/api/sync` 因此带了一条自愈：客户端游标是 N、而日志里 **seq ≤ N 一条不剩**
-就说明日志被截断过，回 `reset=True` 让它清空镜像重拉。
-判据不能写成 `cursor > MAX(seq)` —— `seq` 是 bigserial，DELETE 不退序列。
-细节和实测见 JOURNAL。
+**A corollary: deleting data on the server does not reach the devices.** Sync
+only appends, deletion produces no op, so every iPad's mirror keeps showing
+checks that no longer exist (and the floor decides whether a table is occupied
+from that mirror). `/api/sync` therefore carries one self-healing rule: a client
+whose cursor is N while **not one record with seq <= N is left in the log** has
+consumed a truncated log, so the server answers `reset=True` and it empties its
+mirror and pulls again. The test cannot be `cursor > MAX(seq)` -- `seq` is a
+bigserial and DELETE does not wind it back. The details and the measurements are
+in JOURNAL.
 
-### 3. 授权在服务端 sync 时执行，不在前端
+### 3. Authorisation is enforced on the server during sync, not in the front end
 
-`backend/app/sync.py` 里的 `_HANDLERS` 是唯一的权限表。
-客户端离线期间攒的 op **不带任何角色声明**，角色只来自验过的 access token。
+`_HANDLERS` in `backend/app/sync.py` is the only permission table.
+Ops a client accumulated offline **carry no role claim**; the role comes only
+from a verified access token.
 
 ---
 
-## 已实现的功能
+## What is built
 
-**楼面**（`FloorPlan.tsx`）：20 桌网格、开桌（成人/儿童/长者 + 成人/儿童饮料）、
-「直接点餐」（整桌不吃自助）、点桌进详情。
+**Floor** (`FloorPlan.tsx`): a 20-table grid, opening a table (adult / child /
+senior guests plus adult and child drinks), "order a la carte" for a whole table
+skipping the buffet, and tapping a table for its detail.
 
-**账单详情**（`CheckDetail.tsx`，楼面和清单页**共用**）：
-结账（含支付方式）、换桌/并桌、加菜、改单、作废、恢复、查看历史、
-**补收差额**（结完账又加菜时，只录还没收的那部分）。
+**Check detail** (`CheckDetail.tsx`, **shared** by the floor and the check list):
+collect (with the payment method), transfer and merge, add dishes, edit, void,
+restore, view history, and **top up** (after adding dishes to a collected check,
+record only the part not yet taken).
 
-> ⚠️ 「补收差额」(`add_payment`) 和「改支付方式」(`set_payment`) 是
-> **两种写入语义**，别合并：前者在已收之上**累加**（服务端做加法），
-> 后者**整体替换**。走错的话，补收会把之前那笔冲掉。
-> 状态用替换、事实用追加 —— 理由见 JOURNAL。
+> ⚠️ Top-up (`add_payment`) and changing the payment method (`set_payment`) are
+> **two different write semantics** and must not be merged: the first **adds** to
+> what was collected (on the server), the second **replaces** wholesale. Get it
+> wrong and a top-up wipes the earlier payment.
+> State replaces, facts append -- the reasoning is in JOURNAL.
 
-**自提**（`ToGoView.tsx`）：Buffet To Go（按重量，数字键盘直接录金额）、
-电话点菜（菜单选择器 + 客人姓名/手机后四位）。
+**To go** (`ToGoView.tsx`): Buffet To Go (by weight, the amount typed straight
+into a keypad) and phone orders (menu picker plus the guest's name and the last
+four digits of their number).
 
-**加料 / 特殊要求**（`ModifierSheet.tsx`）：菜品卡片角上「定制」进去，
-常用要求（加辣免费、加牛/鸡/虾 $2、加蔬菜 $1）+ 手写要求带小键盘定价。
+**Add-ons / special requests** (`ModifierSheet.tsx`): "customise" in the corner
+of a dish card, with the usual requests (extra spicy free, add beef/chicken/shrimp
+$2, add vegetables $1) plus a hand-typed request priced on the keypad.
 
-> ⚠️ **加料的钱折进 `order_line.unit_price_cents`**，`order_line_modifier`
-> 只存明细不参与算钱。这样所有金额计算仍是 `SUM(qty × unit_price_cents)`，
-> 一处都不用改、也不可能漏改。别再让加料单独参与合计。
-> 本地 `LocalLine.unit_price_cents` 同样已含加料 —— 别再加一次。
+> ⚠️ **Add-on money is folded into `order_line.unit_price_cents`**;
+> `order_line_modifier` records the detail and takes no part in the arithmetic.
+> Every money calculation stays `SUM(qty x unit_price_cents)`, so none of them
+> change and none of them can be missed. Do not make add-ons a separate term
+> again. `LocalLine.unit_price_cents` already includes them too -- do not add
+> them twice.
 
-**账单清单**（`ListView.tsx`）：卡片式，状态配色，过滤 tab，当日汇总。
-已关单但**钱没收齐**的单用虚线橙盖掉「已结」的绿色，并有「未收清」过滤 tab
-和「待收 N 单 · $X」汇总 —— 状态和收款是两件事，绿色不能盖住没收到的钱。
+**Check list** (`ListView.tsx`): cards, colour by status, filter tabs, and a
+day summary. A closed check that **has not been paid in full** gets a dashed
+amber treatment over the green "closed", plus a "not settled" filter tab and a
+"N checks outstanding, $X" summary -- status and collection are two different
+things, and green must not cover money that never arrived.
 
-**月报**（`MonthView.tsx`，仅 manager/admin）：日历式营业额、年月日快速选择、
-每日小费录入、支付方式分布、**未记支付/支付不符**两个对账告警。
+**Month report** (`MonthView.tsx`, manager/admin only): a calendar of sales,
+quick year/month/day pickers, daily tip entry, the split by payment method, and
+two reconciliation warnings (**no payment method** and **payment does not match**).
 
-**设置**（`SettingsSheet.tsx`，仅 manager/admin）：销售税率、**店所在时区 + 营业日分界**。
+**Settings** (`SettingsSheet.tsx`, manager/admin only): the sales tax rate, and
+**the store's time zone plus where the business day starts**.
 
-**老板后台**（`AdminView.tsx`，**仅 admin**，比设置页严）：人头价/饮料价、
-143 个菜品的价格与上下架、加料目录的内容与顺序、**账户**。
-后端 `api/admin.py`，`require_role("admin")`。三块的改价语义**故意不同**：
+**Owner's back office** (`AdminView.tsx`, **admin only**, stricter than
+settings): per-head and drink prices, the price and availability of all 143
+dishes, the contents and order of the add-on catalogue, and **accounts**.
+Backend `api/admin.py`, `require_role("admin")`. The four blocks have
+**deliberately different** edit semantics:
 
-| | 语义 | 为什么 |
+| | Semantics | Why |
 |---|---|---|
-| 人头价 | 换生效日=新增一版 | 月报/对账要回查"当时卖多少" |
-| 菜价 | 直接改 | 账单落的是 `unit_price_cents` 快照，动不了历史 |
-| 加料 | 整份替换，删=**停用** | `order_line_modifier` 外键指着它，删了历史断链 |
-| 补菜台 | 整块板替换，清空=**停用** | `tray_event` 外键指着它 |
+| Per-head prices | A new effective date adds a version | The month report and reconciliation have to look up what a seat cost then |
+| Dish prices | Edited in place | A check stores a `unit_price_cents` snapshot, so history cannot move |
+| Add-ons | Replaced wholesale; removing = **deactivate** | `order_line_modifier` has a foreign key into it; deleting orphans history |
+| Buffet board | Board replaced wholesale; clearing = **deactivate** | `tray_event` has a foreign key into it |
 
-⚠️ 补菜台那块：**原地改名 = 同一道菜；换成另一道菜必须先清空再填。**
-直接改名会让新菜静默继承旧菜的消耗历史，事后从数据里看不出来。
-知道两层表（布局 + 菜品）更严谨，为了老板改起来简单没那么做 —— 见 JOURNAL。
+⚠️ About the buffet board: **renaming in place is the same dish; a different dish
+means clearing the slot first.** Renaming would silently give the new dish the
+old one's consumption history, and nothing in the data would show it afterwards.
+A two-table design (layout + dishes) would be stricter; it was not done so the
+owner's editing stays simple -- see JOURNAL.
 
-账户页能改显示名/登录名、重设密码。**密码看不到**（argon2 哈希，不可逆），
-只能重设。重设会**吊销该账号所有 session** —— 老板改员工密码的场景就是
-这人离职了，不吊销的话他那台 iPad 的 refresh token 还能续 30 天。
-已发出的 access token 撤不回（JWT 不落库），所以最长还有 15 分钟窗口。
+The accounts tab changes display names and usernames and resets passwords. **A
+password cannot be read** (argon2 hash, irreversible), only replaced. A reset
+**revokes every session** that account holds -- the reason an owner changes a
+staff password is that the person left, and without revoking, the refresh token
+on their iPad works for another 30 days. Access tokens already issued cannot be
+recalled (JWTs are not stored), so there is a window of up to 15 minutes.
 
-**营业日**（`businessDay.ts`）：楼面/清单/汇总一律只显示**当前营业日**，
-过日界自动翻篇（不用刷新页面）。跨天没结的单**不隐藏** ——
-顶部横幅 + `CarriedOver.tsx` 单独处理，因为那是还没收到的钱。
+**Business day** (`businessDay.ts`): the floor, the check list and the summary
+all show **the current business day only**, and roll over on their own at the
+boundary without a page reload. Checks carried over from an earlier day are
+**not hidden** -- a banner at the top plus `CarriedOver.tsx` handle them
+separately, because that is money not yet received.
 
-**操作历史**（`CheckHistory.tsx`）：逐条重放 `sync_op` 算出每步前后差异。
-**没有新增任何存储** —— 数据本来就在审计日志里。
+**Operation history** (`CheckHistory.tsx`): replays `sync_op` step by step and
+computes the difference at each one. **Nothing extra is stored** -- the data was
+already in the audit log.
 
-**后厨订单队列**（`KitchenView.tsx`，kitchen 角色的第一个 tab）：
-前台点的单品自动出现，带加料、手写要求和等待时长，超过 15 分钟整张卡变色。
+**Kitchen order queue** (`KitchenView.tsx`, the kitchen role's first tab):
+a la carte dishes from the front appear by themselves, with add-ons, hand-typed
+requests and how long they have waited; past 15 minutes the whole card changes colour.
 
-> ⚠️ **没有加任何接口** —— 后厨要看的东西本来就在本地镜像里，
-> 所以这一页离线照样有单。
-> 「做好了」是**这台设备上的显示状态，不进同步**：要共享就得给每一行菜
-> 一个客户端生成的 id（本地明细是从 op 的 payload 重建的，没有服务端行号）。
-> DESIGN.md 写着这一页要先看两周真实使用量再决定投不投入。
+> ⚠️ **No endpoint was added** -- what the kitchen needs was already in the local
+> mirror, so this page has tickets offline too.
+> "Done" is **display state on this device and is not synced**: sharing it would
+> need a client-generated id per dish (local lines are rebuilt from op payloads
+> and have no server line number).
+> DESIGN.md says to watch two weeks of real use before investing further in this page.
 
-**补菜记录**（`RefillView.tsx`，**前台和后厨都有**）：3 页 × 10 格，
-补/半/空三个大按钮，午市晚市**手动切**，每格显示"上次多久以前"。
+**Refill logging** (`RefillView.tsx`, **on both the front and the kitchen**):
+3 pages of 10 slots, three big buttons (full / half / empty), lunch and dinner
+**switched by hand**, and "how long ago" on every slot.
 
-> ⚠️ 这是**整个项目最关键的一条采集路径** —— 消耗率模型要 4–6 周数据。
-> 前台也能记，因为发现菜盘空了的往往是服务员；只给后厨会丢掉大量
-> "空了"事件，而那正是区间截尾的右端点。
+> ⚠️ This is **the most important collection path in the project** -- the
+> consumption model needs 4-6 weeks of data.
+> The front can log too, because the person who notices an empty tray is usually
+> a server; kitchen-only would lose most of the "ran empty" events, and those are
+> the right-hand end of the censoring interval.
 >
-> ⚠️ `observed_at = client_ts − 回拨分钟`，**不是服务端的 now()**。
-> 回拨（0/5/10/15）是一次性的，记完自动归零。
-> append-only，**没有撤销** —— 误点了就再记一条对的。
+> ⚠️ `observed_at = client_ts - the minutes backdated`, **not the server's now()**.
+> Backdating (0/5/10/15) is one-shot and resets after each entry.
+> Append-only, **with no undo** -- a mistap is fixed by logging the right one.
 
-**中英切换**（`i18n.ts` + `locales/zh.ts`）：右上角一键全站切换，选择存本地。
-没引库。**代码里写英文，`locales/zh.ts` 是全项目唯一一处中文文案**，
-缺词回落英文 —— 漏翻最坏是英文，不会露出 key、也不会是空按钮。
+**Language switch** (`i18n.ts` + `locales/zh.ts`): one tap in the top right
+switches the whole app, and the choice is stored locally. No library.
+**The code is written in English, and `locales/zh.ts` is the only place in the
+project holding Chinese copy**; a missing entry falls back to the English, so
+the worst case is an English word rather than a key or a blank button.
 
-> ⚠️ **代码（含注释）一律英文。** 中文只允许出现在两个地方：
-> `frontend/src/locales/zh.ts`（界面词表）和 `backend/app/data/menu.json`
-> （店里的菜名、分类名、账号显示名 —— 那是数据不是代码）。
-> 加迁移时的种子值同理。
+> ⚠️ **All code, comments included, is English.** Chinese is allowed in exactly
+> two places: `frontend/src/locales/zh.ts` (the UI catalogue) and
+> `backend/app/data/menu.json` (the store's dish names, category names and
+> account display names -- data, not code). Seed values in a migration are the
+> same case.
 >
-> ⚠️ **菜名 / 分类 / 加料名不进词表**：后端各带一列 `name_en`，
-> 老板在改价页自己就能改。塞进词表的话，加一道菜就得改代码发版。
-> 角色名和时区名由服务端发**英文**，前端用 `tr()` 翻 —— 服务端不存中文文案。
+> ⚠️ **Dish, category and add-on names stay out of the catalogue**: the backend
+> carries a `name_en` column for each, so the owner can add a dish on the pricing
+> page. In the catalogue, adding a dish would mean a code change and a release.
+> Role names and time-zone names arrive from the server **in English** and the
+> front end runs them through `tr()` -- the server holds no UI copy.
 >
-> ⚠️ 加新界面时**翻译的单位是整句**。别把一句话用 `<b>` 切成几段
-> 再逐段 `tr()` —— 语法上拼不回去，会出现半中半英。
+> ⚠️ When adding a screen, **the unit of translation is a whole sentence**. Never
+> split one across `<b>` tags and wrap each piece in `tr()` -- the grammar cannot
+> be reassembled and it comes out half in each language.
 >
-> 两条自检（都在 scratchpad 里跑过，随时可重写）：
-> ① 扫全仓库的 CJK，只允许出现在上面那两个文件；
-> ② 扫所有 `tr('…')` 字面量，每一条都必须在 `zh.ts` 里有词条 ——
-> 否则中文界面会静默显示英文。
+> Two self-checks (both have been run from the scratchpad and are easy to rewrite):
+> (1) scan the whole repository for CJK, which may only appear in those two files;
+> (2) scan every `tr('...')` literal, each of which must have an entry in
+> `zh.ts` -- otherwise a Chinese screen silently shows English.
 
 ---
 
-## 计价规则（都在服务端算，客户端只做显示估算）
+## Pricing rules (all computed on the server; the client only estimates for display)
 
 ```
-小计 = 人头费(admission) + 饮料(drink，按人无限续) + 单品(order_line)
-大桌服务费 = 满 5 人加收 10%          ← 人数 = max(buffet人数, 饮料份数)
-税 = (小计 + 服务费) × 税率            ← 强制服务费应税
-合计 = 小计 + 服务费 + 税
+subtotal   = admission + drinks (per person, free refills) + a la carte lines
+large party = +10% at five guests or more   <- party = max(buffet guests, drinks)
+tax        = (subtotal + service charge) x rate   <- a mandatory service charge is taxable
+total      = subtotal + service charge + tax
 ```
 
-- 价格快照落库，改菜单/改价/改税率**不影响历史账单**
-- 营业时段用 op 的 `client_ts` 解析，不是服务端当前时间 ——
-  离线两小时后补发的午市单必须按午市价算
-- 午/晚市分界 15:00（菜单印的）
-- **营业日分界 0 点整**，时区按 `store_setting` 表（⚙︎ 里可改）。
-  这个口径**只定义在 `backend/app/services/period.py`**，
-  由 `/api/catalog` 下发给前端 —— 前端写第二份常量的话，
-  清单页和月报会各按各的口径切，而"这两个数能对上"是本系统
-  唯一的交叉验证手段
+- Prices are snapshotted when stored, so changing the menu, a price or the tax rate **never restates a past check**
+- The service period is resolved from the op's `client_ts`, not the server clock --
+  a lunch check queued offline for two hours has to be charged the lunch price
+- Lunch becomes dinner at 15:00 (as printed on the menu)
+- **The business day starts at midnight**, in the time zone held in `store_setting`
+  (editable under ⚙︎). That definition lives **only in
+  `backend/app/services/period.py`** and is published to the front end by
+  `/api/catalog` -- a second constant in the front end would make the check list
+  and the month report split the day differently, and those two numbers agreeing
+  is this system's only cross-check.
 
 ---
 
-## ⚠️ 待确认的占位数据
+## ⚠️ Placeholder data still to confirm
 
-菜单上没印，现在用的是占位值，**需要跟店里确认后改**：
+Not printed on the menu; these are placeholders and **need confirming with the store**:
 
-| | 当前值 |
+| | Current value |
 |---|---|
-| 税率 | 7.1%（Douglas County NV，⚙︎ 里可改） |
-| **店所在时区** | **America/Los_Angeles（按 Douglas County NV 推的，⚙︎ 里可改）** |
-| 儿童 buffet 午/晚 | $6.99 / $9.99 |
-| 长者 buffet 午/晚 | $10.99 / $13.99 |
-| 饮料 成人/儿童 | $2.50 / $1.50 |
+| Tax rate | 7.1% (Douglas County NV, editable under ⚙︎) |
+| **Store time zone** | **America/Los_Angeles (inferred from Douglas County NV, editable under ⚙︎)** |
+| Child buffet, lunch / dinner | $6.99 / $9.99 |
+| Senior buffet, lunch / dinner | $10.99 / $13.99 |
+| Drinks, adult / child | $2.50 / $1.50 |
 
-✅ 已确认的：午市 buffet $14.05、晚市 $15.88（菜单上印的）。
+✅ Confirmed: lunch buffet $14.05, dinner buffet $15.88 (both printed on the menu).
 
-⚠️ 时区必须跟店里核实一遍。**它设错会直接收错钱** ——
-15:00 是午/晚市分界，时区偏一小时就有一小时按错误的价收
-（$14.05 vs $15.88）。⚙︎ 里那行「店内此刻」显示的时间要和店里的钟对得上。
-
----
-
-## 踩过的坑（别再踩一遍）
-
-### Alembic autogenerate 不可信 —— 已经踩了 5 次
-
-1. **CHECK 约束表达式变了但名字没变 → 检测不到**（踩了 4 次）。必须手写 drop + create。
-2. **给已有数据的表加 NOT NULL 列 → 必须带 `server_default`**，否则 NULL 违约。
-3. **autogenerate 永远不生成数据迁移**，回填要自己写。
-4. **顺序规律**：放宽约束先 drop 约束；收紧约束先修数据。
-5. **迁移文件是 COPY 进镜像的** —— 生成后必须 `docker compose build api`，
-   否则 `alembic upgrade head` 静默什么都不做。
-
-生成迁移的完整命令在 [RUNBOOK.md](RUNBOOK.md)（**必须挂载 versions 目录**）。
-
-### 前端
-
-- **Fetch API 没有默认超时** —— 断网瞬间在途的请求永远不 settle，
-  会把 `inFlight` 永久卡死，之后再也不发请求。已加 AbortController + 看门狗。
-- **别用索引查询取 outbox**（`orderBy('client_seq')`）：IndexedDB 会
-  静默排除索引键无效的记录，而 `count()` 照数不误 → UI 说有待同步，请求体却是空的。
-- **加字段时不要用"排除法"判断**（`source !== 'dine_in'`）——
-  旧数据没有该字段，会全部被划到错误的一边。用白名单。
-- **别在本地存 `synced` 状态**，从 outbox 实时推导。存状态会漏掉
-  非 open_check 的 op（它们的 op_id 不等于 check_uuid）。
-- iOS 不支持 Background Sync，必须在 `visibilitychange` 回到前台时同步。
-- **网格里写 `1fr` 会被内容最小宽度顶开**（`1fr` = `minmax(auto, 1fr)`，
-  `auto` 的下限是 min-content）。只写 `grid-template-rows` 时隐式列也是 `auto`，
-  同样会被顶开。父容器如果是 `overflow: hidden`，多出来的部分被**静默裁掉** ——
-  点菜的小键盘最右一列就这么被切了 5px。凡是要能缩的轨道一律写
-  `minmax(0, 1fr)`，纵向对应的是 `min-height: 0`。
-- `localhost` 也算安全上下文 —— **明文 8080 上一样会注册 Service Worker**，
-  改了代码看不到新版就先 unregister。
-
-### 时间
-
-- **固定 UTC 偏移是错的**。原来写死 `STORE_UTC_OFFSET=-5`，而店在太平洋时区 ——
-  差两小时，下午 13:00 就被判成晚市、按晚市价收。用 IANA 时区名 + `zoneinfo`。
-  slim 镜像不保证有 tz 数据库，要装 `tzdata` 包。
-- 原来的凌晨 2 点日界**顺带**当了夏令时的缓冲（DST 切换点正好 2:00，
-  挡在营业日之外）。分界移到 0 点后这层缓冲没了 —— 这正是必须用真时区的原因。
-- **前端算营业日用的是设备时钟**（离线时没有别的可用）。iPad 时区跟店里
-  不一致时，每天靠近日界的几小时会静默归错日。所以后端下发店里的 UTC 偏移，
-  前端比偏移**而不是比营业日** —— 比营业日的话，等它们分叉时已经错了几小时。
-- 设置项里，**时区没有生效日、税率有**。税率是事实（历史账单要冻住），
-  时区是解释规则（设错了就该连过去的账一起重新归属）。
-
-### 网络 / 部署
-
-- **SNI 不能是 IP**（RFC 6066）。用 IP 访问 HTTPS 时客户端不发 SNI，
-  Caddy 匹配不到站点直接拒绝握手。所以用 mDNS 主机名 `restaurant.local`。
-- 本地 CA 存在 `ops/caddy-data/`（绑定挂载，**不受 `docker compose down -v` 影响**），
-  否则每次重建数据库 iPad 都要重装证书。目录里有私钥，已 gitignore。
+⚠️ The time zone has to be checked with the store. **Getting it wrong charges the
+wrong price** -- 15:00 is the lunch/dinner boundary, so being an hour out means an
+hour of checks at the wrong price ($14.05 against $15.88). The "store time now"
+line under ⚙︎ has to match the clock on the wall.
 
 ---
 
-## 工作方式（用户的偏好）
+## Traps already hit (do not hit them again)
 
-- **中文交流。**
-- 用户会持续提出真实业务规则的修正（饮料能超人数、饮料要分儿童价、
-  已结账的单也要能改、并桌会触发服务费……）。这些**都是对的** ——
-  他家里有真店，比任何推理都准。**别用"常理"去反驳，先实现再说明影响。**
-- 每次改完要：跑通、**实测验证**（不是"应该可以"）、
-  `npm run build` + 重启 caddy、报构建号给用户去 iPad 上验。
-- 用户看得懂设计取舍，愿意读解释。**说清楚"为什么这么选"比堆功能重要** ——
-  这是简历项目，deep dive 讲的就是这些。
-- 代码注释里要写清楚踩过的坑和取舍理由（现有代码就是这个风格，保持一致）。
+### Alembic autogenerate cannot be trusted -- five times now
+
+1. **A CHECK constraint whose expression changed but whose name did not is not detected** (four times). Write the drop and create by hand.
+2. **Adding a NOT NULL column to a table with rows needs a `server_default`**, or existing rows violate it.
+3. **autogenerate never emits a data migration**; backfills are hand-written.
+4. **The ordering rule**: relaxing a constraint means dropping it first; tightening one means fixing the data first.
+5. **Migrations are COPY'd into the image** -- after generating one you have to `docker compose build api`, or `alembic upgrade head` silently does nothing.
+
+The full command for generating a migration is in [RUNBOOK.md](RUNBOOK.md) (**the versions directory has to be mounted**).
+
+### Front end
+
+- **Fetch has no default timeout** -- a request in flight when the network drops never settles, wedges `inFlight` forever and no request is ever sent again. Now guarded by an AbortController and a watchdog.
+- **Never read the outbox through an index** (`orderBy('client_seq')`): IndexedDB silently excludes records whose index key is invalid while `count()` still counts them -> the UI says there is work pending and the request body is empty.
+- **When adding a field, never decide by exclusion** (`source !== 'dine_in'`) -- old rows lack the field and all land on the wrong side. Use a whitelist.
+- **Never store a `synced` flag locally**; derive it from the outbox. A stored flag misses every op that is not open_check (their op_id is not the check_uuid).
+- iOS has no Background Sync, so syncing has to happen on `visibilitychange` when the app returns to the foreground.
+- **`1fr` in a grid is pushed open by its content's minimum width** (`1fr` is `minmax(auto, 1fr)`, and `auto` has a min-content floor). With only `grid-template-rows` written, the implicit column is `auto` too and does the same. If the parent is `overflow: hidden`, the excess is **silently clipped** -- that is how the right-hand column of the ordering keypad lost 5px. Any track that has to shrink is written `minmax(0, 1fr)`; the vertical equivalent is `min-height: 0`.
+- `localhost` counts as a secure context -- **plaintext 8080 registers a Service Worker too**, so unregister it when a code change does not show up.
+
+### Time
+
+- **A fixed UTC offset is wrong.** It was hard-coded `STORE_UTC_OFFSET=-5` while the store is on Pacific time -- two hours out, so 13:00 counted as dinner and was charged the dinner price. Use an IANA name plus `zoneinfo`. A slim image does not guarantee a tz database, so the `tzdata` package is installed.
+- The old 02:00 boundary **incidentally** absorbed daylight saving (the switch is at 02:00, outside the business day). Moving the boundary to midnight removed that cushion -- which is exactly why the real zone became mandatory.
+- **The front end computes the business day from the device clock** (offline there is nothing else). When an iPad is not on store time, the few hours near the boundary are filed on the wrong day, silently. So the backend publishes the store's UTC offset and the front end compares **offsets rather than business days** -- by the time the days disagree it has been wrong for hours.
+- In settings, **the time zone has no effective date and the tax rate does**. A rate is a fact (past checks stay frozen); a time zone is an interpretation rule (getting it wrong means re-filing the past).
+
+### Network / deployment
+
+- **SNI cannot be an IP** (RFC 6066). Over HTTPS to an IP the client sends no SNI, Caddy matches no site and refuses the handshake. Hence the mDNS hostname `restaurant.local`.
+- The local CA lives in `ops/caddy-data/` (a bind mount, **unaffected by `docker compose down -v`**), or every database rebuild would mean reinstalling the certificate on the iPads. It holds a private key and is gitignored.
 
 ---
 
-## 下一步：Step 6
+## How the work runs (the owner's preferences)
 
-**离线加固 + chaos test（拔网线 / 拔电源）+ 可观测性埋点。**
-见 [GUIDE.md](GUIDE.md) 路线图。
-
-Step 5 已完成：后厨订单队列 + 补菜采集 + 老板可编辑的台面。
-**采集一上线就开始攒数据了**，这是后面所有预测的前提 ——
-消耗率模型需要 4–6 周样本，一天不采就一天没有。
-
-技术内核（也是这个项目最有讲头的部分）：
-
-> Buffet 消耗量**不可直接观测**。只有「t₁ 补满、t₂ 发现空了」这样的
-> **区间截尾事件**，而且"发现空了"本身还是延迟的。
-> 要从这些稀疏、带延迟的离散事件里反推每道菜的连续消耗速率，
-> 再叠加同期在座人数做 per-capita 归一化。
-
-评估纪律：**必须跟「照抄上周同时段」这个 baseline 严格比**，用 MAE，
-做正经的时序交叉验证。**很可能赢不过 baseline —— 那不是失败**，
-诚实报告 + 上线 baseline + 异常提醒才是成熟的工程判断。
+- The owner keeps correcting the business rules from real life (drinks can exceed
+  the guest count, child drinks are priced separately, a collected check still has
+  to be editable, merging triggers the service charge...). **These corrections are
+  always right** -- there is a real restaurant behind them, which beats any
+  reasoning. **Do not argue from what seems obvious; build it, then explain the
+  consequences.**
+- Every change ends with: it runs, it is **verified by actually testing it** (not
+  "it should work"), `npm run build` plus a Caddy restart, and the build stamp
+  reported so it can be checked on the iPad.
+- The owner reads and understands design tradeoffs. **Explaining why something was
+  chosen matters more than adding features** -- this is a portfolio project, and
+  that is what a deep dive is about.
+- Comments spell out the traps hit and the reasoning behind tradeoffs; the
+  existing code is written that way and stays consistent.
 
 ---
 
-## 相关文档
+## Next: Step 6
 
-| 文件 | 内容 |
+**Offline hardening + chaos testing (pull the cable, pull the power) + observability.**
+See the roadmap in [GUIDE.md](GUIDE.md).
+
+Step 5 is done: the kitchen order queue, refill collection, and a buffet board
+the owner can edit. **Collection starts accumulating data the moment it ships**,
+which is the prerequisite for everything predictive -- the consumption model
+needs 4-6 weeks of samples, and a day not collected is a day gone.
+
+The technical core (and the most interesting part of the project):
+
+> Buffet consumption is **not directly observable**. All there is are
+> **interval-censored events** -- filled at t1, found empty at t2 -- and "found
+> empty" is itself late. The continuous consumption rate of each dish has to be
+> inferred from those sparse, delayed, discrete events, then normalised per
+> capita against how many people were seated at the time.
+
+Evaluation discipline: **it has to be compared strictly against the "copy the
+same slot last week" baseline**, using MAE, with proper time-series cross
+validation. **It may well lose to the baseline -- that is not a failure**;
+reporting that honestly, shipping the baseline and adding an anomaly alert is the
+mature engineering call.
+
+---
+
+## Related documents
+
+| File | Contents |
 |---|---|
-| [DESIGN.md](DESIGN.md) | 架构决策、数据模型、同步协议 |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | 设备清单、网络拓扑、证书链路、故障恢复 |
-| [RUNBOOK.md](RUNBOOK.md) | 怎么跑、怎么迁移、账号、调试钩子、排障 |
-| [GUIDE.md](GUIDE.md) | 分步路线图 |
-| [JOURNAL.md](JOURNAL.md) | **工程日志** —— 决策、测量、故障复盘。deep dive 的弹药 |
+| [DESIGN.md](DESIGN.md) | Architecture decisions, data model, sync protocol |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Hardware, network topology, certificate chain, recovery |
+| [RUNBOOK.md](RUNBOOK.md) | How to run it, migrations, accounts, debug hooks, troubleshooting |
+| [GUIDE.md](GUIDE.md) | The step-by-step roadmap |
+| [JOURNAL.md](JOURNAL.md) | **The engineering journal** -- decisions, measurements, post-mortems. The ammunition for a deep dive |

@@ -1,154 +1,164 @@
-# 设备清单与技术连接
+# Hardware list and how it all connects
 
-配套文档：[DESIGN.md](DESIGN.md)
+Alongside: [DESIGN.md](DESIGN.md)
 
 ---
 
-## 1. 网络拓扑总图
+## 1. Network topology
 
 ```
-   老板在家 (admin)                        Internet (ISP)
-        │                                       │
-        │  https://admin.域名.com                │
-        ▼                                       │
-  ┌───────────────┐                    ┌────────┴────────┐
-  │ Cloudflare    │◀───出站长连接───┐   │  路由器 (WiFi 6)  │
-  │ Access + 隧道 │   (无入站端口)  │   │ DHCP 保留：.10   │
-  └───────────────┘                │   └────────┬────────┘
-                                   │       ┌────┴────┬──────────┐
-                                   │  有线 │    WiFi │     WiFi │
-                                   │       │         │          │
-                        ┌──────────┴───────┴──┐  ┌───┴────┐ ┌───┴────┐
-                        │  店内服务器           │  │前台iPad │ │后厨iPad│
-                        │  192.168.1.10        │  │ front  │ │kitchen │
+   owner at home (admin)                     Internet (ISP)
+        │                                        │
+        │  https://admin.your-domain.com         │
+        ▼                                        │
+  ┌───────────────┐                     ┌────────┴────────┐
+  │ Cloudflare    │◀── outbound only ─┐ │  router (WiFi 6) │
+  │ Access+Tunnel │  (no inbound port) │ │ DHCP reserve .10 │
+  └───────────────┘                    │ └────────┬────────┘
+                                       │     ┌────┴────┬──────────┐
+                                       │ wired    WiFi │     WiFi │
+                                       │     │         │          │
+                        ┌──────────────┴─────┴┐  ┌─────┴──┐ ┌─────┴──┐
+                        │  store server        │  │front   │ │kitchen │
+                        │  192.168.1.10        │  │ iPad   │ │ iPad   │
                         │  Ubuntu Server       │  └────────┘ └────────┘
                         │ ┌──────────────────┐ │
                         │ │ Docker Compose   │ │
-                        │ │ ├ Caddy (LAN TLS)│ │  ← 店内 :443
-                        │ │ ├ FastAPI  :8000 │ │  ← 员工 API（仅内网）
-                        │ │ ├ FastAPI  :8001 │ │  ← admin API（仅隧道）
+                        │ │ ├ Caddy (LAN TLS)│ │  <- :443 in store
+                        │ │ ├ FastAPI  :8000 │ │  <- staff API (LAN only)
+                        │ │ ├ FastAPI  :8001 │ │  <- admin API (tunnel only)
                         │ │ ├ cloudflared    │ │
                         │ │ ├ Postgres       │ │
-                        │ │ └ cron（备份/分析）│ │
+                        │ │ └ cron (backup)  │ │
                         │ └──────────────────┘ │
-                        │         │             │
-                        │      [UPS]            │
-                        └─────────┼─────────────┘
-                                  │ 夜间加密备份
-                                  ▼   云存储 (B2 / S3)
+                        │         │            │
+                        │      [UPS]           │
+                        └─────────┼────────────┘
+                                  │ nightly encrypted backup
+                                  ▼   object storage (B2 / S3)
 ```
 
-**两条通路，安全边界完全分开：**
+**Two paths, with completely separate security boundaries:**
 
-| 通路 | 用户 | 走哪 | 断网时 |
+| Path | Users | Route | When the internet is down |
 |---|---|---|---|
-| **员工路径**（关键） | front / kitchen | 内网 LAN → Caddy → :8000 | **照常工作** |
-| **老板路径**（非关键） | admin | 公网 → Cloudflare Access → 隧道 → :8001 | 不可用（可接受） |
+| **Staff path** (critical) | front / kitchen | LAN -> Caddy -> :8000 | **keeps working** |
+| **Owner path** (not critical) | admin | internet -> Cloudflare Access -> tunnel -> :8001 | unavailable (acceptable) |
 
-> **核心论点：关键路径走内网，非关键路径走隧道。**
-> 员工 sync API **永远不对公网暴露**；老板看报表断了不影响做生意。
-
----
-
-## 2. 设备清单
-
-### 2.1 店内服务器（核心，1 台）
-
-**推荐**：x86 迷你主机（N100 级），16 GB RAM，500 GB NVMe SSD，Ubuntu Server LTS
-
-| 备选 | 价格 | 评价 |
-|---|---|---|
-| **N100 迷你主机** | ~$200 | ✅ 推荐。SSD 可靠、x86 无 ARM 包兼容问题、静音、~10W、可 24/7 |
-| Mac mini (M 系) | ~$599 | 可用但贵；macOS 自动更新/重启对无头服务器是麻烦 |
-| Raspberry Pi 5 8GB | ~$140（含 SSD） | 最便宜。**必须用 USB3-SSD，不能用 SD 卡**（会损坏）；分析批处理余量偏小 |
-
-**必备设置**：
-- BIOS 里开启 **"Power On After AC Loss"** —— 来电自动开机
-- 静态 IP（在路由器做 DHCP 保留，不要在主机上硬配）
-- **网线直连路由器**，不走 WiFi
-
-### 2.2 UPS 不间断电源（1 台，别省）
-
-600 VA 级，~$70。
-
-餐馆电压不稳、跳闸常见，**非正常断电会损坏 Postgres 数据文件**。
-UPS 提供 15–30 分钟缓冲 + 通过 USB 通知主机执行优雅关机（`nut` 或 `apcupsd`）。
-
-### 2.3 iPad（2 台）
-
-| 位置 | 常用账号 | 用途 |
-|---|---|---|
-| 前台 | `front` | 桌面总览 + 开桌（人数/饮料）+ 点单 + Pickup + 异常 + 日结 |
-| 后厨 | `kitchen` | 订单队列 + **补菜记录** |
-
-> **设备不绑定身份。** 任何设备打开网址登录即可，按账号 role 渲染界面。
-> 前台 iPad 摔了，抓一台备用平板登进去就能继续开工 —— 这是账号制相对
-> 设备绑定的核心好处，也直接降低了硬件故障的业务影响。
-
-老板端不需要专用设备 —— 用他自己的手机/电脑，浏览器打开即可。
-
-**型号**：不用新款。二手 iPad 第 9/10 代（~$150–250）足够。
-⚠️ **必须能升到 iOS 16.4 以上** —— 更早的版本 PWA / Service Worker 支持不完整。
-
-**配件**：
-- 防摔防油壳 ×2（餐馆环境）
-- 桌面 / VESA 固定支架 ×2 —— 防摔、防被端走
-- 长充电线 ×2（两台都固定位常年插电）
-
-> ⚠️ **后厨那台的摆位要想清楚**：油烟、水汽、高温会显著缩短设备寿命。
-> **放在出餐口而不是灶台边**，加防油壳，屏幕字号要大到隔一米看得清。
-
-### 2.4 网络设备
-
-- 店里现有路由器**先测再决定换不换**：拿手机在前台、buffet 台、后厨、餐区四角各测一次信号和延迟
-- 若覆盖不足：一台 WiFi 6 路由器（~$100）或加一个 mesh 节点
-- **服务器必须有静态 IP**（路由器 DHCP 保留）—— 否则重启后 IP 变了全店连不上
-
-### 2.5 打印机（可选，后期）
-
-网口热敏小票机，ESC/POS over TCP（如 Epson TM-T20III 网口版，~$250）。
-
-> ⚠️ **iPad 上的 PWA 碰不到 USB / 蓝牙。**
-> 所以打印必须由**服务端**驱动 —— iPad 只发指令，服务器连打印机。
-> 这反而更干净：打印逻辑集中，任何一台 iPad 掉线都不影响出票。
-> 前端从一开始就按这个设计，以后加打印机不用改。
-
-### 2.6 备份目标
-
-- 云对象存储（Backblaze B2 / AWS S3），~$2/月
-- 可选：一块 USB 移动硬盘挂服务器上做本地第二副本
+> **The core argument: the critical path stays on the LAN, the non-critical path
+> goes through the tunnel.** The staff sync API is **never exposed to the public
+> internet**; the owner losing a report does not stop the business running.
 
 ---
 
-## 3. HTTPS 证书链路（唯一的"搞不定就得推翻重来"的环节）
+## 2. Hardware
 
-### 3.1 问题
+### 2.1 Store server (the core, one unit)
 
-iPad Safari 要求 **Service Worker 必须跑在 HTTPS 上**（`localhost` 除外）。
-没有 Service Worker = **离线能力直接失效** = 整个架构垮掉。
+**Recommended**: an x86 mini PC (N100 class), 16 GB RAM, 500 GB NVMe SSD, Ubuntu Server LTS
 
-而服务器在内网私有 IP（192.168.1.10），**公共 CA 不会给私有 IP 签证书**。
+| Option | Price | Assessment |
+|---|---|---|
+| **N100 mini PC** | ~$200 | ✅ Recommended. Reliable SSD, x86 avoids ARM package problems, silent, ~10 W, fine 24/7 |
+| Mac mini (M-series) | ~$599 | Works but costs more; macOS auto-update and reboots are a nuisance on a headless box |
+| Raspberry Pi 5 8GB | ~$140 (with SSD) | Cheapest. **Must run off a USB3 SSD, never an SD card** (they corrupt); little headroom for analysis batches |
 
-### 3.2 解法：域名 + DNS-01 challenge + DNS 指向内网 IP
+**Required settings**:
+- Enable **"Power On After AC Loss"** in the BIOS -- it comes back up by itself after an outage
+- Static IP (as a DHCP reservation on the router, not hard-coded on the host)
+- **Wired to the router**, not on WiFi
+
+### 2.2 UPS (one, do not skip it)
+
+600 VA class, ~$70.
+
+Restaurant power is unstable and breakers trip. **An unclean shutdown corrupts
+Postgres data files.** A UPS buys 15-30 minutes and can tell the host over USB
+to shut down gracefully (`nut` or `apcupsd`).
+
+### 2.3 iPads (two)
+
+| Location | Usual account | What it does |
+|---|---|---|
+| Front | `front` | Floor overview, opening tables (guests/drinks), ordering, pickup, exceptions, close of day |
+| Kitchen | `kitchen` | Order queue + **refill logging** |
+
+> **Devices are not tied to identities.** Any device can open the URL, sign in,
+> and the interface renders by role. If the front iPad breaks, grab a spare
+> tablet, sign in, and keep working -- which is the core benefit of accounts over
+> device binding, and it directly reduces the impact of a hardware failure.
+
+The owner needs no dedicated device -- their own phone or laptop and a browser.
+
+**Model**: no need for a new one. A used 9th or 10th generation iPad (~$150-250) is plenty.
+⚠️ **It has to run iOS 16.4 or later** -- earlier versions have incomplete PWA / Service Worker support.
+
+**Accessories**:
+- Two drop- and grease-resistant cases (it is a restaurant)
+- Two desk or VESA mounts -- against drops and against walking off
+- Two long charging cables (both units stay in place, permanently plugged in)
+
+> ⚠️ **Think hard about where the kitchen one goes**: smoke, steam and heat
+> shorten a device's life noticeably. **Put it at the pass rather than beside the
+> range**, in a grease-resistant case, with type large enough to read from a metre away.
+
+### 2.4 Network gear
+
+- Test the store's existing router **before deciding to replace it**: walk a phone to the front, the buffet, the kitchen and the four corners of the dining room, checking signal and latency at each
+- If coverage falls short: one WiFi 6 router (~$100), or add a mesh node
+- **The server needs a static IP** (a DHCP reservation on the router) -- otherwise a reboot changes it and nothing in the store can connect
+
+### 2.5 Printer (optional, later)
+
+A network thermal receipt printer speaking ESC/POS over TCP (an Epson TM-T20III with Ethernet, ~$250).
+
+> ⚠️ **A PWA on an iPad cannot touch USB or Bluetooth.**
+> So printing has to be driven **by the server** -- the iPad sends a command and
+> the server talks to the printer. That is cleaner anyway: printing logic lives
+> in one place, and any iPad dropping off does not stop tickets.
+> The front end has been designed that way from the start, so adding a printer
+> later changes nothing.
+
+### 2.6 Backup target
+
+- Cloud object storage (Backblaze B2 / AWS S3), ~$2/month
+- Optionally a USB drive on the server as a second local copy
+
+---
+
+## 3. The HTTPS certificate chain (the one part that could force a redesign)
+
+### 3.1 The problem
+
+iPad Safari only runs a **Service Worker over HTTPS** (`localhost` excepted).
+No Service Worker means **no offline capability**, which means the architecture collapses.
+
+And the server sits on a private LAN address (192.168.1.10), for which **no public CA will issue a certificate**.
+
+### 3.2 The solution: a domain + DNS-01 challenge + DNS pointing at the LAN address
 
 ```
-1. 买一个域名（~$12/年），DNS 托管到 Cloudflare
-2. 加一条 A 记录：pos.你的域名.com  →  192.168.1.10
-   （公网 DNS 里指向内网 IP 完全合法；外部访问者解析到私有 IP
-     自然连不上 —— 这正是我们想要的隔离）
-3. Caddy 用 DNS-01 challenge 向 Let's Encrypt 申请证书
-   （DNS-01 不需要服务器有公网入站，只需要能改 DNS 记录 → Cloudflare API token）
-4. iPad 在店内 WiFi 解析 pos.你的域名.com → 192.168.1.10
-   → 连上服务器 → 证书是 Let's Encrypt 真签的 → Service Worker 正常工作
-5. Caddy 自动续期（每 ~60 天），全程无人工
+1. Buy a domain (~$12/year) and host its DNS at Cloudflare
+2. Add one A record: pos.your-domain.com  ->  192.168.1.10
+   (pointing public DNS at a private address is entirely legal; anyone outside
+    resolves a private address and cannot connect -- which is exactly the
+    isolation we want)
+3. Caddy requests a certificate from Let's Encrypt via a DNS-01 challenge
+   (DNS-01 needs no inbound access, only the ability to edit a DNS record,
+    i.e. a Cloudflare API token)
+4. On the store WiFi an iPad resolves pos.your-domain.com -> 192.168.1.10
+   -> connects to the server -> the certificate is a real Let's Encrypt one
+   -> the Service Worker works
+5. Caddy renews automatically (about every 60 days), with nobody involved
 ```
 
-**最大好处：iPad 上不用装任何自签根证书。** 换设备零配置，员工零操作。
+**The big win: no self-signed root certificate on any iPad.** Zero configuration
+when swapping devices, and nothing for staff to do.
 
-`Caddyfile` 大致长这样：
+The `Caddyfile` looks roughly like:
 
 ```
-pos.你的域名.com {
+pos.your-domain.com {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
     }
@@ -156,138 +166,143 @@ pos.你的域名.com {
 }
 ```
 
-### 3.3 备选方案（不推荐）
+### 3.3 The alternative (not recommended)
 
-`mkcert` 生成本地 CA，在每台 iPad 上安装并信任根证书。
+Generate a local CA with `mkcert` and install and trust the root certificate on every iPad.
 
-缺点：每台设备要手动安装，且 iOS 还要额外去
-「设置 → 通用 → 关于本机 → 证书信任设置」里再开一次；
-换设备就得重来；证书过期要全部重装。
-
----
-
-## 4. iPad 端配置（每台一次，约 2 分钟）
-
-```
-1. Safari 打开 https://pos.你的域名.com
-2. 分享按钮 → 「添加到主屏幕」
-3. 主屏幕出现图标 → 之后每天点图标进入，全屏、无地址栏
-4. 设置 → 显示与亮度 → 自动锁定 → 永不（固定位设备）
-5. 设置 → 辅助功能 → 引导式访问 → 打开
-   → 在 App 内连按三下电源键锁死，防止员工误触退出
-```
-
-### 两个 iOS 的坑
-
-1. **主屏幕 App 与 Safari 的存储是隔离的。**
-   员工若先在 Safari 里用了一轮再「添加到主屏幕」，之前的本地数据**不会带过去**。
-   → 流程必须是：**先装到主屏幕，再开始使用**。
-
-2. **iOS 不支持 Background Sync。**
-   离线队列的重放只能在 App 处于前台时进行。
-   → 每次打开 App 立即触发一次全量重放，且 UI 上要显示「待同步 N 条」。
-
-3. **iOS 会在存储紧张时清掉网站数据。**
-   → 本地永远不能是唯一副本；同步要尽量实时，减少 outbox 驻留时间。
+The downsides: every device needs it installed by hand, and on iOS it also needs
+a second switch under Settings > General > About > Certificate Trust Settings;
+a new device means doing it again; an expired certificate means doing all of them again.
 
 ---
 
-## 5. 数据流
+## 4. iPad setup (once per device, about two minutes)
 
 ```
-① iPad 操作
-     → 写 IndexedDB（UI 立即响应）
-     → 追加 outbox（带 op_id UUID 幂等键）
+1. Open https://pos.your-domain.com in Safari
+2. Share button -> "Add to Home Screen"
+3. An icon appears; from then on it opens full screen with no address bar
+4. Settings > Display & Brightness > Auto-Lock > Never (these are fixed installations)
+5. Settings > Accessibility > Guided Access > on
+   -> triple-click the power button inside the app to lock it there, so nobody exits by accident
+```
 
-② 在线 → POST /sync → FastAPI → Postgres（ON CONFLICT DO NOTHING）
+### Three iOS traps
 
-③ 服务端广播变更 → WebSocket → 其它 iPad 实时更新
+1. **A home screen app and Safari have isolated storage.**
+   If someone uses it in Safari first and then adds it to the home screen, the
+   earlier local data **does not come with it**.
+   -> The order has to be: **install to the home screen first, then start using it**.
 
-④ 断网 → 本地照常读写，outbox 堆积，UI 显示待同步条数
+2. **iOS has no Background Sync.**
+   The offline queue can only replay while the app is in the foreground.
+   -> Every launch triggers a full replay immediately, and the UI shows "N pending".
 
-⑤ 恢复 → 批量重放 outbox，按 op_id 去重 → 清空已确认条目
+3. **iOS evicts website data when storage runs short.**
+   -> Local storage can never be the only copy; sync has to be as prompt as
+   possible to keep the outbox short.
 
-⑥ 夜间 cron → pg_dump → 加密 → 上传云存储
-              → 跑分析批处理（消耗率 / 备货建议）
+---
+
+## 5. Data flow
+
+```
+1. an action on the iPad
+     -> writes IndexedDB (the UI responds immediately)
+     -> appends to the outbox (with an op_id UUID as the idempotency key)
+
+2. online -> POST /sync -> FastAPI -> Postgres (ON CONFLICT DO NOTHING)
+
+3. the server broadcasts the change -> WebSocket -> other iPads update live
+
+4. offline -> local reads and writes continue, the outbox grows, the UI shows the pending count
+
+5. reconnect -> the outbox replays in batches, deduplicated by op_id -> confirmed entries are dropped
+
+6. nightly cron -> pg_dump -> encrypt -> upload to object storage
+                 -> run the analysis batch (consumption rate / restocking)
 ```
 
 ---
 
-## 6. 老板远程登录
+## 6. Remote access for the owner
 
-老板要能在家用**自己的手机/电脑、不装任何 App**登录 —— 所以不能用 VPN 方案。
+The owner has to sign in from home **on their own phone or laptop with nothing
+installed** -- which rules out a VPN.
 
-### 选型
+### The options
 
-| 方案 | 老板要做什么 | 判断 |
+| Approach | What the owner has to do | Verdict |
 |---|---|---|
-| **Cloudflare Tunnel + Access** | 打开一个网址，登录 | ✅ 采用 |
-| Tailscale VPN | 装 App、保持登录、加入 tailnet | 对非技术用户是持续摩擦 |
-| 路由器端口转发 | 无 | ✗ 把内网直接暴露给全网扫描器 |
-| 整体上云 | 无 | ✗ 断网全店瘫痪 |
+| **Cloudflare Tunnel + Access** | Open a URL and sign in | ✅ Chosen |
+| Tailscale VPN | Install an app, stay signed in, join the tailnet | Continuous friction for a non-technical user |
+| Port forwarding on the router | Nothing | ✗ Exposes the LAN to every scanner on the internet |
+| Move everything to the cloud | Nothing | ✗ An outage stops the whole store |
 
-### 链路
+### The chain
 
 ```
-老板手机
-  → https://admin.你的域名.com
-  → Cloudflare Access（邮箱 OTP / Google 登录，免费档 50 用户）
-  → Cloudflare 边缘
-  → 隧道（店内 cloudflared 发起的出站长连接）
-  → 内网 FastAPI :8001（仅 admin 路由）
-  → 应用层再验一次账号密码 + role=admin
+owner's phone
+  -> https://admin.your-domain.com
+  -> Cloudflare Access (email OTP / Google sign-in, 50 users on the free tier)
+  -> Cloudflare edge
+  -> the tunnel (an outbound connection opened by cloudflared in the store)
+  -> FastAPI :8001 on the LAN (admin routes only)
+  -> the application checks username, password and role=admin again
 ```
 
-**两点关键：**
+**Two things that matter:**
 
-1. **路由器上不开任何入站端口。** `cloudflared` 是从店内**主动出站**建连的。
-   公网上没有任何指向这家店的入站入口。
-2. **员工的 sync API（:8000）永不上隧道。** 隧道只映射 admin 路由（:8001）。
-   即使 Cloudflare 侧被攻破，员工数据写入路径也不在暴露面上。
+1. **No inbound port is opened on the router.** `cloudflared` dials **out** from
+   the store. There is no inbound entry point on the internet pointing at this shop.
+2. **The staff sync API (:8000) never goes through the tunnel.** The tunnel maps
+   admin routes (:8001) only. Even if Cloudflare's side were compromised, the
+   staff write path is not part of the exposed surface.
 
-> 这就是 §1 里那句「关键路径走内网，非关键路径走隧道」的落地。
-> 老板的报表断了不影响做生意 —— 所以它可以接受依赖外网。
+> This is section 1's "critical path on the LAN, non-critical path through the
+> tunnel" in practice. The owner losing a report does not stop the business, so
+> that path can afford to depend on the internet.
 
 ---
 
-## 7. 故障模式与恢复
+## 7. Failure modes and recovery
 
-| 故障 | 影响 | 处理 |
+| Failure | Impact | Response |
 |---|---|---|
-| 外网断（ISP 挂了） | **无影响**，业务全内网 | 证书有 90 天有效期，续期延后不要紧 |
-| WiFi 挂了 | iPad 转离线模式，数据存本地 | 恢复后自动重放 outbox |
-| 服务器断电 | 全店 iPad 离线运行 | UPS 撑住 → 优雅关机；来电后 BIOS 自动开机 |
-| Postgres 容器崩 | 短暂不可写 | `restart: always` + healthcheck 自动拉起 |
-| 服务器硬盘坏 | 需恢复 | 夜间备份恢复；iPad 本地还留有近期数据 |
-| iPad 摔坏/丢失 | 仅丢该设备**未同步**的部分 | 所以同步要尽量实时；UI 显示待同步条数 |
-| 员工误删 | 数据可恢复 | `sync_op` 全量留档，可回放重建 |
+| Internet down (ISP outage) | **None**; the business runs on the LAN | Certificates last 90 days, so a delayed renewal is fine |
+| WiFi down | iPads go offline and store locally | The outbox replays automatically on reconnect |
+| Server loses power | Every iPad runs offline | The UPS holds it up -> graceful shutdown; the BIOS powers it back on |
+| Postgres container crashes | Briefly unwritable | `restart: always` plus a healthcheck bring it back |
+| Server disk fails | Restore needed | Restore from the nightly backup; the iPads still hold recent data |
+| iPad dropped or lost | Only that device's **unsynced** work is lost | Which is why sync is prompt and the UI shows the pending count |
+| Staff deletes something | Recoverable | `sync_op` keeps everything and can be replayed |
 
-**Chaos test 清单**（第 6–7 周做，是 deep dive 的核心素材）：
-- [ ] 高峰期拔网线 10 分钟，期间正常下单/补菜，恢复后校验零丢失
-- [ ] 直接拔服务器电源，重启后校验数据完整性
-- [ ] 同时用两台 iPad 改同一张单，验证冲突策略
-- [ ] iPad 飞行模式下操作 50 条，恢复后校验全部落库且无重复
-- [ ] 重放同一批 op 两次，验证幂等
+**Chaos test checklist** (weeks 6-7, and the core material for a deep dive):
+- [ ] Pull the network cable for 10 minutes at peak, keep taking orders and logging refills, verify nothing is lost on reconnect
+- [ ] Pull the server's power outright, verify data integrity after the reboot
+- [ ] Edit the same check from two iPads at once, verify the conflict policy
+- [ ] Perform 50 operations on an iPad in airplane mode, verify all of them land with no duplicates
+- [ ] Replay the same batch of ops twice, verify idempotency
 
 ---
 
-## 8. 成本
+## 8. Cost
 
-| 项 | 价格 |
+| Item | Price |
 |---|---|
-| N100 迷你主机 16G/500G | ~$200 |
+| N100 mini PC, 16G/500G | ~$200 |
 | UPS 600VA | ~$70 |
-| iPad ×2（二手 9/10 代） | ~$300–400 |
-| 支架 ×2 + 保护壳 ×2 | ~$80 |
-| WiFi 6 路由器（**先测，可能不用换**） | ~$100 |
-| 域名 | ~$12/年 |
-| Cloudflare Tunnel + Access | **$0**（免费档足够） |
-| 云备份 | ~$2/月 |
-| 网口小票机（可选，后期） | ~$250 |
+| 2 iPads (used 9th/10th gen) | ~$300-400 |
+| 2 mounts + 2 cases | ~$80 |
+| WiFi 6 router (**test first, it may not be needed**) | ~$100 |
+| Domain | ~$12/year |
+| Cloudflare Tunnel + Access | **$0** (the free tier is enough) |
+| Cloud backup | ~$2/month |
+| Network receipt printer (optional, later) | ~$250 |
 
-**起步（不含打印机，路由器不换）：约 $660**
+**Starting cost (no printer, keeping the router): about $660**
 
-> 💡 **别一上来就买。**
-> 先用一台旧笔记本当服务器 + 一台现有 iPad，把第 2 周那条
-> HTTPS + PWA + 离线写入的链路跑通，确认方案成立、家人确实会用，
-> 再花这笔钱。
+> 💡 **Do not buy any of it up front.**
+> Use an old laptop as the server and one iPad you already own, get the week-2
+> HTTPS + PWA + offline write chain working, confirm the approach holds and that
+> the family will actually use it -- and only then spend the money.

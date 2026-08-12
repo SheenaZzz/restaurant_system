@@ -1,193 +1,201 @@
-# 运行手册
+# Runbook
 
-## 首次准备
+## First-time setup
 
 ```bash
-cp .env.example .env          # 改掉 POSTGRES_PASSWORD
+cp .env.example .env          # change POSTGRES_PASSWORD
 cd frontend && npm install && cd ..
 ```
 
-## 日常开发（两个终端）
+## Day-to-day development (two terminals)
 
 ```bash
-# 终端 1：数据库 + 后端
+# terminal 1: database + backend
 docker compose up -d --build
 docker compose logs -f api
 
-# 终端 2：前端
+# terminal 2: front end
 cd frontend && npm run dev
 ```
 
-- 前端 http://localhost:5173
-- 后端 http://localhost:8000 · 文档 http://localhost:8000/docs
-- 前端只调 `/api/*`，由 Vite 代理到后端 → **开发和生产的请求路径完全一致**
+- Front end http://localhost:5173
+- Backend http://localhost:8000 · docs http://localhost:8000/docs
+- The front end only calls `/api/*`, proxied to the backend by Vite -> **development and production use identical request paths**
 
-## 常用命令
-
-```bash
-docker compose ps                       # 状态
-docker compose logs -f api              # 后端日志
-docker compose restart api              # 重启后端
-docker compose exec db psql -U restaurant -d restaurant   # 进数据库
-```
-
-## 数据库迁移（Alembic）
-
-schema 的单一事实来源是 `backend/app/models.py`。改完模型后：
+## Everyday commands
 
 ```bash
-docker compose run --rm --no-deps -v "$PWD/backend/alembic/versions:/app/alembic/versions" -e DATABASE_URL="postgresql+psycopg://restaurant:change_me_local_dev@db:5432/restaurant" api alembic revision --autogenerate -m "描述"
+docker compose ps                       # status
+docker compose logs -f api              # backend logs
+docker compose restart api              # restart the backend
+docker compose exec db psql -U restaurant -d restaurant   # open the database
 ```
 
-⚠️ **两个必踩的坑**：
+## Database migrations (Alembic)
 
-1. **必须挂载 `versions` 目录**，否则生成的迁移文件留在容器里，`--rm` 一删就没了
-2. **生成后必须 `docker compose build api` 再重启** —— 迁移文件是 `COPY` 进镜像的，
-   旧镜像里没有新迁移，`alembic upgrade head` 会**静默什么都不做**（日志里没有
-   `Running upgrade` 那一行就是这个情况）
+`backend/app/models.py` is the single source of truth for the schema. After changing a model:
 
-应用迁移：容器启动时 `entrypoint.sh` 自动跑 `alembic upgrade head`，无需手动。
+```bash
+docker compose run --rm --no-deps -v "$PWD/backend/alembic/versions:/app/alembic/versions" -e DATABASE_URL="postgresql+psycopg://restaurant:change_me_local_dev@db:5432/restaurant" api alembic revision --autogenerate -m "description"
+```
+
+⚠️ **Two traps you will hit otherwise**:
+
+1. **The `versions` directory has to be mounted**, or the generated migration
+   stays inside the container and `--rm` deletes it
+2. **After generating, `docker compose build api` and restart** -- migrations are
+   `COPY`'d into the image, so an old image has no new migration and
+   `alembic upgrade head` **silently does nothing** (the giveaway is no
+   `Running upgrade` line in the log)
+
+Applying migrations: `entrypoint.sh` runs `alembic upgrade head` on container start, so there is nothing to do by hand.
 
 ```bash
 docker compose build api && docker compose up -d api
-docker compose exec api python -m app.seed      # 种子数据，幂等
-docker compose exec api alembic current         # 当前版本
-docker compose exec api alembic history         # 迁移历史
+docker compose exec api python -m app.seed      # seed data, idempotent
+docker compose exec api alembic current         # current revision
+docker compose exec api alembic history         # migration history
 ```
 
-**彻底重建数据库**：
+**Rebuilding the database from scratch**:
 
 ```bash
 docker compose down -v && docker compose up -d --build
 ```
 
-> ⚠️ `-v` 会删掉所有**命名卷**（数据库数据）。Step 7 上线之后**绝对不要**对生产执行。
+> ⚠️ `-v` deletes every **named volume**, database data included. **Never** run
+> it against production once Step 7 is live.
 >
-> 本地 CA 已改为绑定挂载在 `ops/caddy-data/`，**不受 `-v` 影响** ——
-> 所以 iPad 上装过的根证书一直有效，不用反复重装。
-> 这个目录里有 CA **私钥**，已在 `.gitignore` 排除，绝不能提交。
+> The local CA moved to a bind mount at `ops/caddy-data/` and is **unaffected by
+> `-v`** -- so the root certificate installed on an iPad keeps working and does
+> not have to be reinstalled. That directory holds the CA's **private key**; it
+> is gitignored and must never be committed.
 
-## 验收测试（Step 1）
+## Acceptance tests (Step 1)
 
 ```bash
-# 1. 健康检查
+# 1. health check
 curl -s localhost:8000/api/health
 
-# 2. 幂等：同一批发两次，第二次全部 duplicate，计数不变
+# 2. idempotency: send the same batch twice; the second is all duplicates and the count does not move
 BODY='{"client_id":"t1","since_cursor":0,"ops":[{"op_id":"11111111-1111-4111-8111-111111111111","entity":"ping_event","op_type":"insert","client_seq":1,"client_ts":"2026-01-01T00:00:00Z","payload":{"label":"A"}}]}'
 curl -s -X POST localhost:8000/api/sync -H 'Content-Type: application/json' -d "$BODY"
 curl -s -X POST localhost:8000/api/sync -H 'Content-Type: application/json' -d "$BODY"
 curl -s localhost:8000/api/debug/count
 
-# 3. 离线重放：停 API → 在页面点 N 次 → 起 API → 点"立即同步"
+# 3. offline replay: stop the API -> tap N times in the page -> start the API -> tap "sync now"
 docker compose stop api
 docker compose start api
 ```
 
-浏览器里核对：`待同步` 归零，且 `debug/count` 恰好增加 N，无重复。
+Check in the browser: `pending` reaches zero, and `debug/count` grew by exactly N with no duplicates.
 
-## iPad 真机测试
+## Testing on a real iPad
 
-### 电脑侧（一条命令）
+### On the computer (one command)
 
 ```bash
 cd frontend && npm run build && cd .. && docker compose --profile lan up -d
 ```
 
-起来后两个入口：
+Two entry points once it is up:
 
-| 入口 | 用途 |
+| Entry point | Purpose |
 |---|---|
-| `https://restaurant.local` | 正式站点，Service Worker 能注册 |
-| `http://restaurant.local:8080` | **对照组**，明文，SW 注册不了 |
+| `https://restaurant.local` | The real site; the Service Worker registers |
+| `http://restaurant.local:8080` | **The control**, plaintext, where it cannot |
 
-> ⚠️ **用主机名而不是 IP。** 用 IP 访问 HTTPS 时客户端不发送 SNI
-> （RFC 6066 规定 SNI 只能是主机名），Caddy 匹配不到站点会直接拒绝握手。
-> `restaurant.local` 走 mDNS，iOS 原生支持，还不受 DHCP 换 IP 影响。
+> ⚠️ **Use the hostname, not the IP.** Over HTTPS to an IP the client sends no
+> SNI (RFC 6066 allows only a hostname), Caddy matches no site and refuses the
+> handshake. `restaurant.local` goes over mDNS, which iOS supports natively, and
+> it survives a DHCP address change.
 >
-> ⚠️ **mDNS 广播的是这台机器自己的主机名**，所以主机必须叫 `restaurant`，
-> `restaurant.local` 才解析得到。改名的方法：
+> ⚠️ **mDNS answers for the machine's own hostname**, so the host has to be named
+> `restaurant` for `restaurant.local` to resolve. How to rename it:
 >
-> | 系统 | 怎么改 |
+> | System | How |
 > |---|---|
-> | Windows | 设置 → 系统 → 关于 → 重命名这台电脑 → **重启** |
-> | Linux（店内主机） | `sudo hostnamectl set-hostname restaurant`（avahi 自动广播） |
+> | Windows | Settings > System > About > Rename this PC > **reboot** |
+> | Linux (the store's server) | `sudo hostnamectl set-hostname restaurant` (avahi advertises it) |
 >
-> 改完用 `hostname` 确认。换了别的机器名就同步改 `ops/Caddyfile` 里那两处。
+> Confirm with `hostname`. A different machine name means updating the two places in `ops/Caddyfile`.
 
-### iPad 侧
+### On the iPad
 
-**1. 装根证书**（只需一次）
+**1. Install the root certificate** (once)
 
-Safari 打开 `http://restaurant.local:8080/root.crt` → 提示"已下载描述文件"
+Open `http://restaurant.local:8080/root.crt` in Safari -> "Profile Downloaded"
 
-- 设置 → 通用 → VPN与设备管理 → 安装
-- **⚠️ 再去 设置 → 通用 → 关于本机 → 证书信任设置 → 打开开关**
-  （最容易漏的一步；少了它证书不被信任，SW 仍然注册不了）
+- Settings > General > VPN & Device Management > Install
+- **⚠️ Then Settings > General > About > Certificate Trust Settings > turn the switch on**
+  (the step everyone misses; without it the certificate is not trusted and the SW still will not register)
 
-**2. 对照实验 —— 这才是重点**
+**2. The control experiment -- this is the point**
 
-| 步骤 | HTTP（`:8080`） | HTTPS |
+| Step | HTTP (`:8080`) | HTTPS |
 |---|---|---|
-| ① Safari 打开，分享 → 添加到主屏幕 | ✅ | ✅ |
-| ② 从主屏幕图标进入，点几次「记录一次」 | ✅ | ✅ |
-| ③ **完全退出 App**（上划关闭） | | |
-| ④ 开飞行模式 | | |
-| ⑤ 再点主屏幕图标 | ❌ **一片空白** | ✅ **正常进入** |
-| ⑥ 继续点「记录一次」 | 进不去 | ✅ 排队，显示「待同步 N」 |
-| ⑦ 关飞行模式 → 自动重放 | | ✅ 归零 |
+| 1. Open in Safari, Share > Add to Home Screen | ✅ | ✅ |
+| 2. Launch from the home screen icon, tap "record" a few times | ✅ | ✅ |
+| 3. **Quit the app completely** (swipe up) | | |
+| 4. Turn on airplane mode | | |
+| 5. Tap the home screen icon again | ❌ **blank page** | ✅ **opens normally** |
+| 6. Keep tapping "record" | cannot get in | ✅ queued, shows "pending N" |
+| 7. Turn airplane mode off -> automatic replay | | ✅ back to zero |
 
-> ⚠️ 两个站点要用**不同的主屏幕图标**分别测；
-> iOS 里主屏幕 App 和 Safari 的存储是隔离的，且不同来源互不共享。
+> ⚠️ Test the two sites from **separate home screen icons**: on iOS a home
+> screen app and Safari have isolated storage, and different origins share nothing.
 
-**3. 核对数据**
+**3. Check the data**
 
 ```bash
 curl -s localhost:8000/api/debug/count
 ```
 
-三个数应相等，且恰好等于总点击次数（含之前的 16）。
+All three numbers should be equal, and equal to the total number of taps (including the earlier 16).
 
-> 买了域名之后换成 Caddyfile 里的生产块（Let's Encrypt DNS-01），
-> iPad 就不需要装任何证书了。
+> Once a domain is bought, switch to the production block in the Caddyfile
+> (Let's Encrypt DNS-01) and the iPad needs no certificate at all.
 
-## 账号（开发用）
+## Accounts (development)
 
-| 账号 | 显示名 | 角色（代码里的键） | 密码 | PIN |
+| Account | Display name | Role (the key in code) | Password | PIN |
 |---|---|---|---|---|
-| `manager` | 前台主管 | `front_manager` | `manager-dev-pw` | 1111 |
-| `front` | 前台员工 | `front_employee` | `front-dev-pw` | 3333 |
-| `kitchen` | 后厨 | `kitchen` | `kitchen-dev-pw` | 2222 |
-| `boss` | 老板 | `admin` | `boss-dev-pw` | — |
+| `manager` | Front manager | `front_manager` | `manager-dev-pw` | 1111 |
+| `front` | Front staff | `front_employee` | `front-dev-pw` | 3333 |
+| `kitchen` | Kitchen | `kitchen` | `kitchen-dev-pw` | 2222 |
+| `boss` | Owner | `admin` | `boss-dev-pw` | -- |
 
-> 账号名和角色名是两回事：账号名是人登录时打的字，角色名是代码里做权限判断的键。
-> 所以 `boss` 的角色仍然叫 `admin`。
+> A username and a role are different things: the username is what someone types
+> to sign in, the role is the key the permission checks read. Which is why
+> `boss` still has the role `admin`.
 
-⚠️ 上线前必须改成每人独立的强密码，并把 `.env` 里的 `JWT_SECRET` 换成随机值：
+⚠️ Before going live these have to become one strong password per person, and
+`JWT_SECRET` in `.env` has to be a random value:
 
 ```bash
 python -c "import secrets;print(secrets.token_urlsafe(48))"
 ```
 
-会话时长按角色区分：员工 30 天（高峰期不可能让人反复打密码），
-admin 12 小时（走公网暴露的入口，寿命必须短）。
+Session length differs by role: 30 days for staff (retyping a password at peak
+is not going to happen) and 12 hours for admin, whose entry point is exposed to
+the public internet.
 
-## 验收测试（Step 3 认证）
+## Acceptance tests (Step 3, auth)
 
 ```bash
-# 未认证访问 sync → 401
+# unauthenticated sync -> 401
 curl -s -o /dev/null -w "%{http_code}
 " -X POST localhost:8000/api/sync -H 'Content-Type: application/json' -d '{"client_id":"x","since_cursor":0,"ops":[]}'
 
-# front 登录后调 admin 端点 → 403
+# front signs in and calls an admin endpoint -> 403
 FT=$(curl -s -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' -d '{"username":"front","password":"front-dev-pw","client_id":"t"}' | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
 curl -s -o /dev/null -w "%{http_code}
 " localhost:8000/api/admin/summary -H "Authorization: Bearer $FT"
 ```
 
-## 调试钩子
+## Debug hooks
 
-浏览器控制台里有 `window.__rs`（iPad 上用 Safari 网页检查器连过去）：
+`window.__rs` is available in the browser console (on an iPad, attach Safari's Web Inspector):
 
 ```js
 await __rs.login('front', 'front-dev-pw')
@@ -197,17 +205,17 @@ await __rs.openChecksByTable()
 await __rs.sync()
 await __rs.db.outbox.count()
 await __rs.db.deadletter.toArray()
-__rs.build                      // 确认设备拿到的是哪个版本
+__rs.build                      // which build this device actually has
 ```
 
-## 排障
+## Troubleshooting
 
-| 现象 | 原因 / 处理 |
+| Symptom | Cause / fix |
 |---|---|
-| `docker: command not found` | Docker Desktop 是用户级安装；**开个新终端**让 PATH 生效 |
-| API 起不来，日志报连不上 db | 正常重试中；`depends_on: service_healthy` 会等 healthcheck |
-| 改了模型但 schema 没变 | 生成迁移后必须 `docker compose build api`，迁移是 COPY 进镜像的 |
-| iPad 上装了多张同名 Caddy 证书 | 名字都是 `Caddy Local Authority - 2026 ECC Root`，肉眼分不出。**全删掉重装一张**即可，旧 CA 私钥已不存在 |
-| iPad 上 Service Worker 不注册 | 必须 HTTPS；且根证书要在「证书信任设置」里额外打开 |
-| iPad 装到主屏幕后数据没了 | 主屏幕 App 与 Safari **存储隔离** → 先装再用 |
-| 改了代码但页面还是旧的 | 看头部构建号。`localhost` 也算安全上下文，**明文 8080 上一样会注册 SW** → 控制台执行 `(await navigator.serviceWorker.getRegistrations()).forEach(r=>r.unregister())` 再刷新 |
+| `docker: command not found` | Docker Desktop installs per user; **open a new terminal** so PATH applies |
+| API will not start, logs say it cannot reach db | Normal retrying; `depends_on: service_healthy` waits for the healthcheck |
+| Model changed but the schema did not | After generating a migration you have to `docker compose build api` -- migrations are COPY'd into the image |
+| Several identically named Caddy certificates on the iPad | They are all `Caddy Local Authority - 2026 ECC Root` and indistinguishable. **Delete them all and install one**; the old CA private keys are gone anyway |
+| Service Worker will not register on the iPad | HTTPS is required, and the root certificate needs the extra switch under Certificate Trust Settings |
+| Data disappears after adding to the home screen | A home screen app and Safari have **isolated storage** -> install first, then use it |
+| Code changed but the page is still the old one | Check the build stamp in the header. `localhost` counts as a secure context, so **plaintext 8080 registers a SW too** -> run `(await navigator.serviceWorker.getRegistrations()).forEach(r=>r.unregister())` in the console and reload |

@@ -1,100 +1,105 @@
-# 搭建指南 — 路线图
+# Build guide -- the roadmap
 
-配套：[DESIGN.md](DESIGN.md)（架构与数据模型） · [DEPLOYMENT.md](DEPLOYMENT.md)（设备与部署）
-
----
-
-## 我们怎么协作
-
-- **你写代码，我讲设计、给结构、验收。**
-- 每一步我会给你：**目标 → 为什么这么设计 → 你要做什么 → 完成标准**
-- 你做完跑一下验收命令，把结果贴给我，我们再进下一步
-- 卡住了直接说，我给提示而不是直接给答案 —— 因为这个项目的价值在于
-  你能在面试里讲清楚每一个决定
-
-> ⚠️ **记工程日志。** 从 Step 1 开始，在 `JOURNAL.md` 里记三样东西：
-> ① 每个选型决定（选了什么/否掉什么/为什么）② 每次 benchmark 前后数字
-> ③ 每个花了 2 小时以上的 bug（现象/错误假设/怎么定位/根因）。
-> **这份日志就是 deep dive 的全部弹药，事后补是编不出来的。**
+Alongside: [DESIGN.md](DESIGN.md) (architecture and data model) · [DEPLOYMENT.md](DEPLOYMENT.md) (devices and deployment)
 
 ---
 
-## 路线图
+## How the work is organised
 
-### 第 1–2 周：骨架
+- **Write the code first, then explain the design, structure it, and accept it.**
+- Every step follows the same shape: **goal -> why it is designed this way -> what to build -> what "done" means**
+- Once a step is built, run its acceptance command and check the output before moving on
+- When stuck, look for a hint rather than an answer -- the value of this project
+  is being able to explain every decision in an interview
 
-| Step | 内容 | 完成标准 |
+> ⚠️ **Keep the engineering journal.** From Step 1 onward, `JOURNAL.md` records
+> three things: (1) every choice made (what was picked, what was rejected, why),
+> (2) the numbers before and after each benchmark, (3) every bug that cost more
+> than two hours (symptom / wrong assumption / how it was found / root cause).
+> **That journal is all the ammunition a deep dive needs, and it cannot be
+> reconstructed afterwards.**
+
+---
+
+## Roadmap
+
+### Weeks 1-2: the skeleton
+
+| Step | Content | Done when |
 |---|---|---|
-| ~~**0**~~ | ~~环境与仓库~~ ✅ | |
-| ~~**1**~~ | ~~Walking Skeleton~~ ✅ | iPad 真机验证通过（HTTP 白屏 / HTTPS 可用） |
-| ~~**2**~~ | ~~数据模型落地~~ ✅ | 17 张表；20 桌 + 19 菜品 + 8 价格 + 3 账号 |
-| ~~**3**~~ | ~~认证与 RBAC~~ ✅ | `front` 调 admin 端点 → 403（服务端强制） |
-| ~~**4**~~ | ~~开桌流程~~ ✅ | 楼面 + 开桌 + 关单，全离线可用；**待你掐表验收 5 秒** |
-| ~~**5**~~ | ~~补菜记录 + 后厨界面~~ ✅ | 三个大按钮，一页十格；前台后厨都能记 |
-| **6** | 把离线接到真实业务上 | 飞行模式开 5 桌 + 记 10 条补菜 → 恢复后全部落库无重复 |
+| ~~**0**~~ | ~~Environment and repository~~ ✅ | |
+| ~~**1**~~ | ~~Walking skeleton~~ ✅ | Verified on a real iPad (blank over HTTP / working over HTTPS) |
+| ~~**2**~~ | ~~Data model~~ ✅ | 17 tables; 20 tables + 19 dishes + 8 prices + 3 accounts seeded |
+| ~~**3**~~ | ~~Auth and RBAC~~ ✅ | `front` calling an admin endpoint -> 403 (enforced server-side) |
+| ~~**4**~~ | ~~Opening a table~~ ✅ | Floor + open + close, fully offline; **still to be timed at 5 seconds** |
+| ~~**5**~~ | ~~Refill logging + kitchen screen~~ ✅ | Three big buttons, ten slots a page; front and kitchen can both log |
+| **6** | Wire offline into the real workflow | In airplane mode, open 5 tables and log 10 refills -> all stored on reconnect, no duplicates |
 
-### 第 3 周：上线
+### Week 3: going live
 
-| Step | 内容 | 完成标准 |
+| Step | Content | Done when |
 |---|---|---|
-| **7** | 店内主机部署 + 域名 + Let's Encrypt | 真实跑一晚市，影子运行 |
+| **7** | Deploy on the store's server + domain + Let's Encrypt | One real dinner service, running in shadow |
 
-### 计划外但已完成（都是用户在现场提出的真实需求）
+### Unplanned but done (all of it asked for on the floor)
 
-- 账单清单页（卡片式）+ 楼面/清单/自提/月报四个 tab
-- 改单 / 作废 / **可撤销的作废** / 换桌 / 并桌
-- 支付方式（现金/刷卡/混合/其它）+ POS 数字键盘
-- 大桌服务费（满 5 人 10%）
-- 销售税率（设置页，一次设定，带生效日期历史）
-- 真实菜单 143 项 + 自提（Buffet To Go 按重量 / 电话点菜）
-- 楼面订单可加单品；整桌可「直接点餐」不吃自助
-- 月报（日历式营业额 + 每日小费 + 对账告警）
-- 每张账单的操作历史（前后差异，零额外存储）
-- 角色细分：front_employee / front_manager / kitchen / admin
-- 死信队列查看器、本机数据重置
+- Card-style check list, plus four tabs: floor / list / to go / month report
+- Edit / void / **reversible void** / transfer / merge
+- Payment methods (cash / card / mixed / other) plus a POS keypad
+- Large-party service charge (10% at five guests)
+- Sales tax rate (in settings, set once, with effective-date history)
+- The real 143-item menu, plus to-go (Buffet To Go by weight / phone orders)
+- A la carte dishes on a dine-in check; a whole table can skip the buffet
+- Month report (calendar of sales + daily tips + reconciliation warnings)
+- Full operation history per check (before/after diffs, no extra storage)
+- Roles split into front_employee / front_manager / kitchen / admin
+- Dead letter queue viewer, and a local data reset
 
-### 后续
+### After that
 
-| Step | 内容 |
+| Step | Content |
 |---|---|
-| **6** | 离线加固 + chaos test（拔网线/拔电源）+ 可观测性埋点 ← 下一步 |
-| **7** | 店内主机部署 + 域名 + Let's Encrypt |
-| **8** | 日结 Batch（对账差额） |
-| **9** | 异常记录界面（逃单/免单）|
-| **12** | 老板远程访问（Cloudflare Tunnel） |
-| **13** | 消耗率模型 + 备货建议 |
+| **6** | Offline hardening + chaos testing (pull the cable, pull the power) + observability <- next |
+| **7** | Deploy on the store's server + domain + Let's Encrypt |
+| **8** | Close-of-day batch (reconciliation gap) |
+| **9** | Exception screen (walkouts / comps) |
+| **12** | Remote access for the owner (Cloudflare Tunnel) |
+| **13** | Consumption model + restocking suggestions |
 
 ---
 
-## Step 1 为什么是最关键的一步
+## Why Step 1 is the one that matters
 
-**Walking Skeleton（行走骨架）** = 一条端到端最小闭环，**不含任何业务逻辑**：
+A **walking skeleton** is one end-to-end loop with **no business logic in it**:
 
 ```
-iPad 上一个按钮
-  → 写 IndexedDB + outbox
-  → HTTPS 发到 Caddy
-  → FastAPI 幂等写入 Postgres
-  → 断网时排队，恢复后重放
+a button on the iPad
+  -> writes IndexedDB + the outbox
+  -> sends over HTTPS to Caddy
+  -> FastAPI writes to Postgres idempotently
+  -> queues while offline, replays on reconnect
 ```
 
-跑通它，就证明了整套架构成立。跑不通，就要在**写任何业务代码之前**换方案。
+Getting that to work proves the architecture holds. Failing to get it to work
+means changing the approach **before any business code is written**.
 
-**最大的风险点在这里**：iPad Safari 要求 Service Worker 必须 HTTPS，
-而店内服务器是内网 IP。这条打不通，离线能力就是零，整个设计要推翻。
+**The biggest risk sits right here**: iPad Safari only registers a Service
+Worker over HTTPS, and the store's server is a private LAN address. If that
+cannot be solved, offline capability is zero and the whole design falls over.
 
-> 所以：**先建骨架，再往里长业务。** 不要先写完业务再考虑离线。
+> Hence: **build the skeleton, then grow the business logic into it.** Never
+> write the features first and think about offline afterwards.
 
 ---
 
-## 目录结构
+## Directory layout
 
 ```
 restaurant_system/
 ├── DESIGN.md
 ├── DEPLOYMENT.md
 ├── GUIDE.md
-├── JOURNAL.md          ← 工程日志（Step 1 开始记）
+├── JOURNAL.md          <- engineering journal (kept from Step 1)
 ├── .gitignore
 ├── docker-compose.yml
 ├── backend/
@@ -103,18 +108,18 @@ restaurant_system/
 │   ├── alembic/
 │   └── app/
 │       ├── __init__.py
-│       ├── main.py         FastAPI 入口
-│       ├── db.py           连接与 session
-│       ├── core/           配置、安全、依赖注入
-│       ├── models/         SQLAlchemy 模型
-│       └── api/            路由
+│       ├── main.py         FastAPI entry point
+│       ├── db.py           connection and session
+│       ├── core/           config, security, dependency injection
+│       ├── models/         SQLAlchemy models
+│       └── api/            routes
 ├── frontend/
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── src/
 │       ├── main.tsx
-│       ├── db.ts           Dexie（本地表 + outbox）
-│       ├── sync.ts         同步与重放
+│       ├── db.ts           Dexie (local tables + outbox)
+│       ├── sync.ts         syncing and replay
 │       └── pages/
 └── ops/
     └── Caddyfile
