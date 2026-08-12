@@ -20,11 +20,16 @@
 #    only be a hostname, never an IP literal. With no SNI, Caddy matches no site
 #    and refuses the handshake (curl reports SEC_E_ILLEGAL_MESSAGE).
 #
-#    sheena.local goes over mDNS (Bonjour), native on iOS and built into Windows 10+.
-#    It also survives a DHCP address change.
+#    restaurant.local goes over mDNS (Bonjour), native on iOS and built into
+#    Windows 10+. It also survives a DHCP address change.
+#
+#    ⚠️ mDNS answers for <hostname>.local, so **the host machine has to be named
+#    `restaurant`** for this to resolve. Renaming it is the whole setup:
+#      Windows: Settings > System > About > Rename this PC, then reboot
+#      Linux:   hostnamectl set-hostname restaurant   (avahi advertises it)
 #
 #    This is exactly why production insists on a domain rather than a bare IP.
-https://sheena.local, https://localhost {
+https://restaurant.local, https://localhost {
 	handle /api/* {
 		reverse_proxy api:8000
 	}
@@ -48,7 +53,7 @@ https://sheena.local, https://localhost {
 # A plaintext HTTP site, purely for the contrast experiment:
 # the same app over :8080 fails to register a Service Worker,
 # so reopening it offline is a blank page.
-http://sheena.local:8080, http://192.168.1.148:8080, http://localhost:8080 {
+http://restaurant.local:8080, http://192.168.1.148:8080, http://localhost:8080 {
 	handle /api/* {
 		reverse_proxy api:8000
 	}

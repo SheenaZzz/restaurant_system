@@ -15,9 +15,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'apple-touch-icon.png'],
       manifest: {
-        name: '餐馆运营系统',
-        short_name: '运营',
-        description: '堂食 buffet / 点单 / 自取 运营记录系统',
+        name: 'Restaurant Operations',
+        short_name: 'Restaurant',
+        description: 'Dine-in buffet, ordering and to-go operations log',
         lang: 'zh-CN',
         // standalone: full screen from the home screen, no address bar and no tabs
         display: 'standalone',

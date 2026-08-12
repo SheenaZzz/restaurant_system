@@ -180,7 +180,7 @@ UI 上以红色「失败 N」徽章暴露 —— **看不见的失败等于丢�
   （curl 报 `SEC_E_ILLEGAL_MESSAGE`）
 - **根因**：RFC 6066 规定 SNI 只能是**主机名**，不能是 IP 字面量。
   用 IP 访问时客户端不发 SNI → Caddy 匹配不到站点 → 拒绝握手
-- **处理**：改用 mDNS 主机名 `sheena.local`（iOS 原生支持，
+- **处理**：改用 mDNS 主机名 `restaurant.local`（iOS 原生支持，
   Windows 10+ 自带响应器），额外好处是不受 DHCP 换 IP 影响
 - **决策影响**：这直接强化了生产环境**买域名**而不是用裸 IP 的理由
 

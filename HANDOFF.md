@@ -34,7 +34,7 @@ docker compose --profile lan up -d && cd frontend && npm run dev
 ```
 
 - 电脑：`http://localhost:8080`（省事，无证书问题）
-- iPad：`https://sheena.local`（走 mDNS，装过 Caddy 本地 CA）
+- iPad：`https://restaurant.local`（走 mDNS，装过 Caddy 本地 CA）
 - 账号见 [RUNBOOK.md](RUNBOOK.md)：`manager` / `front` / `kitchen` / `boss`，密码 `<账号>-dev-pw`
 
 ---
@@ -269,7 +269,7 @@ INSERT INTO sync_op (op_id, ...) ON CONFLICT (op_id) DO NOTHING RETURNING op_id
 ### 网络 / 部署
 
 - **SNI 不能是 IP**（RFC 6066）。用 IP 访问 HTTPS 时客户端不发 SNI，
-  Caddy 匹配不到站点直接拒绝握手。所以用 mDNS 主机名 `sheena.local`。
+  Caddy 匹配不到站点直接拒绝握手。所以用 mDNS 主机名 `restaurant.local`。
 - 本地 CA 存在 `ops/caddy-data/`（绑定挂载，**不受 `docker compose down -v` 影响**），
   否则每次重建数据库 iPad 都要重装证书。目录里有私钥，已 gitignore。
 

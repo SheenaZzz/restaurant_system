@@ -98,20 +98,28 @@ cd frontend && npm run build && cd .. && docker compose --profile lan up -d
 
 | 入口 | 用途 |
 |---|---|
-| `https://sheena.local` | 正式站点，Service Worker 能注册 |
-| `http://sheena.local:8080` | **对照组**，明文，SW 注册不了 |
+| `https://restaurant.local` | 正式站点，Service Worker 能注册 |
+| `http://restaurant.local:8080` | **对照组**，明文，SW 注册不了 |
 
 > ⚠️ **用主机名而不是 IP。** 用 IP 访问 HTTPS 时客户端不发送 SNI
 > （RFC 6066 规定 SNI 只能是主机名），Caddy 匹配不到站点会直接拒绝握手。
-> `sheena.local` 走 mDNS，iOS 原生支持，还不受 DHCP 换 IP 影响。
+> `restaurant.local` 走 mDNS，iOS 原生支持，还不受 DHCP 换 IP 影响。
 >
-> 换机器要改 `ops/Caddyfile` 里的主机名（`hostname` 命令可查）。
+> ⚠️ **mDNS 广播的是这台机器自己的主机名**，所以主机必须叫 `restaurant`，
+> `restaurant.local` 才解析得到。改名的方法：
+>
+> | 系统 | 怎么改 |
+> |---|---|
+> | Windows | 设置 → 系统 → 关于 → 重命名这台电脑 → **重启** |
+> | Linux（店内主机） | `sudo hostnamectl set-hostname restaurant`（avahi 自动广播） |
+>
+> 改完用 `hostname` 确认。换了别的机器名就同步改 `ops/Caddyfile` 里那两处。
 
 ### iPad 侧
 
 **1. 装根证书**（只需一次）
 
-Safari 打开 `http://sheena.local:8080/root.crt` → 提示"已下载描述文件"
+Safari 打开 `http://restaurant.local:8080/root.crt` → 提示"已下载描述文件"
 
 - 设置 → 通用 → VPN与设备管理 → 安装
 - **⚠️ 再去 设置 → 通用 → 关于本机 → 证书信任设置 → 打开开关**
