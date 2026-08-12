@@ -1,5 +1,5 @@
-# 骨架期用下限约束让 pip 解析当前版本。
-# Step 2 会改成锁定版本（pip-tools / uv.lock），保证生产可复现。
+# Lower bounds during the skeleton phase, letting pip resolve current versions.
+# Step 2 pins them (pip-tools / uv.lock) so production is reproducible.
 fastapi>=0.115
 uvicorn[standard]>=0.32
 sqlalchemy>=2.0.36
@@ -8,7 +8,7 @@ pydantic>=2.9
 alembic>=1.14
 argon2-cffi>=23.1
 pyjwt>=2.9
-# zoneinfo 读的是系统 tz 数据库，slim 镜像里不保证有。
-# 装这个包让 Python 有自带的一份兜底 —— 少了它，营业日会在
-# ZoneInfoNotFoundError 上直接炸，而不是悄悄算错。
+# zoneinfo reads the system tz database, which a slim image does not guarantee.
+# This package gives Python its own copy -- without it the business day blows
+# up on ZoneInfoNotFoundError instead of quietly computing the wrong answer.
 tzdata>=2024.1

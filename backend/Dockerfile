@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# 先装依赖再拷代码：改代码不会让依赖层缓存失效
+# Dependencies before the code, so editing code does not invalidate the dependency layer
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -17,7 +17,7 @@ COPY app ./app
 
 RUN chmod +x entrypoint.sh
 
-# 不用 root 跑
+# Do not run as root
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser /app
 USER appuser
 

@@ -8,14 +8,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      # 全链路统一 UTC，避免夏令时和时区歧义
+      # UTC end to end, so DST and time zones cannot be ambiguous
       TZ: UTC
       PGTZ: UTC
     volumes:
-      # 命名卷：容器删了数据还在。这是"拔电源不丢数据"的第一层
+      # A named volume: the data survives the container. First layer of "a power cut loses nothing"
       - pgdata:/var/lib/postgresql/data
     ports:
-      # 只绑到回环地址，不暴露给局域网
+      # Bound to loopback only, never exposed to the LAN
       - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -31,34 +31,36 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       CORS_ORIGINS: ${CORS_ORIGINS}
       JWT_SECRET: ${JWT_SECRET}
-      # 容器全链路跑 UTC（见 db），但**营业日和午/晚市要按店里的钟点切**，
-      # 所以这里单独给出店所在时区。写成 IANA 名而不是固定偏移，夏令时才不会错。
+      # Containers run UTC end to end (see db), but **the business day and the
+      # lunch/dinner split follow the store's clock**, so its time zone is given
+      # separately. An IANA name rather than a fixed offset, or DST breaks it.
       STORE_TZ: ${STORE_TZ:-America/Los_Angeles}
-      # 营业日的分界（店内本地时间，整点）。0 = 过午夜即新的一天。
+      # Where the business day starts (store local time, on the hour). 0 = midnight.
       BUSINESS_DAY_CUTOFF_HOUR: ${BUSINESS_DAY_CUTOFF_HOUR:-0}
     depends_on:
       db:
-        # 等 healthcheck 通过再启动，而不是等容器"起来"
+        # Wait for the healthcheck, not merely for the container to exist
         condition: service_healthy
     ports:
       - "127.0.0.1:8000:8000"
 
-  # iPad 真机测试时才启用： docker compose --profile lan up -d
+  # Only for testing on a real iPad: docker compose --profile lan up -d
   caddy:
     image: caddy:2-alpine
     profiles: ["lan"]
     restart: unless-stopped
     ports:
       - "443:443"
-      # 明文对照站点：用来演示"没有 HTTPS 就没有 Service Worker"
+      # A plaintext site for contrast: it demonstrates "no HTTPS, no Service Worker"
       - "8080:8080"
     volumes:
       - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./frontend/dist:/srv:ro
-      # ⚠️ 用绑定挂载而不是命名卷：本地 CA 的私钥存在这里，
-      #    放命名卷里会被 `docker compose down -v` 一起删掉 ——
-      #    CA 一换，所有 iPad 上装的根证书立刻失效，必须重装。
-      #    （里面有私钥，已在 .gitignore 排除）
+      # ⚠️ A bind mount rather than a named volume: the local CA's private key
+      #    lives here, and in a named volume `docker compose down -v` would take
+      #    it with it -- a new CA instantly invalidates the root certificate on
+      #    every iPad, which then has to be installed again.
+      #    (It holds a private key and is gitignored.)
       - ./ops/caddy-data:/data
       - caddy_config:/config
     depends_on:

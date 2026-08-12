@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
-# 启动前先把 schema 迁到最新。
-# 放在容器启动里而不是手动执行 —— 店里没有 IT，部署必须是一条命令。
+# Migrate the schema before starting.
+# In the container's start-up rather than run by hand -- the store has no IT, so deploying has to be one command.
 echo "[entrypoint] running migrations..."
 alembic upgrade head
 echo "[entrypoint] starting api..."

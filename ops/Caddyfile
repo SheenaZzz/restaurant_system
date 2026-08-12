@@ -1,29 +1,29 @@
 # ===========================================================================
-# 开发 / 局域网 iPad 测试
+# Development / LAN testing on an iPad
 # ---------------------------------------------------------------------------
-# 用 Caddy 内置 CA 给局域网 IP 签证书。iPad 需要**手动信任一次**根证书。
-# 步骤见 RUNBOOK.md。
+# Caddy's built-in CA signs a certificate for the LAN IP. An iPad has to **trust**
+# the root certificate once; the steps are in RUNBOOK.md.
 #
-# ⚠️ 192.168.1.148 是 DHCP 分配的，路由器重启后可能变。
-#    变了要改这里并 `docker compose --profile lan restart caddy`。
-#    长期方案是在路由器上做 DHCP 保留（见 DEPLOYMENT.md §2.4）。
+# ⚠️ 192.168.1.148 comes from DHCP and can change when the router restarts.
+#    When it does, edit it here and `docker compose --profile lan restart caddy`.
+#    The long-term fix is a DHCP reservation on the router (DEPLOYMENT.md 2.4).
 # ===========================================================================
 
 {
-	# 用 Caddy 本地 CA 签发，而不是去找 Let's Encrypt
-	#（公共 CA 不会给私有 IP 签证书）
+	# Signed by Caddy's local CA rather than Let's Encrypt
+	# (a public CA will not sign for a private IP)
 	local_certs
 }
 
-# ⚠️ 为什么用主机名而不是 IP：
-#    用 IP 访问 HTTPS 时客户端**不发送 SNI** —— RFC 6066 规定
-#    SNI 只能是主机名，不能是 IP 字面量。没有 SNI，Caddy 匹配不到
-#    站点就直接拒绝握手（curl 报 SEC_E_ILLEGAL_MESSAGE）。
+# ⚠️ Why a hostname rather than an IP:
+#    over HTTPS to an IP the client **sends no SNI** -- RFC 6066 says SNI can
+#    only be a hostname, never an IP literal. With no SNI, Caddy matches no site
+#    and refuses the handshake (curl reports SEC_E_ILLEGAL_MESSAGE).
 #
-#    sheena.local 走 mDNS（Bonjour），iOS 原生支持，Windows 10+ 自带响应器。
-#    额外好处：不受 DHCP 换 IP 影响。
+#    sheena.local goes over mDNS (Bonjour), native on iOS and built into Windows 10+.
+#    It also survives a DHCP address change.
 #
-#    这次踩的坑，正是生产环境坚持用域名而不是裸 IP 的理由。
+#    This is exactly why production insists on a domain rather than a bare IP.
 https://sheena.local, https://localhost {
 	handle /api/* {
 		reverse_proxy api:8000
@@ -31,8 +31,8 @@ https://sheena.local, https://localhost {
 
 	handle {
 		root * /srv
-		# SPA：任何未知路径都回退到 index.html，
-		# 这样离线直接打开 App 也能进得去
+		# SPA: any unknown path falls back to index.html,
+		# so opening the app offline still gets in
 		try_files {path} /index.html
 		file_server
 	}
@@ -45,9 +45,9 @@ https://sheena.local, https://localhost {
 	}
 }
 
-# 明文 HTTP 站点 —— 专门用来做对照实验：
-# 同一个 App 走 :8080，Service Worker 会注册失败，
-# 断网后重开就是一片空白。
+# A plaintext HTTP site, purely for the contrast experiment:
+# the same app over :8080 fails to register a Service Worker,
+# so reopening it offline is a blank page.
 http://sheena.local:8080, http://192.168.1.148:8080, http://localhost:8080 {
 	handle /api/* {
 		reverse_proxy api:8000
@@ -60,16 +60,17 @@ http://sheena.local:8080, http://192.168.1.148:8080, http://localhost:8080 {
 }
 
 # ===========================================================================
-# 生产（店内服务器）—— 买好域名后启用，删掉上面两块
+# Production (the store's server) -- enabled once a domain is bought; delete the two blocks above
 # ---------------------------------------------------------------------------
-# 关键：DNS-01 challenge **不需要公网入站端口**，只要能改 DNS 记录。
-# 所以可以给一个解析到内网 IP 的域名签发真证书，iPad 无需安装任何根证书。
+# The point: a DNS-01 challenge **needs no inbound port**, only the ability to
+# edit a DNS record. So a domain resolving to a LAN address can get a real
+# certificate, and no iPad has to install anything.
 #
-# ⚠️ 需要带 Cloudflare DNS 插件的 Caddy 镜像，官方镜像不含：
+# ⚠️ Needs a Caddy image with the Cloudflare DNS plugin; the official image has none:
 #      xcaddy build --with github.com/caddy-dns/cloudflare
 # ===========================================================================
 
-# pos.你的域名.com {
+# pos.your-domain.com {
 # 	tls {
 # 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 # 	}

@@ -11,14 +11,14 @@ dev-dist/
 .vite/
 *.tsbuildinfo
 
-# 环境变量与密钥 —— 绝对不能提交
+# Environment and secrets -- never commit these
 .env
 .env.*
 !.env.example
 *.pem
 *.key
 
-# 数据
+# Data
 *.sqlite3
 pgdata/
 
@@ -26,8 +26,8 @@ pgdata/
 .DS_Store
 Thumbs.db
 
-# 本地 CA 根证书（环境相关，不进版本库）
+# Local CA root certificate (environment-specific, not versioned)
 caddy-root.crt
-# 本地 CA —— 含私钥，绝不能提交
+# Local CA -- holds a private key, never commit
 ops/caddy-data/
 frontend/public/root.crt
